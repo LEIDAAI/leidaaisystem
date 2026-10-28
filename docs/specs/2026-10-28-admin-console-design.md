@@ -170,3 +170,59 @@ plan_entitlement  -- 套餐权益绑定（plan_id + 资源类型 expert/skill/mc
 | 数据库 | 现有 MySQL（新增管理域/配置域表） |
 | 多实例刷新 | Redis pub/sub（单实例则 Spring 事件即可） |
 | 鉴权 | JWT + RBAC（可选 TOTP） |
+
+## 12. 附录：专家/技能/MCP 模型对齐 OpenWebUI 助手体系（2026-10-28 增补）
+
+用户确认：**专家即 OpenWebUI 的"助手/模型预设"**，参照 1688选品助手（`product-selection-assistant`）的创建方式管理，最终上架到前台工作台（work.html 的专家库/技能/MCP 页）供用户使用。
+
+### 12.1 专家 = 助手预设
+
+| 字段 | 说明 |
+|---|---|
+| code | 助手 ID（如 `product-selection-assistant`），API/导入导出标识，编辑展示名不改 ID |
+| name / description | 选择器显示名 + 能力摘要 |
+| base_model | 基础模型（如 GLM-5.3），只选不训练 |
+| system_prompt | 系统提示词（角色、技能路由、调用纪律、输出格式） |
+| mcp_server_ids | 绑定工具服务器（MCP/OpenAPI 连接），只开放所需工具 |
+| skill_ids | 绑定技能（SKILL.md），提示词负责路由 |
+| suggested_questions | 建议问题（前台打开助手时展示的示例任务） |
+| capabilities | 能力开关 JSON（file/vision/web_search/code_interpreter/citations/status_updates/memory/builtin_tools…） |
+| tags / avatar | 标签、头像 |
+| visibility | PUBLIC 全员 / PLAN 指定套餐 / PRIVATE 私有（plan_entitlement 为计费限额层，visibility 为展示层） |
+| status / is_default / version | 启停（是否出现在前台选择器）、默认专家、配置版本 |
+
+生命周期：创建 → 绑定工具/技能 → 配建议问题与能力 → 设可见性 → 启用上架 → 前台可用；编辑支持版本历史与恢复；支持导出/导入 JSON（预设迁移，凭据脱敏）。
+
+### 12.2 技能 = SKILL.md 内容型技能
+
+- 核心字段：code、name、description（触发意图，供助手路由）、**content（SKILL.md 正文）**、files（附属文件）、status
+- 结构建议（写入正文规范）：触发条件 / 不适用范围 / 参数契约 / 执行步骤 / 结果校验 / 输出约定 / 异常边界
+- 版本历史：每次保存生成快照，可查看差异、恢复、写变更说明
+- 支持克隆、导入/导出；列表展示"绑定助手数"防误改共享技能
+- 被专家引用时停用/删除需提示确认
+
+### 12.3 MCP = 工具服务器连接（MCP / OpenAPI 双类型）
+
+| 字段 | 说明 |
+|---|---|
+| conn_type | MCP（协议发现工具）或 OpenAPI（按 openapi.json 解析操作生成工具） |
+| endpoint / path | 服务地址 + 端点路径（如 `/mcp` 或 `xxx/openapi.json`） |
+| transport | MCP 传输方式：STREAMABLE_HTTP / SSE / STDIO |
+| auth_type / auth_config | 无 / Bearer / API Key / 自定义请求头；凭据应用层加密、界面掩码、永不回显明文 |
+| tool_filter | 工具名过滤清单，控制助手可见工具集合 |
+| health / discover | 连接测试（握手或 schema 解析）与工具发现落库 mcp_tool |
+
+### 12.4 前台可用链路
+
+```
+后台创建/编辑专家 ──► 启用 + 设可见性（上架）
+                        │
+                        ▼
+              C 端工作台只读 API（/api/v1/workspace/**）
+                        │
+        work.html 专家库/技能/MCP 页按用户套餐过滤展示
+```
+
+- 后台"上架"即前台可见；禁用即从前台选择器消失（历史会话不受影响）
+- C 端契约只读：按用户身份与套餐过滤 PUBLIC + 所购 PLAN 的专家/技能/MCP
+- 预设导出 JSON 可直接导入 OpenWebUI/AgentScope Java，作为运行时接通的过渡手段
