@@ -46,7 +46,9 @@ function llmDevProxy(): Plugin {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // 静态托管（GitHub Pages 等子路径部署）用相对 base；dev 保持根路径
+  base: command === 'build' ? './' : '/',
   plugins: [vue(), llmDevProxy()],
   resolve: {
     alias: {
@@ -62,4 +64,4 @@ export default defineConfig({
       }
     }
   }
-})
+}))

@@ -28,8 +28,9 @@ if (USE_MOCK) http.defaults.adapter = mockAdapter
 
 function clearSessionAndRedirect(): void {
   localStorage.removeItem(AUTH_STORAGE_KEY)
-  if (!window.location.pathname.startsWith('/login')) {
-    window.location.href = '/login'
+  // hash 路由：登录页在 /#/login，静态托管下不能改 pathname
+  if (!window.location.hash.startsWith('#/login')) {
+    window.location.hash = '#/login'
   }
 }
 
