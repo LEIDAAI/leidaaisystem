@@ -117,7 +117,13 @@ export function seedExtensions(): Extensions {
       skillIds: [11, 12, 13, 14, 15, 16, 17], mcpServerIds: [1], mcpToolIds: [21],
       suggestedQuestions: ['帮我分析"收纳盒"关键词的竞争度', '对比近30天竞品价格并测算分销毛利', '生成一份厨房收纳类目的选品报告'],
       capabilities: defaultCapabilities({ file: true, web_search: true, citations: true }),
-      tags: ['选品', '1688', '分销'], visibility: { type: 'PUBLIC', planIds: [] }, isDefault: true
+      tags: ['选品', '1688', '分销'], visibility: { type: 'PUBLIC', planIds: [] }, isDefault: true,
+      titleHtml: '1688分销选品专家',
+      introduction: '<p>深耕 1688 分销场景的数据选品助手。支持从<b>关键词竞争度</b>、<b>竞品价格监控</b>、<b>类目趋势</b>三个维度完成选品决策，并一键生成选品报告。</p><ul><li>覆盖 1688 全类目榜单与价格带分布</li><li>内置利润测算与分销毛利模型</li><li>输出结论均附带数据来源校验</li></ul>',
+      greeting: '你好！我是 1688 分销选品专家，可以帮你分析关键词、监控竞品、测算利润并生成选品报告。',
+      coreAbilities: ['关键词竞争度分析', '竞品价格与销量监控', '类目趋势洞察', '分销利润测算', '一键生成选品报告'],
+      referencePrompts: ['帮我分析"收纳盒"关键词在1688的竞争度', '对比近30天收纳类目TOP10竞品的价格分布', '生成一份厨房收纳类目的月度选品报告'],
+      nextQuestionConfig: { enabled: true, model: 'deepseek-v4.1-flash', mode: 'default' }
     },
     {
       ...base, id: 2, code: 'cross-border-selection', name: '跨境电商选品',
@@ -127,7 +133,13 @@ export function seedExtensions(): Extensions {
       skillIds: [12, 14, 16], mcpServerIds: [1, 3, 4],
       suggestedQuestions: ['美国站家居类目最近什么品好卖？'],
       capabilities: defaultCapabilities({ file: true, vision: true, web_search: true }),
-      tags: ['选品', '跨境'], visibility: { type: 'PLAN', planIds: [2, 3] }, isDefault: false
+      tags: ['选品', '跨境'], visibility: { type: 'PLAN', planIds: [2, 3] }, isDefault: false,
+      titleHtml: '跨境电商选品专家',
+      introduction: '<p>面向<b>亚马逊 / Temu / TikTok</b> 等跨境站点的选品助手，结合平台榜单、广告数据与站点合规差异给出选品建议。</p>',
+      greeting: '你好！我是跨境电商选品专家，告诉我目标站点与类目，我来帮你找品。',
+      coreAbilities: ['亚马逊 BSR 榜单解读', 'Temu 爆款趋势追踪', '站点合规与价格差异提示'],
+      referencePrompts: ['美国站家居类目最近什么品好卖？', '对比亚马逊与Temu同款收纳盒的价格带'],
+      nextQuestionConfig: { enabled: true, mode: 'default' }
     },
     {
       ...base, id: 3, code: 'douyin-selection', name: '抖音带货选品',
@@ -137,7 +149,13 @@ export function seedExtensions(): Extensions {
       skillIds: [12, 17], mcpServerIds: [5],
       suggestedQuestions: ['最近什么商品在短视频渠道转化好？'],
       capabilities: defaultCapabilities({ vision: true, status_updates: true }),
-      tags: ['选品', '抖音'], visibility: { type: 'PLAN', planIds: [3, 4] }, isDefault: false
+      tags: ['选品', '抖音'], visibility: { type: 'PLAN', planIds: [3, 4] }, isDefault: false,
+      titleHtml: '抖音带货选品专家',
+      introduction: '<p>面向抖音直播/短视频带货的选品助手，结合<b>达人带货榜</b>与<b>内容趋势</b>，给出选品与内容选题双建议。</p>',
+      greeting: '你好！我是抖音带货选品专家，可以帮你分析达人带货榜和内容趋势。',
+      coreAbilities: ['达人带货榜分析', '爆款视频内容拆解', '选品与内容选题联动建议'],
+      referencePrompts: ['最近一周美妆类目哪些达人在带货？', '帮我拆解一条百万播放的收纳好物视频'],
+      nextQuestionConfig: { enabled: false, mode: 'default' }
     }
   ]
   // 技能 = SKILL.md 内容型（附录 12.2）；id 11-17 共 7 个，支撑 1688选品助手完整示例；正文为简版 SKILL.md 示例
@@ -447,6 +465,13 @@ export function migrateLegacyConfig(target: Extensions): void {
     if (!legacy.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(legacy.visibility.type)) legacy.visibility = { type: 'PUBLIC', planIds: [] }
     const derived = (e.mcpToolIds || []).map(serverIdOfTool).filter((v): v is number => typeof v === 'number')
     if (!Array.isArray(legacy.mcpServerIds) || !legacy.mcpServerIds.length) legacy.mcpServerIds = [...new Set(derived)]
+    // v6：编排扩展字段幂等补默认（标题/介绍/开场白 HTML；核心能力/参考提示词数组；问题建议配置）
+    if (typeof legacy.titleHtml !== 'string') legacy.titleHtml = ''
+    if (typeof legacy.introduction !== 'string') legacy.introduction = ''
+    if (typeof legacy.greeting !== 'string') legacy.greeting = ''
+    if (!Array.isArray(legacy.coreAbilities)) legacy.coreAbilities = []
+    if (!Array.isArray(legacy.referencePrompts)) legacy.referencePrompts = []
+    if (!legacy.nextQuestionConfig || typeof legacy.nextQuestionConfig !== 'object') legacy.nextQuestionConfig = { enabled: true, mode: 'default' }
   })
   skills.forEach(s => {
     const legacy = s as ConfigItem & { platform?: unknown; content?: string; files?: SkillFile[] }

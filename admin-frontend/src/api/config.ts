@@ -62,6 +62,19 @@ export interface ConfigItem {
   description?: string; avatarUrl?: string; baseModel?: string; systemPrompt?: string
   skillIds?: number[]; mcpServerIds?: number[]; suggestedQuestions?: string[]
   capabilities?: Record<string, boolean>; tags?: string[]; visibility?: VisibilityConfig; isDefault?: boolean
+  // ---- 专家编排扩展（Coze 式编排页，v6）----
+  /** 专家标题（富文本 HTML，前台专家卡片大标题） */
+  titleHtml?: string
+  /** 专家介绍（富文本 HTML，前台详情页长文介绍） */
+  introduction?: string
+  /** 开场白（富文本 HTML，会话首条消息） */
+  greeting?: string
+  /** 核心能力（多条短文本，前台蓝色链接列表） */
+  coreAbilities?: string[]
+  /** 参考提示词（多条，前台紫色高亮框，可一键填入输入框） */
+  referencePrompts?: string[]
+  /** 下一步问题建议设置：开关 + 生成模型 + 系统默认/自定义提示词 */
+  nextQuestionConfig?: { enabled: boolean; model?: string; mode: 'default' | 'custom'; customPrompt?: string }
   // ---- 技能（SKILL.md 内容模型，附录 12.2）----
   content?: string; files?: SkillFile[]
   // ---- MCP（双类型连接模型，附录 12.3）----
@@ -82,7 +95,7 @@ export interface ConfigItem {
 export interface Tool { id: number; serverId: number; name: string; enabled: boolean }
 export type ConfigKind = 'plans' | 'experts' | 'skills' | 'mcp/servers' | 'models'
 /** 保存载荷：业务字段 + 版本名称/变更说明（进版本历史）+ 引用确认；capabilities 在专家为布尔开关对象、在模型为标签数组 */
-export type ConfigSavePayload = Partial<Omit<ConfigItem, 'capabilities'>> & { capabilities?: Record<string, boolean> | string[]; versionName?: string; note?: string; confirmReferences?: boolean }
+export type ConfigSavePayload = Partial<Omit<ConfigItem, 'capabilities'>> & { capabilities?: Record<string, boolean> | string[]; versionName?: string; note?: string; confirmReferences?: boolean; /** v6：自动保存跳过版本记录（touch 仍 version+1 但不生成快照） */ skipVersion?: boolean }
 export const listConfig = (kind: ConfigKind) => get<ConfigItem[]>(`/${kind}`)
 export const saveConfig = (kind: ConfigKind, item: ConfigSavePayload) => item.id ? put<ConfigItem>(`/${kind}/${item.id}`, item) : post<ConfigItem>(`/${kind}`, item)
 export const deleteConfig = (kind: ConfigKind, id: number, body?: unknown) => del(`/${kind}/${id}`, body)

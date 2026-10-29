@@ -3,10 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { get, post, ApiError } from '@/api/request'
+import { get, post } from '@/api/request'
 import {
-  listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool, skillStats,
-  exportConfigJson, importExpertJson, importSkillJson, cloneSkill, testMcpConnection, saveModelStatus,
+  listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool,
+  exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
   testModelConnection, listModels, PLATFORMS, PLATFORM_META, platformMeta,
   type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType
 } from '@/api/config'
@@ -14,8 +14,7 @@ import { downloadJsonFile } from '@/utils/jsonio'
 import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
 import PlanFormDrawer from './config/PlanFormDrawer.vue'
-import ExpertFormDrawer from './config/ExpertFormDrawer.vue'
-import SkillFormDrawer from './config/SkillFormDrawer.vue'
+import ExpertOrchestrator from './config/ExpertOrchestrator.vue'
 import McpFormDrawer from './config/McpFormDrawer.vue'
 import ModelFormDrawer from './config/ModelFormDrawer.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
@@ -27,14 +26,9 @@ const auth = useAuthStore()
 const kind = computed(() => (route.path === '/mcp' ? 'mcp/servers' : route.path.slice(1)) as ConfigKind)
 const module = computed(() => (kind.value === 'mcp/servers' ? 'mcp' : kind.value.slice(0, -1)))
 const canEdit = computed(() => auth.hasPerm(`${module.value}:edit`))
-// 专家导出/导入复用 expert:edit；技能导出为独立 skill:export 权限点（v4）
-const canExport = computed(() => (module.value === 'expert' ? canEdit.value : auth.hasPerm('skill:export')))
-const canClone = computed(() => auth.hasPerm('skill:clone'))
 
 const items = ref<ConfigItem[]>([])
 const tools = ref<Tool[]>([])
-const skills = ref<ConfigItem[]>([])
-const servers = ref<ConfigItem[]>([])
 const plans = ref<ConfigItem[]>([])
 const models = ref<LlmModel[]>([])
 const keyword = ref('')
@@ -86,19 +80,18 @@ function modelNameOf(code: string | undefined): string {
 }
 
 // -------------------------------------------------------------- 表单抽屉
-const planDrawer = ref(false), expertDrawer = ref(false), skillDrawer = ref(false), mcpDrawer = ref(false), modelDrawer = ref(false)
+const planDrawer = ref(false), expertDrawer = ref(false), mcpDrawer = ref(false), modelDrawer = ref(false)
 const versionDrawer = ref(false), previewDrawer = ref(false)
 const editItem = ref<Partial<ConfigItem> | null>(null)
 const historyItem = ref<ConfigItem | null>(null)
 const previewItem = ref<ConfigItem | null>(null)
-/** 版本历史 kind：专家/技能/MCP（v5 补齐 MCP 快照历史） */
-const historyKind = computed(() => (module.value === 'skill' ? 'skills' : module.value === 'mcp' ? 'mcp/servers' : 'experts') as 'experts' | 'skills' | 'mcp/servers')
+/** 版本历史 kind：专家/MCP（v5 补齐 MCP 快照历史） */
+const historyKind = computed(() => (module.value === 'mcp' ? 'mcp/servers' : 'experts') as 'experts' | 'skills' | 'mcp/servers')
 
 function blankDraft(): Partial<ConfigItem> {
   if (module.value === 'expert') {
     return { code: '', name: '', description: '', avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'], systemPrompt: '', skillIds: [], mcpServerIds: [], suggestedQuestions: [], tags: [], status: 1, isDefault: false, visibility: { type: 'PUBLIC', planIds: [] } }
   }
-  if (module.value === 'skill') return { code: '', name: '', description: '', content: '', files: [], platforms: ['1688'], status: 1 }
   if (module.value === 'mcp') return { code: '', name: '', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], status: 1 }
   if (module.value === 'model') return { code: '', name: '', provider: '智谱', endpoint: '', remark: '', status: 1 }
   return { code: '', name: '', status: 1, price: 0, durationDays: 30, entitlements: [] }
@@ -108,10 +101,9 @@ async function edit(item?: ConfigItem): Promise<void> {
   const detail = item ? await get<ConfigItem>(`/${kind.value}/${item.id}`) : blankDraft()
   editItem.value = JSON.parse(JSON.stringify(detail))
   if (module.value === 'expert') {
-    ;[skills.value, servers.value, plans.value] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listConfig('plans')])
+    // v6：编排页自加载 skills/servers/plans/models，此处只传详情
     expertDrawer.value = true
-  } else if (module.value === 'skill') skillDrawer.value = true
-  else if (module.value === 'mcp') mcpDrawer.value = true
+  } else if (module.value === 'mcp') mcpDrawer.value = true
   else if (module.value === 'model') modelDrawer.value = true
   else planDrawer.value = true
 }
@@ -130,16 +122,9 @@ async function remove(item: ConfigItem): Promise<void> {
   }
   try {
     await deleteConfig(kind.value, item.id)
-  } catch (e) {
-    if (e instanceof ApiError && e.code === 409 && module.value === 'skill') {
-      try {
-        await ElMessageBox.confirm(`${e.message}。确认继续删除？`, '引用确认')
-        await deleteConfig(kind.value, item.id, { confirmReferences: true })
-      } catch { return }
-    } else {
-      // 模型等模块的 409（如被专家 base_model 引用）由全局错误提示透出，无需二次确认
-      return
-    }
+  } catch {
+    // 409（如模型被专家 base_model 引用）由全局错误提示透出
+    return
   }
   ElMessage.success('已删除')
   await load()
@@ -153,26 +138,14 @@ async function refresh(item: ConfigItem, simulateFailure = false): Promise<void>
 
 async function toggleStatus(item: ConfigItem): Promise<void> {
   const next = item.status === 1 ? 0 : 1
-  if (module.value === 'expert' || module.value === 'skill' || module.value === 'mcp') {
+  if (module.value === 'expert' || module.value === 'mcp') {
     editItem.value = { ...item, status: next }
     if (module.value === 'expert') expertDrawer.value = true
-    else if (module.value === 'skill') skillDrawer.value = true
     else mcpDrawer.value = true
     return
   }
-  try {
-    await saveConfig(kind.value, { id: item.id, code: item.code, name: item.name, status: next })
-    await load()
-  } catch (e) {
-    // 技能停用被专家引用时 409：二次确认后携带引用确认重试
-    if (e instanceof ApiError && e.code === 409 && module.value === 'skill') {
-      try {
-        await ElMessageBox.confirm(`${e.message}。确认继续停用？`, '引用确认')
-        await saveConfig(kind.value, { id: item.id, code: item.code, name: item.name, status: next, confirmReferences: true })
-        await load()
-      } catch { /* 取消或仍失败 */ }
-    }
-  }
+  await saveConfig(kind.value, { id: item.id, code: item.code, name: item.name, status: next })
+  await load()
 }
 
 /** 模型启停：走独立状态端点 */
@@ -204,19 +177,17 @@ async function history(item: ConfigItem): Promise<void> {
 }
 
 async function exportJson(item: ConfigItem): Promise<void> {
-  // 导出仅专家/技能提供；kind 与版本历史独立计算
-  const kind = module.value === 'skill' ? 'skills' : 'experts'
-  const { filename, content } = await exportConfigJson(kind, item.id)
+  const { filename, content } = await exportConfigJson('experts', item.id)
   downloadJsonFile(filename, content)
   ElMessage.success(`已导出 ${filename}`)
 }
 
-/** 导入预设：粘贴导出的 JSON 内容（专家/技能通用；code 冲突返回 409） */
+/** 导入预设：粘贴导出的 JSON 内容（code 冲突返回 409） */
 async function importJson(): Promise<void> {
   let value: string
   try {
     ({ value } = await ElMessageBox.prompt(
-      module.value === 'expert' ? '粘贴专家预设 JSON（内容为「导出预设JSON」生成的文件）' : '粘贴技能 JSON（内容为「导出」生成的文件）',
+      '粘贴专家预设 JSON（内容为「导出预设JSON」生成的文件）',
       '导入预设',
       {
         inputType: 'textarea',
@@ -231,22 +202,9 @@ async function importJson(): Promise<void> {
     return
   }
   const payload = JSON.parse(value)
-  if (module.value === 'expert') await importExpertJson(payload)
-  else await importSkillJson(payload)
+  await importExpertJson(payload)
   ElMessage.success('导入成功（新建条目，如编码冲突请修改 JSON 中的 code 后重试）')
   await load()
-}
-
-// -------------------------------------------------------------- 技能：克隆 / 统计
-async function clone(item: ConfigItem): Promise<void> {
-  await cloneSkill(item.id)
-  ElMessage.success('已克隆为停用副本，可编辑后上架')
-  await load()
-}
-
-async function stats(item: ConfigItem): Promise<void> {
-  const s = await skillStats(item.id)
-  await ElMessageBox.alert(`近7天 ${s.calls7} 次；近30天 ${s.calls30} 次；成功率 ${(s.successRate * 100).toFixed(1)}%。来源：${s.source}`, '调用统计')
 }
 
 // -------------------------------------------------------------- MCP：连接测试 / 工具发现 / 健康检查
@@ -285,7 +243,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <el-option label="启用 / 上架" :value="1" /><el-option label="停用 / 下架" :value="0" />
       </el-select>
       <el-select
-        v-if="module === 'expert' || module === 'skill' || module === 'mcp'"
+        v-if="module === 'expert' || module === 'mcp'"
         v-model="platformFilter"
         multiple
         collapse-tags
@@ -297,7 +255,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </el-select>
       <el-button @click="load">刷新列表</el-button>
       <el-button v-if="canEdit" type="primary" @click="edit()">新建</el-button>
-      <el-button v-if="canEdit && (module === 'expert' || module === 'skill')" @click="importJson()">导入预设 JSON</el-button>
+      <el-button v-if="canEdit && module === 'expert'" @click="importJson()">导入预设 JSON</el-button>
     </div>
     <el-table v-loading="loading" :data="filtered">
       <el-table-column prop="name" label="名称" min-width="170">
@@ -345,7 +303,6 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <template #default="{ row }">{{ VISIBILITY_LABELS[row.visibility?.type] || '-' }}<small v-if="row.visibility?.type === 'PLAN'">（{{ (row.visibility?.planIds || []).length }}套餐）</small></template>
       </el-table-column>
       <el-table-column v-if="module === 'expert'" label="绑定技能/MCP" width="115"><template #default="{ row }">{{ (row.skillIds || []).length }} / {{ (row.mcpServerIds || []).length }}</template></el-table-column>
-      <el-table-column v-if="module === 'skill'" label="绑定助手数" width="100"><template #default="{ row }">{{ row.boundExpertCount ?? 0 }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="类型" width="95"><template #default="{ row }"><el-tag size="small" :type="row.connType === 'MCP' ? 'success' : 'warning'">{{ row.connType || 'MCP' }}</el-tag></template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="传输方式" width="165"><template #default="{ row }"><el-tag v-if="row.connType === 'MCP'" size="small" type="info">{{ row.transport || '-' }}</el-tag><span v-else class="muted">schema 解析</span></template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="工具数" width="75"><template #default="{ row }">{{ tools.filter((t) => t.serverId === row.id).length }}</template></el-table-column>
@@ -354,7 +311,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'plan'" label="价格 / 天数" width="130"><template #default="{ row }">¥{{ row.price }} / {{ row.durationDays }}天<br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
       <el-table-column label="状态" width="95">
         <template #default="{ row }">
-          <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' || module === 'skill' ? '上架' : '启用') : '停用' }}</el-tag>
+          <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' ? '上架' : '启用') : '停用' }}</el-tag>
           <small v-if="row.isDefault"> 默认</small>
         </template>
       </el-table-column>
@@ -368,10 +325,9 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <template #default="{ row }">
           <el-button link type="primary" @click="edit(row)">{{ canEdit ? '编辑' : '详情' }}</el-button>
           <el-button v-if="module === 'expert'" link type="success" @click="preview(row)">前台预览</el-button>
-          <el-button v-if="module === 'expert' || module === 'skill' || module === 'mcp'" link @click="history(row)">版本历史</el-button>
+          <el-button v-if="module === 'expert' || module === 'mcp'" link @click="history(row)">版本历史</el-button>
           <template v-if="canEdit">
             <el-button v-if="module === 'expert'" link :disabled="row.status === 1 && row.isDefault" @click="toggleStatus(row)">{{ row.status === 1 ? '下架' : '上架' }}</el-button>
-            <el-button v-if="module === 'skill'" link :disabled="row.status !== 1" @click="toggleStatus(row)">{{ row.status === 1 ? '停用' : '启用' }}</el-button>
             <el-button v-if="module === 'model'" link @click="toggleModel(row)">{{ row.status === 1 ? '停用' : '启用' }}</el-button>
             <el-button v-if="module === 'model'" link type="success" @click="testModel(row)">连通测试</el-button>
             <template v-if="module !== 'model'">
@@ -380,14 +336,12 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
             </template>
           </template>
           <el-button v-if="module === 'expert' && canEdit && !row.isDefault" link @click="setDefault(row)">设为默认</el-button>
-          <el-button v-if="module === 'skill' && canClone" link @click="clone(row)">克隆</el-button>
-          <el-button v-if="(module === 'expert' || module === 'skill') && canExport" link @click="exportJson(row)">导出</el-button>
+          <el-button v-if="module === 'expert' && canEdit" link @click="exportJson(row)">导出</el-button>
           <el-button v-if="module === 'mcp' && canEdit" link type="success" @click="testConnection(row)">连接测试</el-button>
           <template v-if="module === 'mcp' && canEdit">
             <el-button link @click="action(row, 'discover')">发现工具</el-button>
             <el-button link @click="action(row, 'health-check')">健康检查</el-button>
           </template>
-          <el-button v-if="module === 'skill'" link @click="stats(row)">统计</el-button>
           <el-button v-if="canEdit" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -414,8 +368,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
   </el-card>
 
   <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
-  <ExpertFormDrawer v-model="expertDrawer" :item="editItem" :skills="skills" :servers="servers" :plans="plans" :models="models" :can-edit="canEdit" @saved="onSaved" />
-  <SkillFormDrawer v-model="skillDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <ExpertOrchestrator v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <VersionDrawer v-model="versionDrawer" :kind="historyKind" :item="historyItem" :can-edit="canEdit" @restored="load" />

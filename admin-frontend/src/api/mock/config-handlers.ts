@@ -55,7 +55,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','entitlements']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','suggestedQuestions','capabilities','tags','visibility','isDefault','intro','modelParams','mcpToolIds']:module==='skill'?['description','content','files','paramSchema','execConfig']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','entitlements']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','suggestedQuestions','capabilities','tags','visibility','isDefault','intro','modelParams','mcpToolIds','titleHtml','introduction','greeting','coreAbilities','referencePrompts','nextQuestionConfig']:module==='skill'?['description','content','files','paramSchema','execConfig']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter'])] as Array<keyof ConfigItem>
       for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
       item.name=String(item.name).trim();item.code=String(item.code).trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
@@ -88,6 +88,17 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!Array.isArray(item.mcpServerIds) || item.mcpServerIds.some(id=>!db.servers.some(s=>s.id===id))) fail('绑定的MCP服务器不存在')
         if(!Array.isArray(item.suggestedQuestions) || item.suggestedQuestions.some(q=>typeof q!=='string' || !q.trim())) fail('建议问题须为非空字符串数组')
         if(!Array.isArray(item.tags) || item.tags.some(t=>typeof t!=='string' || !t.trim())) fail('标签须为非空字符串数组')
+        // v6：编排扩展字段宽松校验（标题/介绍/开场白 HTML 字符串；核心能力/参考提示词字符串数组；问题建议配置对象）
+        if(item.titleHtml!==undefined && typeof item.titleHtml!=='string') fail('专家标题须为字符串')
+        if(item.introduction!==undefined && typeof item.introduction!=='string') fail('专家介绍须为字符串')
+        if(item.greeting!==undefined && typeof item.greeting!=='string') fail('开场白须为字符串')
+        if(item.coreAbilities!==undefined && (!Array.isArray(item.coreAbilities) || item.coreAbilities.some(a=>typeof a!=='string'))) fail('核心能力须为字符串数组')
+        if(item.referencePrompts!==undefined && (!Array.isArray(item.referencePrompts) || item.referencePrompts.some(a=>typeof a!=='string'))) fail('参考提示词须为字符串数组')
+        if(item.nextQuestionConfig!==undefined) {
+          const nq=item.nextQuestionConfig
+          if(!nq || typeof nq!=='object' || Array.isArray(nq) || typeof nq.enabled!=='boolean' || !['default','custom'].includes(nq.mode)) fail('下一步问题建议配置无效')
+          if(nq.mode==='custom' && !String(nq.customPrompt||'').trim()) fail('自定义提示词模式下须填写提示词内容')
+        }
         if(item.capabilities===undefined) item.capabilities=defaultCapabilities()
         const cap=item.capabilities
         if(!cap || typeof cap!=='object' || Array.isArray(cap) || Object.values(cap).some(v=>typeof v!=='boolean')) fail('能力开关须为布尔值对象')
@@ -339,7 +350,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const custom=String((input as Record<string,unknown>).versionName || '').trim()
     return custom || `恢复自 ${hist.versionName || `v${hist.version}`}`
   }
-  const RESTORE_FIELDS = ['code','name','status','platforms','description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','suggestedQuestions','capabilities','tags','visibility','isDefault','intro','modelParams','mcpToolIds','content','files','paramSchema','execConfig'] as readonly (keyof ConfigItem)[]
+  const RESTORE_FIELDS = ['code','name','status','platforms','description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','suggestedQuestions','capabilities','tags','visibility','isDefault','intro','modelParams','mcpToolIds','titleHtml','introduction','greeting','coreAbilities','referencePrompts','nextQuestionConfig','content','files','paramSchema','execConfig'] as readonly (keyof ConfigItem)[]
   route('GET','/experts/:id/versions',ctx=>{perm(ctx,'expert:view');const item=find(db.experts,ctx.params.id);return (db.expertVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
   route('POST','/experts/:id/restore',ctx=>{
     perm(ctx,'expert:edit');const item=find(db.experts,ctx.params.id)
