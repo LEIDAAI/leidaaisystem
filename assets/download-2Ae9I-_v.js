@@ -1,0 +1,1 @@
+function d(t,c){const o=URL.createObjectURL(c),e=document.createElement("a");e.href=o,e.download=t,document.body.appendChild(e),e.click(),document.body.removeChild(e),URL.revokeObjectURL(o)}function n(t,c,o="text/csv;charset=utf-8"){d(t,new Blob(["\uFEFF"+c],{type:o}))}export{n as a,d};
