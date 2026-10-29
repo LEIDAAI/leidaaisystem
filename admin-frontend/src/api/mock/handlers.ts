@@ -647,7 +647,8 @@ export async function handleMockRequest(config: InternalAxiosRequestConfig): Pro
     adminId = adminIdOfToken
   }
   try {
-    const data = matched.handler({ params, query, body, adminId, token })
+    // handler 可能为异步（如草稿预览演示引擎的人为延迟路由），统一 await
+    const data = await matched.handler({ params, query, body, adminId, token })
     persistMockDB()
     return { code: 0, msg: 'ok', data: data == null ? null : JSON.parse(JSON.stringify(data)) }
   } catch (e) {

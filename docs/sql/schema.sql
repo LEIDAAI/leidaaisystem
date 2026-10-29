@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS `expert` (
   `name`                VARCHAR(128) NOT NULL COMMENT '选择器显示名',
   `description`         VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '能力摘要（前台展示）',
   `avatar_url`          VARCHAR(512) NOT NULL DEFAULT '',
-  `base_model`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '基础模型（如 GLM-5.3），只选不训练',
+  `base_model`          VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '基础模型（v0.5 起存 model_config.code；旧显示名迁移时映射/自动注册）',
+  `platforms`           JSON         NOT NULL COMMENT '平台维度数组（v0.5）：1688/OZON/AMAZON/TEMU，至少一个（多选）',
   `system_prompt`       TEXT         NOT NULL COMMENT '系统提示词（角色/技能路由/调用纪律/输出格式）',
   `skill_ids`           JSON         NOT NULL COMMENT '绑定技能 ID 数组（SKILL.md 内容型）',
   `mcp_server_ids`      JSON         NOT NULL COMMENT '绑定工具服务器连接 ID 数组（MCP/OpenAPI）',
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS `skill` (
   `description`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '触发意图，供助手路由判断',
   `content`      MEDIUMTEXT   NOT NULL COMMENT 'SKILL.md Markdown 正文；建议按 触发条件/不适用范围/参数契约/执行步骤/结果校验/输出约定/异常边界 分节',
   `files`        JSON         NOT NULL COMMENT '附属文件数组 [{name,content}]（演示级）',
+  `platforms`    JSON         NOT NULL COMMENT '平台维度数组（v0.5）：1688/OZON/AMAZON/TEMU，至少一个（多选）',
   `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0停用（被专家引用时停用/删除需确认）',
   `version`      INT          NOT NULL DEFAULT 1 COMMENT '每次保存生成快照（见 skill_version 表）',
   `param_schema` JSON         NULL COMMENT '[v4 起降级为可选高级字段] 旧入参 JSON Schema（留空不修改，兼容旧执行模型）',
@@ -128,6 +130,7 @@ CREATE TABLE IF NOT EXISTS `mcp_server` (
   `auth_type`       VARCHAR(16)  NOT NULL DEFAULT 'NONE' COMMENT 'NONE/BEARER/API_KEY/HEADER（冗余自 auth_config.type，便于检索）',
   `auth_config`     JSON         NULL COMMENT '鉴权信息（应用层加密存储，接口只回显掩码；API_KEY/HEADER 需 headerName）',
   `tool_filter`     JSON         NOT NULL COMMENT '工具名过滤清单（空=开放全部），工具发现落库 mcp_tool 时生效',
+  `platforms`       JSON         NOT NULL COMMENT '平台维度数组（v0.5）：1688/OZON/AMAZON/TEMU，至少一个（多选）',
   `access_scope`    VARCHAR(16)  NOT NULL DEFAULT 'INHERIT' COMMENT '前台可见范围：INHERIT=随绑定专家 visibility 决定（当前实现）；预留 PUBLIC/PLAN/PRIVATE 独立控制',
   `health_status`   VARCHAR(16)  NOT NULL DEFAULT 'UNKNOWN' COMMENT 'UNKNOWN/HEALTHY/UNAVAILABLE',
   `last_health_at`  DATETIME     NULL,
@@ -140,25 +143,59 @@ CREATE TABLE IF NOT EXISTS `mcp_server` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP/OpenAPI 工具服务器连接';
 
 -- v0.4 新增：专家/技能版本快照（每次保存生成，支持查看差异与恢复生成新版本）
+-- v0.5：快照表统一增加版本名称（版本确认框生成，默认 yyyyMMddHHmmss）与操作人列
 CREATE TABLE IF NOT EXISTS `expert_version` (
-  `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  `expert_id`   BIGINT UNSIGNED NOT NULL,
-  `version`     INT          NOT NULL COMMENT '对应的 expert.version',
-  `note`        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '变更说明',
-  `snapshot`    JSON         NOT NULL COMMENT '全量配置快照（凭据/提示词读取时按策略脱敏）',
-  `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `expert_id`    BIGINT UNSIGNED NOT NULL,
+  `version`      INT          NOT NULL COMMENT '对应的 expert.version',
+  `version_name` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '版本名称（v0.5；版本确认框默认 yyyyMMddHHmmss，可改）',
+  `operator`     VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '操作人（冗余用户名）',
+  `note`         VARCHAR(255) NOT NULL DEFAULT '' COMMENT '变更说明',
+  `snapshot`     JSON         NOT NULL COMMENT '全量配置快照（凭据/提示词读取时按策略脱敏）',
+  `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY `uk_expert_version` (`expert_id`, `version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='专家（助手预设）版本快照';
 
 CREATE TABLE IF NOT EXISTS `skill_version` (
-  `id`          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  `skill_id`    BIGINT UNSIGNED NOT NULL,
-  `version`     INT          NOT NULL COMMENT '对应的 skill.version',
-  `note`        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '变更说明',
-  `snapshot`    JSON         NOT NULL COMMENT 'SKILL.md 全量快照',
-  `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `skill_id`     BIGINT UNSIGNED NOT NULL,
+  `version`      INT          NOT NULL COMMENT '对应的 skill.version',
+  `version_name` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '版本名称（v0.5；版本确认框默认 yyyyMMddHHmmss，可改）',
+  `operator`     VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '操作人（冗余用户名）',
+  `note`         VARCHAR(255) NOT NULL DEFAULT '' COMMENT '变更说明',
+  `snapshot`     JSON         NOT NULL COMMENT 'SKILL.md 全量快照',
+  `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY `uk_skill_version` (`skill_id`, `version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能版本快照';
+
+-- v0.5 新增：MCP 连接配置版本快照（补齐：含连接配置与工具绑定，支持历史/差异/恢复）
+CREATE TABLE IF NOT EXISTS `mcp_version` (
+  `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `server_id`    BIGINT UNSIGNED NOT NULL,
+  `version`      INT          NOT NULL COMMENT '对应的 mcp_server.version',
+  `version_name` VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '版本名称（版本确认框默认 yyyyMMddHHmmss，可改）',
+  `operator`     VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '操作人（冗余用户名）',
+  `note`         VARCHAR(255) NOT NULL DEFAULT '' COMMENT '变更说明',
+  `snapshot`     JSON         NOT NULL COMMENT '连接配置全量快照（connType/endpoint/path/transport/authConfig 加密存储/toolFilter）',
+  `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY `uk_server_version` (`server_id`, `version`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 连接配置版本快照（v0.5）';
+
+-- v0.5 新增：基础模型注册表（专家 base_model 由此选择，存 code）
+CREATE TABLE IF NOT EXISTS `model_config` (
+  `id`             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `code`           VARCHAR(64)  NOT NULL COMMENT '模型编码（如 glm-5.3），唯一，创建后不可改；专家 base_model 引用',
+  `name`           VARCHAR(128) NOT NULL COMMENT '显示名（如 GLM-5.3）',
+  `provider`       VARCHAR(32)  NOT NULL COMMENT '供应商字典：智谱/OpenAI兼容/Anthropic兼容/自定义（可扩展）',
+  `endpoint`       VARCHAR(512) NOT NULL DEFAULT '' COMMENT '接入地址 base URL（如 https://open.bigmodel.cn/api/paas/v4，仅示意）',
+  `api_key`        VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'API Key（应用层加密存储；接口只回显掩码 ****abcd，永不回显明文；更新留空=不修改）',
+  `default_params` JSON         NULL COMMENT '默认生成参数 JSON（temperature、max_tokens 等）',
+  `remark`         VARCHAR(255) NOT NULL DEFAULT '',
+  `status`         TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0停用（停用后专家表单不可再选）',
+  `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uk_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='基础 LLM 模型注册表（v0.5）';
 
 -- ---------------------------------------------------------------- v3 → v4 增量 ALTER 参考（已有表勿重建时使用）
 -- ALTER TABLE `expert`
@@ -190,6 +227,34 @@ CREATE TABLE IF NOT EXISTS `skill_version` (
 -- UPDATE `mcp_server` SET `args`='[]', `tool_filter`='[]', `transport`='STREAMABLE_HTTP' WHERE `transport`='HTTP';
 -- UPDATE `mcp_server` s JOIN (SELECT id, JSON_UNQUOTE(JSON_EXTRACT(auth_config,'$.type')) t FROM mcp_server) x ON s.id=x.id
 --   SET s.auth_type=COALESCE(x.t,'NONE');
+
+-- ---------------------------------------------------------------- v4 → v5 增量 ALTER 参考（模型管理 / 平台维度 / 版本名称；已有表勿重建时使用）
+-- ALTER TABLE `expert`
+--   ADD COLUMN `platforms` JSON NOT NULL AFTER `base_model` COMMENT '平台维度数组：1688/OZON/AMAZON/TEMU，至少一个';
+-- UPDATE `expert` SET `platforms`=JSON_ARRAY('1688')
+--   WHERE JSON_LENGTH(`platforms`)=0;  -- 默认回填 1688；可按 code 关键词细分：
+-- UPDATE `expert` SET `platforms`=JSON_ARRAY('OZON')   WHERE `code` LIKE '%ozon%';
+-- UPDATE `expert` SET `platforms`=JSON_ARRAY('AMAZON') WHERE `code` LIKE '%amazon%' OR `name` LIKE '%亚马逊%';
+-- UPDATE `expert` SET `platforms`=JSON_ARRAY('TEMU')   WHERE `code` LIKE '%temu%';
+-- ALTER TABLE `skill`
+--   ADD COLUMN `platforms` JSON NOT NULL AFTER `files` COMMENT '平台维度数组：1688/OZON/AMAZON/TEMU，至少一个';
+-- UPDATE `skill` SET `platforms`=JSON_ARRAY('1688') WHERE JSON_LENGTH(`platforms`)=0;  -- 同上按关键词细分
+-- ALTER TABLE `mcp_server`
+--   ADD COLUMN `platforms` JSON NOT NULL AFTER `tool_filter` COMMENT '平台维度数组：1688/OZON/AMAZON/TEMU，至少一个';
+-- UPDATE `mcp_server` SET `platforms`=JSON_ARRAY('1688') WHERE JSON_LENGTH(`platforms`)=0;  -- 同上按关键词细分
+-- -- 版本快照表补版本名称与操作人（存量条目按其 created_at 时间戳 yyyyMMddHHmmss 回填）
+-- ALTER TABLE `expert_version`
+--   ADD COLUMN `version_name` VARCHAR(64) NOT NULL DEFAULT '' AFTER `version`,
+--   ADD COLUMN `operator` VARCHAR(64) NOT NULL DEFAULT '' AFTER `version_name`;
+-- UPDATE `expert_version` SET `version_name`=DATE_FORMAT(`created_at`,'%Y%m%d%H%i%s') WHERE `version_name`='';
+-- ALTER TABLE `skill_version`
+--   ADD COLUMN `version_name` VARCHAR(64) NOT NULL DEFAULT '' AFTER `version`,
+--   ADD COLUMN `operator` VARCHAR(64) NOT NULL DEFAULT '' AFTER `version_name`;
+-- UPDATE `skill_version` SET `version_name`=DATE_FORMAT(`created_at`,'%Y%m%d%H%i%s') WHERE `version_name`='';
+-- -- 旧 base_model 显示名/未注册值：以 model_config 为准（映射 code 或注册为「自定义」模型，应用层幂等执行，SQL 仅示意）
+-- INSERT IGNORE INTO `model_config` (`code`, `name`, `provider`)
+-- SELECT DISTINCT `base_model`, `base_model`, '自定义' FROM `expert`
+--   WHERE `base_model` <> '' AND `base_model` NOT IN (SELECT `code` FROM `model_config`);
 
 CREATE TABLE IF NOT EXISTS `mcp_tool` (
   `id`           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -240,8 +305,11 @@ INSERT IGNORE INTO `admin_permission` (`code`, `name`, `module`, `type`, `sort`)
   ('mcp:view',        'MCP查看',      'mcp',      1, 69),
   ('chat:restore',    '对话恢复',     'chat',      2, 83),
   ('skill:clone',     '技能克隆',     'skill',     2, 61),
-  ('skill:export',    '技能导出',     'skill',     2, 62);
+  ('skill:export',    '技能导出',     'skill',     2, 62),
+  ('model:view',      '模型查看',     'model',     1, 71),
+  ('model:edit',      '模型编辑',     'model',     2, 72);
   -- 专家导出/导入按约定复用 expert:edit，不设独立 expert:export 权限点（v4）
+  -- 模型管理 model:view/model:edit 为 v5 新增权限点：超管全量、运营增量授予，support/viewer 不授予
 
 -- 默认角色
 INSERT IGNORE INTO `admin_role` (`code`, `name`, `remark`) VALUES
@@ -256,7 +324,7 @@ SELECT r.id, p.id FROM `admin_role` r CROSS JOIN `admin_permission` p
 WHERE r.code = 'SUPER_ADMIN';
 INSERT IGNORE INTO `admin_role_permission` (`role_id`, `permission_id`)
 SELECT r.id, p.id FROM `admin_role` r CROSS JOIN `admin_permission` p
-WHERE r.code = 'OPS' AND p.code IN ('plan:view', 'plan:edit', 'skill:clone', 'skill:export');
+WHERE r.code = 'OPS' AND p.code IN ('plan:view', 'plan:edit', 'skill:clone', 'skill:export', 'model:view', 'model:edit');
 INSERT IGNORE INTO `admin_role_permission` (`role_id`, `permission_id`)
 SELECT r.id, p.id FROM `admin_role` r CROSS JOIN `admin_permission` p
 WHERE r.code = 'SUPPORT' AND p.code = 'chat:view';

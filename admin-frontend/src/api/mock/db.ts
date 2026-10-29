@@ -153,9 +153,13 @@ const PERMISSIONS: MockPermission[] = [
 ;['plan:view','plan:edit','expert:view','skill:view','mcp:view','chat:restore'].forEach((code, i) => PERMISSIONS.push({ id: 20+i, code, name: ({ 'plan:view':'套餐查看','plan:edit':'套餐编辑','expert:view':'专家查看','skill:view':'技能查看','mcp:view':'MCP查看','chat:restore':'对话恢复' } as Record<string,string>)[code], module:code.split(':')[0], type:code.endsWith(':view')?1:2, sort:100+i }))
 // v4 新增：技能克隆/导出权限点（专家导出/导入按约定复用 expert:edit，不新增权限点；见 schema.sql 同步授权）
 ;([['skill:clone','技能克隆','skill',61],['skill:export','技能导出','skill',62]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: code==='skill:clone'?27:28, code, name, module, type: 2, sort }))
+// v5 新增：模型管理权限点（超管全量、运营增量授予；viewer 不授予）
+;([['model:view','模型查看','model',71,1],['model:edit','模型编辑','model',72,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 29+i, code, name, module, type, sort }))
 const ALL_PERM_IDS = PERMISSIONS.map((p) => p.id)
 /** v4 新增权限点 id（运营角色增量授予） */
 export const V4_PERMISSION_IDS = [27, 28]
+/** v5 新增权限点 id（运营角色增量授予） */
+export const V5_PERMISSION_IDS = [29, 30]
 
 // -------------------------------------------------------------- 角色
 const ROLES: MockRole[] = [
@@ -169,6 +173,7 @@ const ROLES: MockRole[] = [
     permissionIds: [1, 5, 6, 7, 8, 9, 10, 11, 19],
     createdAt: daysAgo(280)
   },
+  // v5：模型管理仅超管/运营持有；客服与只读均不授予（无模型菜单，见下方无条件回收）
   { id: 3, code: 'SUPPORT', name: '客服', remark: '用户/订单查看 + 对话查看', status: 1, permissionIds: [1, 5, 8, 15], createdAt: daysAgo(270) },
   { id: 4, code: 'VIEWER', name: '只读', remark: '仅查看', status: 1, permissionIds: [1, 5, 8, 18], createdAt: daysAgo(260) },
   { id: 5, code: 'DATA_ANALYST', name: '数据分析', remark: '数据导出与审计', status: 1, permissionIds: [1, 5, 8, 10, 18], createdAt: daysAgo(120) }
@@ -452,7 +457,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4].includes(saved.version)) {
+    if ([1, 2, 3, 4, 5].includes(saved.version)) {
       Object.assign(db, saved.data, { permissions: PERMISSIONS, tokens: new Map(saved.tokens) })
       idSeq = saved.idSeq ?? 5000
       if (saved.version === 1) {
@@ -463,9 +468,9 @@ try {
             if (!r.permissionIds.includes(remarkPermissionId)) r.permissionIds.push(remarkPermissionId)
           })
       }
-      // v3 → v4：附录12 模型改造（助手预设 / SKILL.md / 双类型连接）只增不删的增量迁移；
-      // 已存 v4 数据同样过一遍迁移（能力键净化、旧 file 键映射等，幂等）
-      if (saved.version <= 4) migrateLegacyConfig(db)
+      // v3 → v4 → v5：附录12 助手体系模型改造与模型管理/平台维度/版本名称（只增不删的增量迁移，幂等）；
+      // 已存 v5 数据同样过一遍迁移（能力键净化、平台/版本名称回填等）
+      if (saved.version <= 5) migrateLegacyConfig(db)
     }
   }
 } catch {
@@ -483,12 +488,18 @@ if (storedVersion < 4) {
   // v4 新增权限点：超管强制全量，运营增量授予技能克隆/导出
   db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V4_PERMISSION_IDS])] })
 }
+if (storedVersion < 5) {
+  // v5 新增权限点：运营增量授予模型管理查看/编辑
+  db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V5_PERMISSION_IDS])] })
+}
+// v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
+db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
 persistMockDB()
 
 export function persistMockDB(): void {
   const { tokens, permissions: _permissions, ...data } = db
-  localStorage.setItem(DB_KEY, JSON.stringify({ version: 4, data, tokens: [...tokens], idSeq }))
+  localStorage.setItem(DB_KEY, JSON.stringify({ version: 5, data, tokens: [...tokens], idSeq }))
 }
 
 export function nextMockId(): number {
@@ -497,6 +508,11 @@ export function nextMockId(): number {
 
 export function nowStr(): string {
   return fmt(dayjs())
+}
+
+/** 版本名称自动生成戳：yyyyMMddHHmmss（本地时间，v5） */
+export function stampStr(): string {
+  return dayjs().format('YYYYMMDDHHmmss')
 }
 
 /** 某管理员的全部权限点编码（按角色聚合） */

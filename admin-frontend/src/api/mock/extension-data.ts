@@ -1,8 +1,10 @@
-import type { ConfigItem, SkillFile, Tool } from '../config'
+import dayjs from 'dayjs'
+import type { ConfigItem, LlmModel, PlatformType, SkillFile, Tool } from '../config'
 
 export interface Chat { id: number; userId: number; expertId: number; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
-export interface ConfigVersion { version: number; note: string; createdAt: string; snapshot: ConfigItem }
+export interface ConfigVersion { version: number; versionName?: string; operator?: string; note: string; createdAt: string; snapshot: ConfigItem }
 export interface Extensions {
+  models: LlmModelRow[]
   plans: ConfigItem[]; experts: ConfigItem[]; skills: ConfigItem[]; servers: ConfigItem[]; tools: Tool[]
   chats: Chat[]; promptHistory: Record<string, Array<{ version: number; systemPrompt: string; createdAt: string }>>
   skillCalls: Array<{ skillId: number; success: boolean; createdAt: string }>
@@ -10,11 +12,26 @@ export interface Extensions {
   expertVersions: Record<string, ConfigVersion[]>
   /** 技能 SKILL.md 内容版本快照：每次保存生成，可 diff/恢复 */
   skillVersions: Record<string, ConfigVersion[]>
+  /** MCP 连接配置版本快照（含连接配置与工具绑定）：每次保存生成，可 diff/恢复（v5 补齐） */
+  mcpVersions: Record<string, ConfigVersion[]>
 }
+
+/** 存储行：在 API 形态基础上额外持有 API Key 明文（仅 mock 存储层，任何接口响应不得返回） */
+export type LlmModelRow = LlmModel & { apiKey?: string }
+
+/** 平台枚举（与 schema.sql platforms 增列注释一致；多选数组至少一个，无单值「通用」） */
+export const PLATFORM_VALUES: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU']
 
 /** 专家能力开关字典（用户确认的 OpenWebUI 能力集；v3 旧键 file 映射为 file_context+file_upload） */
 export const CAPABILITY_KEYS = ['file_context', 'file_upload', 'vision', 'web_search', 'image_generation', 'code_interpreter', 'terminal', 'citations', 'status_updates', 'memory', 'builtin_tools', 'usage'] as const
 export type CapabilityKey = (typeof CAPABILITY_KEYS)[number]
+
+/** 能力开关显示名（表单与对话预览面板共用） */
+export const CAPABILITY_LABELS: Record<string, string> = {
+  file_context: '文件上下文', file_upload: '文件上传', vision: '图片理解', web_search: '联网搜索',
+  image_generation: '图像生成', code_interpreter: '代码解释器', terminal: '终端执行',
+  citations: '引用来源', status_updates: '状态推送', memory: '长期记忆', builtin_tools: '内置工具', usage: '用量统计'
+}
 
 export function defaultCapabilities(partial: Record<string, boolean> = {}): Record<CapabilityKey, boolean> {
   const caps = {
@@ -60,14 +77,42 @@ export function skillMdOf(name: string, description: string): string {
   return SKILL_MD_TEMPLATE.replace('{技能名称}', name).replace('<!-- 描述什么意图/问题应路由到本技能 -->', description || '（待补充触发意图）')
 }
 
+/** 演示网关（内网 OpenAI 兼容端点）：种子与迁移共用；专家预览「真实调用」经此走通演示（Key 仅存 mock db，界面只显掩码） */
+export const DEMO_GATEWAY_ENDPOINT = 'http://192.168.1.10:8080/v1'
+export const DEMO_GATEWAY_KEY = 'sk-4a2e997b4531ad4ed0c85d499ed00273ef06962c0790862929171a51352eb718'
+
+/** 基础 LLM 模型注册预置（v5：GLM-5.3/GLM-4.7/deepseek-v3/qwen-max；glm-5.3 指向内网演示网关可真实调用） */
+export function seedLlmModels(): LlmModelRow[] {
+  const createdAt = new Date().toISOString()
+  return [
+    { id: 41, code: 'glm-5.3', name: 'GLM-5.3', provider: 'OpenAI兼容', endpoint: DEMO_GATEWAY_ENDPOINT, apiKey: DEMO_GATEWAY_KEY, defaultParams: { temperature: 0.7, max_tokens: 4096 }, remark: '1688选品助手默认基础模型（内网演示网关）', status: 1, createdAt, updatedAt: createdAt },
+    { id: 42, code: 'glm-4.7', name: 'GLM-4.7', provider: '智谱', endpoint: 'https://open.bigmodel.cn/api/paas/v4', apiKey: 'sk-mock-glm47-3c4d', defaultParams: { temperature: 0.7, max_tokens: 4096 }, remark: '', status: 1, createdAt, updatedAt: createdAt },
+    { id: 43, code: 'deepseek-v3', name: 'DeepSeek-V3', provider: 'OpenAI兼容', endpoint: 'https://api.deepseek.com/v1', apiKey: 'sk-mock-ds3-5e6f', defaultParams: { temperature: 0.5, max_tokens: 8192 }, remark: 'OpenAI 兼容接入（端点仅示意）', status: 1, createdAt, updatedAt: createdAt },
+    { id: 44, code: 'qwen-max', name: 'Qwen-Max', provider: 'OpenAI兼容', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiKey: '', defaultParams: { temperature: 0.7, max_tokens: 6000 }, remark: 'OpenAI 兼容接入（端点仅示意）', status: 1, createdAt, updatedAt: createdAt }
+  ]
+}
+
+/**
+ * 存量数据平台回填（v4→v5 迁移规则）：按 code/name/description 关键词推断——
+ * ozon→OZON、amazon/亚马逊→AMAZON、temu→TEMU，否则默认 ['1688']。
+ */
+export function detectPlatforms(item: Pick<ConfigItem, 'code' | 'name' | 'description'>): PlatformType[] {
+  const text = `${item.code || ''} ${item.name || ''} ${item.description || ''}`.toLowerCase()
+  if (/ozon/.test(text)) return ['OZON']
+  if (/amazon|亚马逊/.test(text)) return ['AMAZON']
+  if (/temu/.test(text)) return ['TEMU']
+  return ['1688']
+}
+
 export function seedExtensions(): Extensions {
   const base = { status: 1, version: 1, updatedAt: new Date().toISOString(), refreshStatus: 'APPLIED' as const, appliedVersion: 1, refreshMessage: 'Mock 演示配置已生效；未连接 AgentScope' }
   // 专家 = 助手预设（附录 12.1）；id 1 对齐 1688选品助手完整示例：7 个绑定技能 + server:gateway + 3 条建议问题
+  // v5：baseModel 存模型管理中的模型 code（显示名经模型表解析）；platforms 为平台维度多选（至少一个）
   const experts: ConfigItem[] = [
     {
       ...base, id: 1, code: 'product-selection-assistant', name: '1688分销选品',
       description: '面向 1688 分销场景的选品助手：关键词分析、竞品监控、类目趋势与利润测算，一键生成选品报告。',
-      avatarUrl: '', baseModel: 'GLM-5.3',
+      avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'],
       systemPrompt: '你是1688分销选品助手，请基于可验证的数据回答。先理解选品意图，再路由到合适技能；调用工具前先确认参数契约；输出结论必须附带数据来源与校验结果。',
       skillIds: [11, 12, 13, 14, 15, 16, 17], mcpServerIds: [1], mcpToolIds: [21],
       suggestedQuestions: ['帮我分析"收纳盒"关键词的竞争度', '对比近30天竞品价格并测算分销毛利', '生成一份厨房收纳类目的选品报告'],
@@ -77,7 +122,7 @@ export function seedExtensions(): Extensions {
     {
       ...base, id: 2, code: 'cross-border-selection', name: '跨境电商选品',
       description: '面向跨境电商（亚马逊/TikTok）场景的选品助手，结合平台榜单与趋势数据。',
-      avatarUrl: '', baseModel: 'DeepSeek-V3.2',
+      avatarUrl: '', baseModel: 'deepseek-v3', platforms: ['AMAZON', 'TEMU'],
       systemPrompt: '你是跨境电商选品助手，请基于可验证的数据回答，注意不同站点的价格与合规差异。',
       skillIds: [12, 14, 16], mcpServerIds: [1, 3, 4],
       suggestedQuestions: ['美国站家居类目最近什么品好卖？'],
@@ -87,7 +132,7 @@ export function seedExtensions(): Extensions {
     {
       ...base, id: 3, code: 'douyin-selection', name: '抖音带货选品',
       description: '面向抖音直播/短视频带货的选品助手，结合达人带货榜与内容趋势。',
-      avatarUrl: '', baseModel: 'GLM-4.7',
+      avatarUrl: '', baseModel: 'glm-4.7', platforms: ['1688', 'OZON', 'AMAZON', 'TEMU'],
       systemPrompt: '你是抖音带货选品助手，请基于可验证的数据回答，并给出内容选题建议。',
       skillIds: [12, 17], mcpServerIds: [5],
       suggestedQuestions: ['最近什么商品在短视频渠道转化好？'],
@@ -300,19 +345,23 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     ...base, id, code, name, description,
     content,
     files: [],
+    // v5 平台维度：通用分析技能覆盖多平台，1688 专属技能仅 1688
+    platforms: ({ 11: ['1688'], 12: ['1688', 'AMAZON', 'TEMU'], 13: ['1688'], 14: ['1688', 'AMAZON', 'TEMU'], 15: ['1688'], 16: ['1688', 'AMAZON', 'TEMU'], 17: ['1688', 'OZON', 'AMAZON', 'TEMU'] } as Record<number, PlatformType[]>)[id] || ['1688'],
     paramSchema: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] },
     execConfig: { handler: 'demo', timeoutMs: 30000 }
   }))
   // MCP = 工具服务器连接（附录 12.3）；对齐实例目录：gateway(OpenAPI)/dld(MCP)/amazon_data(MCP)/gateway-amazon(OpenAPI)/echotik(MCP)/gateway-ozon(OpenAPI)
+  // v5：platforms 按所服务平台标注（聚合网关覆盖多平台；echotik 通用=全平台）
   const servers: ConfigItem[] = [
-    { ...base, id: 1, code: 'gateway', name: '聚合网关（OpenAPI）', connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
-    { ...base, id: 2, code: 'dld', name: '店雷达数据（MCP）', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: 'https://dld.example.com', path: '/mcp', authConfig: { type: 'NONE' }, toolFilter: [], healthStatus: 'UNKNOWN' },
-    { ...base, id: 3, code: 'amazon_data', name: '亚马逊数据（MCP）', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: 'https://amazon-data.example.com', path: '/mcp', authConfig: { type: 'API_KEY', headerName: 'X-Api-Key', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
-    { ...base, id: 4, code: 'gateway-amazon', name: '亚马逊网关（OpenAPI）', connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway-amazon.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
-    { ...base, id: 5, code: 'echotik', name: 'EchoTik 达人数据（MCP）', connType: 'MCP', transport: 'SSE', endpoint: 'https://echotik.example.com', path: '/mcp', authConfig: { type: 'NONE' }, toolFilter: [], healthStatus: 'UNKNOWN' },
-    { ...base, id: 6, code: 'gateway-ozon', name: 'Ozon 网关（OpenAPI）', connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway-ozon.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' }
+    { ...base, id: 1, code: 'gateway', name: '聚合网关（OpenAPI）', platforms: ['1688', 'AMAZON', 'TEMU'], connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
+    { ...base, id: 2, code: 'dld', name: '店雷达数据（MCP）', platforms: ['1688'], connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: 'https://dld.example.com', path: '/mcp', authConfig: { type: 'NONE' }, toolFilter: [], healthStatus: 'UNKNOWN' },
+    { ...base, id: 3, code: 'amazon_data', name: '亚马逊数据（MCP）', platforms: ['AMAZON'], connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: 'https://amazon-data.example.com', path: '/mcp', authConfig: { type: 'API_KEY', headerName: 'X-Api-Key', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
+    { ...base, id: 4, code: 'gateway-amazon', name: '亚马逊网关（OpenAPI）', platforms: ['AMAZON'], connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway-amazon.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' },
+    { ...base, id: 5, code: 'echotik', name: 'EchoTik 达人数据（MCP）', platforms: ['1688', 'OZON', 'AMAZON', 'TEMU'], connType: 'MCP', transport: 'SSE', endpoint: 'https://echotik.example.com', path: '/mcp', authConfig: { type: 'NONE' }, toolFilter: [], healthStatus: 'UNKNOWN' },
+    { ...base, id: 6, code: 'gateway-ozon', name: 'Ozon 网关（OpenAPI）', platforms: ['OZON'], connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway-ozon.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' }
   ]
   return {
+    models: seedLlmModels(),
     plans: ['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, entitlements:[] })),
     experts,
     skills,
@@ -328,24 +377,69 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     chats: Array.from({ length:16 },(_,i) => { const createdAt = new Date(Date.now()-i*86400000).toISOString(); return { id:i+1,userId:i%8+1,expertId:i%3+1,createdAt,deletedAt:null,deleteReason:'',messages:[{ role:'user',content:`演示选品咨询 ${i+1}，联系 demo${i}@example.com 手机13800138000`,createdAt },{ role:'assistant',content:'这是 Mock 演示回复，请核实商品数据。',createdAt }] } }),
     promptHistory:Object.fromEntries(experts.map(e => [e.id,[{ version:1, systemPrompt:e.systemPrompt!,createdAt:e.updatedAt }]])),
     skillCalls:Array.from({ length:24 },(_,i) => ({ skillId:i%2+11, success:i%5!==0,createdAt:new Date(Date.now()-i*86400000).toISOString() })),
-    expertVersions: Object.fromEntries(experts.map(e => [e.id, [{ version: e.version, note: '初始种子数据', createdAt: e.updatedAt, snapshot: structuredClone(e) }]])),
-    skillVersions: Object.fromEntries(skills.map(s => [s.id, [{ version: s.version, note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]]))
+    expertVersions: Object.fromEntries(experts.map(e => [e.id, [{ version: e.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: e.updatedAt, snapshot: structuredClone(e) }]])),
+    skillVersions: Object.fromEntries(skills.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]])),
+    mcpVersions: Object.fromEntries(servers.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]]))
   }
 }
 
 /**
- * 旧版（schema v3 及以前）配置数据增量迁移到 v4（附录12：助手预设/SKILL.md/双类型连接模型）。
- * 只补默认新字段，不删除旧字段；生产语义为 ALTER TABLE 增列 + 回填。
+ * 旧版（schema v4 及以前）配置数据增量迁移到 v5（模型管理 / 平台维度 / 版本名称）。
+ * 只补默认新字段，不删除旧字段；生产语义为 ALTER TABLE 增列 + 回填，全部幂等。
  */
 export function migrateLegacyConfig(target: Extensions): void {
   const serverIdOfTool = (toolId: number): number | undefined => target.tools.find(t => t.id === toolId)?.serverId
+  // v5：模型注册表缺失（v4 及以前数据）时预置示例模型
+  if (!Array.isArray(target.models) || !target.models.length) target.models = seedLlmModels()
+  // v5：模型行规范化——补 created_at/defaultParams（中断版 v5 数据缺省时），保留 apiKey
+  target.models = target.models.map(m => ({
+    ...m,
+    apiKey: typeof m.apiKey === 'string' ? m.apiKey : undefined,
+    defaultParams: m.defaultParams && typeof m.defaultParams === 'object' && !Array.isArray(m.defaultParams) ? m.defaultParams : {},
+    createdAt: m.createdAt || m.updatedAt || new Date().toISOString()
+  }))
+  const nextModelId = (): number => target.models.reduce((mx, m) => Math.max(mx, m.id), 40) + 1
+  // v5.1：演示网关补丁（幂等）——glm-5.3 仍为初始 mock 凭据（空或 sk-mock- 前缀）时切到内网演示网关；
+  // 用户已手动改过 Key/端点（非 sk-mock- 前缀）则跳过，尊重已有配置
+  const glm = target.models.find(m => m.code === 'glm-5.3')
+  if (glm && (!glm.apiKey || glm.apiKey.startsWith('sk-mock-'))) {
+    glm.provider = 'OpenAI兼容'
+    glm.endpoint = DEMO_GATEWAY_ENDPOINT
+    glm.apiKey = DEMO_GATEWAY_KEY
+    glm.updatedAt = new Date().toISOString()
+  }
+  // v5.1：没有任何模型指向演示网关时补 deepseek-v4.1-flash（幂等：按 endpoint 判重）
+  if (!target.models.some(m => m.endpoint === DEMO_GATEWAY_ENDPOINT)) {
+    const at = new Date().toISOString()
+    target.models.push({ id: nextModelId(), code: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', provider: 'OpenAI兼容', endpoint: DEMO_GATEWAY_ENDPOINT, apiKey: DEMO_GATEWAY_KEY, defaultParams: { temperature: 0.5, max_tokens: 8192 }, remark: '演示网关自动注册', status: 1, createdAt: at, updatedAt: at })
+  }
+  /** 平台迁移：platforms 数组规范化；旧单值 platform 语义保留；「ALL/通用」→ 全平台；无信息 → 关键词推断（否则 1688） */
+  const normalizePlatforms = (item: ConfigItem & { platform?: unknown }, fallback: { code: string; name: string; description?: string }): PlatformType[] => {
+    const valid = (v: unknown): v is PlatformType => typeof v === 'string' && (PLATFORM_VALUES as string[]).includes(v)
+    if (Array.isArray(item.platforms)) {
+      const arr = [...new Set(item.platforms.filter(valid))]
+      if (arr.length) return arr
+    }
+    if (valid(item.platform)) return [item.platform]
+    if (item.platform === 'ALL') return ['1688', 'OZON', 'AMAZON', 'TEMU']
+    return detectPlatforms(fallback)
+  }
   const experts = target.experts || []
   const skills = target.skills || []
   const servers = target.servers || []
   experts.forEach(e => {
-    const legacy = e as ConfigItem & { description?: string; baseModel?: string; capabilities?: Record<string, boolean>; suggestedQuestions?: string[]; tags?: string[]; visibility?: ConfigItem['visibility']; mcpServerIds?: number[] }
+    const legacy = e as ConfigItem & { platform?: unknown; description?: string; baseModel?: string; capabilities?: Record<string, boolean>; suggestedQuestions?: string[]; tags?: string[]; visibility?: ConfigItem['visibility']; mcpServerIds?: number[] }
     if (legacy.description === undefined || legacy.description === '') legacy.description = e.intro || e.name
-    if (!legacy.baseModel) legacy.baseModel = String((e.modelParams as { model?: string } | undefined)?.model || 'GLM-5.3')
+    if (!legacy.baseModel) legacy.baseModel = String((e.modelParams as { model?: string } | undefined)?.model || 'glm-5.3')
+    // v5：旧 baseModel 存的是显示名（GLM-5.3 等）时统一映射为模型 code
+    const modelOf = target.models.find(m => m.code === legacy.baseModel || m.name === legacy.baseModel)
+    if (modelOf) legacy.baseModel = modelOf.code
+    // v5：不在模型注册表中的 base_model 自动迁移注册为「自定义」模型（幂等）
+    if (!target.models.some(m => m.code === legacy.baseModel)) {
+      const registeredAt = new Date().toISOString()
+      target.models.push({ id: nextModelId(), code: legacy.baseModel, name: legacy.baseModel, provider: '自定义', endpoint: '', defaultParams: {}, remark: '旧数据 base_model 自动迁移注册', status: 1, createdAt: registeredAt, updatedAt: registeredAt })
+    }
+    e.platforms = normalizePlatforms(e, e)
     if (!legacy.capabilities || typeof legacy.capabilities !== 'object') legacy.capabilities = defaultCapabilities()
     else legacy.capabilities = defaultCapabilities(legacy.capabilities)
     if (!Array.isArray(legacy.suggestedQuestions)) legacy.suggestedQuestions = []
@@ -355,12 +449,13 @@ export function migrateLegacyConfig(target: Extensions): void {
     if (!Array.isArray(legacy.mcpServerIds) || !legacy.mcpServerIds.length) legacy.mcpServerIds = [...new Set(derived)]
   })
   skills.forEach(s => {
-    const legacy = s as ConfigItem & { content?: string; files?: SkillFile[] }
+    const legacy = s as ConfigItem & { platform?: unknown; content?: string; files?: SkillFile[] }
     if (!legacy.content || !String(legacy.content).trim()) legacy.content = skillMdOf(s.name, s.description || '')
     if (!Array.isArray(legacy.files)) legacy.files = []
+    s.platforms = normalizePlatforms(s, s)
   })
   servers.forEach(s => {
-    const legacy = s as ConfigItem & { connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[] }
+    const legacy = s as ConfigItem & { platform?: unknown; connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[] }
     if (!legacy.connType) legacy.connType = 'MCP'
     if ((s.transport as string) === 'HTTP') s.transport = 'STREAMABLE_HTTP'
     if (!legacy.authConfig || typeof legacy.authConfig !== 'object') legacy.authConfig = { type: 'NONE' }
@@ -368,15 +463,41 @@ export function migrateLegacyConfig(target: Extensions): void {
       try { const url = new URL(s.endpoint || ''); legacy.path = url.pathname !== '/' ? url.pathname : '/mcp'; s.endpoint = url.origin } catch { legacy.path = '/mcp' }
     }
     if (!Array.isArray(legacy.toolFilter)) legacy.toolFilter = []
+    s.platforms = normalizePlatforms(s, s)
   })
-  target.expertVersions ||= {}
-  experts.forEach(e => {
-    target.expertVersions[String(e.id)] ||= [{ version: e.version, note: '旧数据迁移初始快照', createdAt: e.updatedAt, snapshot: structuredClone(e) }]
-  })
-  target.skillVersions ||= {}
-  skills.forEach(s => {
-    target.skillVersions[String(s.id)] ||= [{ version: s.version, note: '旧数据迁移初始快照', createdAt: s.updatedAt, snapshot: structuredClone(s) }]
-  })
+  // v5：历史快照补 versionName（旧条目按其 createdAt 格式化为 yyyyMMddHHmmss，幂等——补过即跳过）/ operator；
+  // 「未命名」为更早迁移的占位值，同样按 createdAt 修复
+  const versionNameFrom = (createdAt: string, siblings: ConfigVersion[], self?: ConfigVersion): string => {
+    const d = dayjs(createdAt)
+    const base = d.isValid() ? d.format('YYYYMMDDHHmmss') : dayjs().format('YYYYMMDDHHmmss')
+    if (!siblings.some(x => x !== self && x.versionName === base)) return base
+    let n = 2
+    while (siblings.some(x => x !== self && x.versionName === `${base}-${n}`)) n++
+    return `${base}-${n}`
+  }
+  const backfillVersions = (versions: Record<string, ConfigVersion[]> | undefined): void => {
+    if (!versions) return
+    for (const list of Object.values(versions)) {
+      const arr = list || []
+      arr.forEach(v => {
+        if (!v.versionName || v.versionName === '未命名') v.versionName = versionNameFrom(v.createdAt, arr, v)
+        v.operator ||= ''
+      })
+    }
+  }
+  backfillVersions(target.expertVersions)
+  backfillVersions(target.skillVersions)
+  backfillVersions(target.mcpVersions)
+  const initVersions = (items: ConfigItem[], store: Record<string, ConfigVersion[]> | undefined): Record<string, ConfigVersion[]> => {
+    const bag = store || {}
+    items.forEach(e => {
+      bag[String(e.id)] ||= [{ version: e.version, versionName: versionNameFrom(e.updatedAt, []), operator: '', note: '迁移补记：旧数据迁移初始快照', createdAt: e.updatedAt, snapshot: structuredClone(e) }]
+    })
+    return bag
+  }
+  target.expertVersions = initVersions(experts, target.expertVersions)
+  target.skillVersions = initVersions(skills, target.skillVersions)
+  target.mcpVersions = initVersions(servers, target.mcpVersions)
 }
 
 export function redact(value: unknown): unknown {

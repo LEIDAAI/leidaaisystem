@@ -226,3 +226,28 @@ plan_entitlement  -- 套餐权益绑定（plan_id + 资源类型 expert/skill/mc
 - 后台"上架"即前台可见；禁用即从前台选择器消失（历史会话不受影响）
 - C 端契约只读：按用户身份与套餐过滤 PUBLIC + 所购 PLAN 的专家/技能/MCP
 - 预设导出 JSON 可直接导入 OpenWebUI/AgentScope Java，作为运行时接通的过渡手段
+
+## 13. 附录：模型管理、平台维度与版本名称（2026-10-28 第二次增补，对应 API v0.5 / localStorage schema v5）
+
+### 13.1 模型管理 = 基础模型注册表（model_config）
+
+- **数据模型**：`id、code（唯一，创建后不可改）、name（显示名）、provider（供应商字典：智谱/OpenAI兼容/Anthropic兼容/自定义，前端 allow-create 可扩展）、endpoint（接入地址 base URL，仅示意）、api_key、default_params（JSON：temperature/max_tokens 等）、remark、status(1启用0停用)、created_at/updated_at`。
+- **api_key 安全**：保存后永不回显明文——接口只回显掩码（如 `****abcd`，即 ****+末4位），列表/详情/编辑一致；编辑留空=不修改；审计快照同样只含掩码。
+- **与专家的关系**：专家 `base_model` 改存模型管理中的模型 `code`；专家表单下拉只读「启用」模型（显示 `名称（code）`）；模型停用不影响已绑定专家；删除被专家 base_model 引用的模型返回 `409` 硬拦截。旧数据中不在模型表的 base_model 在迁移时**自动注册为「自定义」模型**（幂等）。
+- **连通测试**：Mock 演示模拟（按 启用+HTTPS+已配 Key 判定），结果明示「演示模拟，未发起真实网络请求」。
+- **事件契约**：模型保存/更新/启停发布 `type=MODEL` 配置变更事件（与 EXPERT/SKILL/MCP 同构）；契约文档体现即可，mock 不需真实运行时。
+- **权限**：`model:view` / `model:edit`（超管全量、运营增量授予；viewer 不授予）。种子：GLM-5.3（智谱）、GLM-4.7（智谱）、deepseek-v3（OpenAI兼容）、qwen-max（OpenAI兼容），端点仅示意。
+
+### 13.2 版本确认框与版本名称（专家/技能/MCP 统一）
+
+- 保存（发布）时弹出版本确认框：**版本名称输入框默认按当前时间 `yyyyMMddHHmmss` 自动生成**（如 20261028153045，可修改）+ 可选「变更说明」；确认后才写库、`version+1` 并生成快照。原表单内联的版本名称/变更说明字段移除，统一走确认框。
+- 版本历史列表展示：版本名称、版本号、变更说明、操作人、时间；差异对比与恢复沿用现有组件。**恢复同样走版本确认框**，新版本名默认「恢复自 <源版本名>」（源版本无名称则 `v{N}`）。
+- **MCP 快照历史补齐**：此前 MCP 无快照，本次对齐专家/技能——每次保存生成快照（含连接配置 connType/endpoint/path/transport/authConfig 与工具绑定 toolFilter），支持历史/差异/恢复（`GET/POST /mcp/servers/{id}/versions|restore`）。
+- 存量版本历史条目迁移时按其时间戳回填版本名称（幂等）。
+
+### 13.3 平台维度（platforms 多选，专家/技能/MCP 全量）
+
+- **枚举**：`1688`、`OZON`、`AMAZON`（显示「亚马逊」）、`TEMU`；**多选 JSON 数组，至少一个**，表单必填。不再保留单值「通用/ALL」——覆盖全平台=多选全部。
+- **表单/列表**：三个模块的创建/编辑抽屉均加平台多选；列表均加平台下拉多选筛选（命中任一所选平台即显示）与平台标签列。专家表单的「绑定技能/MCP」联动改为按平台交集过滤。
+- **workspace 契约与前台预览**：`/api/v1/workspace/experts|skills|mcps` 响应带 `platforms` 字段，并支持 `?platform=` 单值查询过滤（任一命中，服务端执行）；管理端前台预览支持按平台页签过滤（1688/Ozon/亚马逊/Temu，对齐 work.html 电商专家库页签体验），页签即走 `?platform=` 参数。
+- **迁移（v4→v5，幂等）**：已有专家/技能/MCP 默认补 `['1688']`，或按 code 关键词推断（ozon→OZON、amazon/亚马逊→AMAZON、temu→TEMU，否则 `['1688']`）；中断版 v5 数据中的旧单值 `platform` 语义保留（`ALL`→全平台数组）；已有版本历史条目按时间戳回填版本名称；保留既有演示数据与授权。

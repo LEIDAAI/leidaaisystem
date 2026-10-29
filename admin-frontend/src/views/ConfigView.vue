@@ -6,8 +6,9 @@ import { useAuthStore } from '@/stores/auth'
 import { get, post, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool, skillStats,
-  exportConfigJson, importExpertJson, importSkillJson, cloneSkill, testMcpConnection,
-  type ConfigItem, type ConfigKind, type Tool
+  exportConfigJson, importExpertJson, importSkillJson, cloneSkill, testMcpConnection, saveModelStatus,
+  testModelConnection, listModels, PLATFORMS, PLATFORM_META, platformMeta,
+  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { formatDateTime } from '@/utils/format'
@@ -16,8 +17,10 @@ import PlanFormDrawer from './config/PlanFormDrawer.vue'
 import ExpertFormDrawer from './config/ExpertFormDrawer.vue'
 import SkillFormDrawer from './config/SkillFormDrawer.vue'
 import McpFormDrawer from './config/McpFormDrawer.vue'
+import ModelFormDrawer from './config/ModelFormDrawer.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
 import WorkspacePreviewDrawer from './config/WorkspacePreviewDrawer.vue'
+import VersionConfirmDialog from './config/VersionConfirmDialog.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -33,39 +36,71 @@ const tools = ref<Tool[]>([])
 const skills = ref<ConfigItem[]>([])
 const servers = ref<ConfigItem[]>([])
 const plans = ref<ConfigItem[]>([])
+const models = ref<LlmModel[]>([])
 const keyword = ref('')
 const status = ref<number | ''>('')
+/** v5：平台筛选（专家/技能/MCP；下拉多选，空=全部；命中任一所选平台即显示） */
+const platformFilter = ref<PlatformType[]>([])
 const loading = ref(false)
+/** v5：模型管理列表为服务端分页契约（GET /models {total, list}） */
+const modelPage = ref(1)
+const modelPageSize = ref(20)
+const modelTotal = ref(0)
 
-const filtered = computed(() =>
-  items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value))
-)
+const filtered = computed(() => {
+  // 模型模块：keyword/status 由服务端筛选并分页，前端不再二次过滤
+  if (module.value === 'model') return items.value
+  return items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
+})
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    items.value = await listConfig(kind.value)
+    if (kind.value === 'models') {
+      const p = await listModels({ keyword: keyword.value, status: status.value, page: modelPage.value, pageSize: modelPageSize.value })
+      items.value = p.list as unknown as ConfigItem[]
+      modelTotal.value = p.total
+    } else {
+      items.value = await listConfig(kind.value)
+    }
     if (kind.value === 'mcp/servers') tools.value = await listTools()
+    // 专家表单/列表的基础模型下拉数据源：取模型管理全量（pageSize 上限内）
+    if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 100 })).list
   } finally {
     loading.value = false
   }
 }
-watch(kind, () => { keyword.value = ''; status.value = ''; void load() }, { immediate: true })
+watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; void load() }, { immediate: true })
+// 模型模块：keyword/status 为服务端筛选，变更时回第一页重查；其余模块走本地过滤无需重查
+watch([keyword, status], () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
+
+/** 平台徽章元数据（历史未知值兜底显示） */
+function platMeta(p: string): { label: string; color: string; bg: string; border: string } {
+  return platformMeta(p)
+}
+/** 专家基础模型显示名（模型表解析；未注册则原样显示 code） */
+function modelNameOf(code: string | undefined): string {
+  if (!code) return '-'
+  const m = models.value.find((x) => x.code === code)
+  return m ? `${m.name}（${m.code}）` : code
+}
 
 // -------------------------------------------------------------- 表单抽屉
-const planDrawer = ref(false), expertDrawer = ref(false), skillDrawer = ref(false), mcpDrawer = ref(false)
+const planDrawer = ref(false), expertDrawer = ref(false), skillDrawer = ref(false), mcpDrawer = ref(false), modelDrawer = ref(false)
 const versionDrawer = ref(false), previewDrawer = ref(false)
 const editItem = ref<Partial<ConfigItem> | null>(null)
 const historyItem = ref<ConfigItem | null>(null)
 const previewItem = ref<ConfigItem | null>(null)
-const historyKind = computed(() => (module.value === 'skill' ? 'skills' : 'experts') as 'experts' | 'skills')
+/** 版本历史 kind：专家/技能/MCP（v5 补齐 MCP 快照历史） */
+const historyKind = computed(() => (module.value === 'skill' ? 'skills' : module.value === 'mcp' ? 'mcp/servers' : 'experts') as 'experts' | 'skills' | 'mcp/servers')
 
 function blankDraft(): Partial<ConfigItem> {
   if (module.value === 'expert') {
-    return { code: '', name: '', description: '', avatarUrl: '', baseModel: 'GLM-5.3', systemPrompt: '', skillIds: [], mcpServerIds: [], suggestedQuestions: [], tags: [], status: 1, isDefault: false, visibility: { type: 'PUBLIC', planIds: [] } }
+    return { code: '', name: '', description: '', avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'], systemPrompt: '', skillIds: [], mcpServerIds: [], suggestedQuestions: [], tags: [], status: 1, isDefault: false, visibility: { type: 'PUBLIC', planIds: [] } }
   }
-  if (module.value === 'skill') return { code: '', name: '', description: '', content: '', files: [], status: 1 }
-  if (module.value === 'mcp') return { code: '', name: '', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', authConfig: { type: 'NONE' }, toolFilter: [], status: 1 }
+  if (module.value === 'skill') return { code: '', name: '', description: '', content: '', files: [], platforms: ['1688'], status: 1 }
+  if (module.value === 'mcp') return { code: '', name: '', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], status: 1 }
+  if (module.value === 'model') return { code: '', name: '', provider: '智谱', endpoint: '', remark: '', status: 1 }
   return { code: '', name: '', status: 1, price: 0, durationDays: 30, entitlements: [] }
 }
 
@@ -77,6 +112,7 @@ async function edit(item?: ConfigItem): Promise<void> {
     expertDrawer.value = true
   } else if (module.value === 'skill') skillDrawer.value = true
   else if (module.value === 'mcp') mcpDrawer.value = true
+  else if (module.value === 'model') modelDrawer.value = true
   else planDrawer.value = true
 }
 
@@ -101,6 +137,7 @@ async function remove(item: ConfigItem): Promise<void> {
         await deleteConfig(kind.value, item.id, { confirmReferences: true })
       } catch { return }
     } else {
+      // 模型等模块的 409（如被专家 base_model 引用）由全局错误提示透出，无需二次确认
       return
     }
   }
@@ -116,6 +153,13 @@ async function refresh(item: ConfigItem, simulateFailure = false): Promise<void>
 
 async function toggleStatus(item: ConfigItem): Promise<void> {
   const next = item.status === 1 ? 0 : 1
+  if (module.value === 'expert' || module.value === 'skill' || module.value === 'mcp') {
+    editItem.value = { ...item, status: next }
+    if (module.value === 'expert') expertDrawer.value = true
+    else if (module.value === 'skill') skillDrawer.value = true
+    else mcpDrawer.value = true
+    return
+  }
   try {
     await saveConfig(kind.value, { id: item.id, code: item.code, name: item.name, status: next })
     await load()
@@ -129,6 +173,18 @@ async function toggleStatus(item: ConfigItem): Promise<void> {
       } catch { /* 取消或仍失败 */ }
     }
   }
+}
+
+/** 模型启停：走独立状态端点 */
+async function toggleModel(item: ConfigItem): Promise<void> {
+  await saveModelStatus(item.id, item.status === 1 ? 0 : 1)
+  await load()
+}
+
+/** 模型连通测试（Mock 演示模拟，明示未发起真实请求） */
+async function testModel(item: ConfigItem): Promise<void> {
+  const r = await testModelConnection(item.id)
+  await ElMessageBox.alert(`${r.detail}（模拟延迟 ${r.latencyMs}ms · ${r.testedAt}）`, `连通测试：${r.result}`)
 }
 
 async function setDefault(item: ConfigItem): Promise<void> {
@@ -148,7 +204,9 @@ async function history(item: ConfigItem): Promise<void> {
 }
 
 async function exportJson(item: ConfigItem): Promise<void> {
-  const { filename, content } = await exportConfigJson(historyKind.value, item.id)
+  // 导出仅专家/技能提供；kind 与版本历史独立计算
+  const kind = module.value === 'skill' ? 'skills' : 'experts'
+  const { filename, content } = await exportConfigJson(kind, item.id)
   downloadJsonFile(filename, content)
   ElMessage.success(`已导出 ${filename}`)
 }
@@ -203,8 +261,16 @@ async function action(item: ConfigItem, name: string): Promise<void> {
   await load()
 }
 
-async function toolChange(tool: Tool): Promise<void> {
-  await toggleTool(tool.id, !tool.enabled)
+const toolVersionDialog = ref(false)
+const toolChangeTarget = ref<Tool | null>(null)
+function askToolChange(tool: Tool): void {
+  toolChangeTarget.value = tool
+  toolVersionDialog.value = true
+}
+async function toolChange(v: { versionName: string; note: string }): Promise<void> {
+  if (!toolChangeTarget.value) return
+  await toggleTool(toolChangeTarget.value.id, !toolChangeTarget.value.enabled, v)
+  toolVersionDialog.value = false
   await load()
 }
 
@@ -213,10 +279,21 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
 <template>
   <el-alert v-if="USE_MOCK" title="Mock 配置中心：刷新、工具发现、连接测试及前台预览均为本地模拟，未连接 AgentScope 或真实 MCP 服务。" type="info" :closable="false" style="margin-bottom:16px" />
   <el-card shadow="never">
-    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
       <el-input v-model="keyword" placeholder="搜索名称 / 编码" clearable style="width:250px" />
       <el-select v-model="status" placeholder="全部状态" clearable style="width:150px">
         <el-option label="启用 / 上架" :value="1" /><el-option label="停用 / 下架" :value="0" />
+      </el-select>
+      <el-select
+        v-if="module === 'expert' || module === 'skill' || module === 'mcp'"
+        v-model="platformFilter"
+        multiple
+        collapse-tags
+        clearable
+        placeholder="平台筛选（可多选）"
+        style="width:200px"
+      >
+        <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
       </el-select>
       <el-button @click="load">刷新列表</el-button>
       <el-button v-if="canEdit" type="primary" @click="edit()">新建</el-button>
@@ -234,11 +311,33 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
               </div>
             </div>
           </template>
+          <template v-else-if="module === 'model'">
+            <div style="line-height:1.3">
+              <div>{{ row.name }}</div>
+              <small class="muted">{{ row.code }}</small>
+            </div>
+          </template>
           <template v-else>{{ row.name }}</template>
         </template>
       </el-table-column>
-      <el-table-column v-if="module !== 'expert'" prop="code" label="编码" min-width="150" show-overflow-tooltip />
-      <el-table-column v-if="module === 'expert'" label="基础模型" width="130"><template #default="{ row }">{{ row.baseModel || '-' }}</template></el-table-column>
+      <el-table-column v-if="!['expert', 'model'].includes(module)" prop="code" label="编码" min-width="150" show-overflow-tooltip />
+      <el-table-column v-if="module !== 'plan' && module !== 'model'" label="平台" min-width="140">
+        <template #default="{ row }">
+          <el-tag
+            v-for="p in row.platforms || []"
+            :key="p"
+            size="small"
+            effect="plain"
+            :style="{ color: platMeta(p).color, background: platMeta(p).bg, borderColor: platMeta(p).border, marginRight: '4px' }"
+          >{{ platMeta(p).label }}</el-tag>
+          <span v-if="!(row.platforms || []).length" class="muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="module === 'expert'" label="基础模型" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ modelNameOf(row.baseModel) }}</template></el-table-column>
+      <el-table-column v-if="module === 'model'" prop="code" label="编码" min-width="130" show-overflow-tooltip><template #default="{ row }"><code>{{ row.code }}</code></template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="供应商" width="120"><template #default="{ row }">{{ row.provider || '-' }}</template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="API Key" width="110"><template #default="{ row }">{{ row.apiKeyMasked || '—' }}</template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="接入地址" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.endpoint || '—' }}</template></el-table-column>
       <el-table-column v-if="module === 'expert'" label="标签" min-width="140">
         <template #default="{ row }"><el-tag v-for="t in row.tags || []" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag></template>
       </el-table-column>
@@ -259,22 +358,26 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
           <small v-if="row.isDefault"> 默认</small>
         </template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert'" label="更新时间" width="160"><template #default="{ row }"><small class="muted">{{ formatDateTime(row.updatedAt) }}</small></template></el-table-column>
-      <el-table-column label="配置 / 生效版本" width="145">
+      <el-table-column v-if="module === 'expert' || module === 'model'" label="更新时间" width="160"><template #default="{ row }"><small class="muted">{{ formatDateTime(row.updatedAt) }}</small></template></el-table-column>
+      <el-table-column v-if="module !== 'model'" label="配置 / 生效版本" width="145">
         <template #default="{ row }">v{{ row.version }} / v{{ row.appliedVersion }}<br />
           <el-tag size="small" :type="row.refreshStatus === 'FAILED' ? 'danger' : row.refreshStatus === 'PENDING' ? 'warning' : 'success'">{{ row.refreshStatus }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" min-width="330" fixed="right">
+      <el-table-column label="操作" :min-width="module === 'model' ? 240 : 330" :fixed="module === 'model' ? false : 'right'">
         <template #default="{ row }">
           <el-button link type="primary" @click="edit(row)">{{ canEdit ? '编辑' : '详情' }}</el-button>
           <el-button v-if="module === 'expert'" link type="success" @click="preview(row)">前台预览</el-button>
-          <el-button v-if="module === 'expert' || module === 'skill'" link @click="history(row)">版本历史</el-button>
+          <el-button v-if="module === 'expert' || module === 'skill' || module === 'mcp'" link @click="history(row)">版本历史</el-button>
           <template v-if="canEdit">
             <el-button v-if="module === 'expert'" link :disabled="row.status === 1 && row.isDefault" @click="toggleStatus(row)">{{ row.status === 1 ? '下架' : '上架' }}</el-button>
             <el-button v-if="module === 'skill'" link :disabled="row.status !== 1" @click="toggleStatus(row)">{{ row.status === 1 ? '停用' : '启用' }}</el-button>
-            <el-button link @click="refresh(row)">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-button>
-            <el-button v-if="USE_MOCK" link @click="refresh(row, true)">模拟失败</el-button>
+            <el-button v-if="module === 'model'" link @click="toggleModel(row)">{{ row.status === 1 ? '停用' : '启用' }}</el-button>
+            <el-button v-if="module === 'model'" link type="success" @click="testModel(row)">连通测试</el-button>
+            <template v-if="module !== 'model'">
+              <el-button link @click="refresh(row)">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-button>
+              <el-button v-if="USE_MOCK" link @click="refresh(row, true)">模拟失败</el-button>
+            </template>
           </template>
           <el-button v-if="module === 'expert' && canEdit && !row.isDefault" link @click="setDefault(row)">设为默认</el-button>
           <el-button v-if="module === 'skill' && canClone" link @click="clone(row)">克隆</el-button>
@@ -289,20 +392,40 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         </template>
       </el-table-column>
     </el-table>
+    <div v-if="module === 'model'" style="display:flex;justify-content:flex-end;margin-top:14px">
+      <el-pagination
+        v-model:current-page="modelPage"
+        v-model:page-size="modelPageSize"
+        :total="modelTotal"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="load"
+        @size-change="modelPage = 1; load()"
+      />
+    </div>
     <template v-if="module === 'mcp'">
       <h3>工具清单（工具发现落库，受 tool_filter 过滤）</h3>
       <el-table v-loading="loading" :data="tools" size="small">
         <el-table-column label="所属服务" min-width="150"><template #default="{ row }">{{ items.find((s) => s.id === row.serverId)?.name || row.serverId }}</template></el-table-column>
         <el-table-column prop="name" label="工具" min-width="180" />
-        <el-table-column label="启用" width="90"><template #default="{ row }"><el-switch :model-value="row.enabled" :disabled="!canEdit" @change="toolChange(row)" /></template></el-table-column>
+        <el-table-column label="启用" width="90"><template #default="{ row }"><el-switch :model-value="row.enabled" :disabled="!canEdit" @change="askToolChange(row)" /></template></el-table-column>
       </el-table>
     </template>
   </el-card>
 
   <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
-  <ExpertFormDrawer v-model="expertDrawer" :item="editItem" :skills="skills" :servers="servers" :plans="plans" :can-edit="canEdit" @saved="onSaved" />
+  <ExpertFormDrawer v-model="expertDrawer" :item="editItem" :skills="skills" :servers="servers" :plans="plans" :models="models" :can-edit="canEdit" @saved="onSaved" />
   <SkillFormDrawer v-model="skillDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <VersionDrawer v-model="versionDrawer" :kind="historyKind" :item="historyItem" :can-edit="canEdit" @restored="load" />
   <WorkspacePreviewDrawer v-model="previewDrawer" :expert="previewItem" />
+  <!-- v5：MCP 工具启停同样走版本确认框（默认时间戳版本名可改 + 变更说明，确认后才写库并生成快照） -->
+  <VersionConfirmDialog
+    v-model="toolVersionDialog"
+    title="工具启停确认"
+    :description="`确认将${toolChangeTarget?.enabled ? '停用' : '启用'}工具「${toolChangeTarget?.name || ''}」，所属服务版本 +1 并生成快照。`"
+    confirm-text="确认并变更"
+    @confirm="toolChange"
+  />
 </template>

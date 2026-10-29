@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, Document } from '@element-plus/icons-vue'
+import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, MagicStick, Document } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -20,10 +20,11 @@ const future = [
   { path: '/experts', title: '专家管理', stage: 'P1', icon: Cpu },
   { path: '/skills', title: '技能管理', stage: 'P1', icon: Setting },
   { path: '/mcp', title: 'MCP 服务', stage: 'P1', icon: Connection },
+  { path: '/models', title: '模型管理', stage: 'P1', icon: MagicStick },
   { path: '/chats', title: '对话管理', stage: 'P2', icon: ChatDotRound },
   { path: '/audit-logs', title: '审计日志', stage: 'P2', icon: Document }
 ]
-const visibleMenus = computed(() => [...menus, ...future.map(item=>({...item,perm:({'/plans':'plan:view','/experts':'expert:view','/skills':'skill:view','/mcp':'mcp:view','/chats':'chat:view','/audit-logs':'audit:view'} as Record<string,string>)[item.path]}))].filter(m => auth.hasPerm(m.perm)))
+const visibleMenus = computed(() => [...menus, ...future.map(item=>({...item,perm:({'/plans':'plan:view','/experts':'expert:view','/skills':'skill:view','/mcp':'mcp:view','/models':'model:view','/chats':'chat:view','/audit-logs':'audit:view'} as Record<string,string>)[item.path]}))].filter(m => auth.hasPerm(m.perm)))
 const displayName = computed(() => auth.admin?.displayName || auth.admin?.username || '')
 async function logout() { await auth.logout(); await router.replace('/login') }
 </script>

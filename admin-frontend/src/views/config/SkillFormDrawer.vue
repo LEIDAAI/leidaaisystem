@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { saveConfig, type ConfigItem } from '@/api/config'
+import { saveConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
 import { SKILL_MD_TEMPLATE } from '@/api/mock/extension-data'
+import VersionConfirmDialog from './VersionConfirmDialog.vue'
 import type { FormDraft } from './PlanFormDrawer.vue'
 
 /** 技能 = SKILL.md 内容型技能表单（附录 12.2）；paramSchema/execConfig 为可选高级字段 */
@@ -29,8 +30,11 @@ watch(
   () => [props.modelValue, props.item] as const,
   ([visible]) => {
     if (!visible) return
-    draft.value = { status: 1, files: [], content: '', ...JSON.parse(JSON.stringify(props.item || {})) }
+    draft.value = { status: 1, files: [], content: '', platforms: ['1688'], ...JSON.parse(JSON.stringify(props.item || {})) }
     if (!Array.isArray(draft.value.files)) draft.value.files = []
+    if (!Array.isArray(draft.value.platforms)) draft.value.platforms = ['1688']
+    draft.value.platforms = draft.value.platforms.filter((p) => PLATFORMS.includes(p as PlatformType))
+    if (!draft.value.platforms.length) draft.value.platforms = ['1688']
     paramSchemaText.value = draft.value.paramSchema ? JSON.stringify(draft.value.paramSchema, null, 2) : ''
     execConfigText.value = draft.value.execConfig ? JSON.stringify(draft.value.execConfig, null, 2) : ''
     advancedOpen.value = []
@@ -47,7 +51,14 @@ function insertSection(title: string, text: string): void {
   d.content = `${d.content || ''}${text}`
 }
 
-async function save(): Promise<void> {
+/** 保存（发布）：先弹版本确认框（默认时间戳版本名可改），确认后才写库并生成快照 */
+const versionDialog = ref(false)
+function onSaveClick(): void {
+  if (!props.canEdit) return
+  versionDialog.value = true
+}
+
+async function save(v: { versionName: string; note: string }): Promise<void> {
   if (!props.canEdit) return
   saving.value = true
   try {
@@ -65,7 +76,11 @@ async function save(): Promise<void> {
         return
       }
     }
-    await saveConfig('skills', payload)
+    if (!payload.platforms || !payload.platforms.length) {
+      ElMessage.error('平台维度至少选择一个')
+      return
+    }
+    await saveConfig('skills', { ...payload, platforms: payload.platforms.filter((p) => PLATFORMS.includes(p as PlatformType)), versionName: v.versionName, note: v.note })
     ElMessage.success('技能已保存，快照已写入版本历史')
     emit('saved')
     emit('update:modelValue', false)
@@ -79,6 +94,12 @@ async function save(): Promise<void> {
     <el-form label-width="110px" :disabled="!canEdit">
       <el-form-item label="技能编码"><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="字母数字下划线短横线，创建后不可修改" /></el-form-item>
       <el-form-item label="名称"><el-input v-model="draft.name" /></el-form-item>
+      <el-form-item label="平台">
+        <el-select v-model="draft.platforms" multiple style="width:100%" placeholder="至少选择一个平台">
+          <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
+        </el-select>
+        <p class="muted">平台维度多选（至少一个）：专家按平台联动时仅显示有平台交集的技能。</p>
+      </el-form-item>
       <el-form-item label="触发意图"><el-input v-model="draft.description" type="textarea" :rows="2" placeholder="描述触发意图，供助手路由判断" /></el-form-item>
     </el-form>
     <el-form label-width="110px" :disabled="!canEdit">
@@ -106,7 +127,6 @@ async function save(): Promise<void> {
         </div>
       </el-form-item>
       <el-form-item label="状态"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用（被专家引用时需确认）" /></el-form-item>
-      <el-form-item label="变更说明"><el-input v-model="draft.note" type="textarea" :rows="2" placeholder="可选，写入版本历史（如：补充异常边界）" /></el-form-item>
     </el-form>
     <el-collapse v-model="advancedOpen" style="margin-top:4px">
       <el-collapse-item title="高级字段（可选，兼容旧版执行模型）" name="advanced">
@@ -123,8 +143,14 @@ async function save(): Promise<void> {
     </el-collapse>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">关闭</el-button>
-      <el-button v-if="canEdit" type="primary" :loading="saving" @click="save">保存技能</el-button>
+      <el-button v-if="canEdit" type="primary" :loading="saving" @click="onSaveClick">保存技能</el-button>
     </template>
+    <VersionConfirmDialog
+      v-model="versionDialog"
+      title="发布版本确认"
+      description="确认后将写库、版本 +1 并生成 SKILL.md 快照（进入版本历史）。"
+      @confirm="save"
+    />
   </el-drawer>
 </template>
 <style scoped>

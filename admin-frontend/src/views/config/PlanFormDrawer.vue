@@ -4,8 +4,8 @@ import { ElMessage } from 'element-plus'
 import { saveConfig, type ConfigItem, type Entitlement } from '@/api/config'
 import EntitlementEditor from '@/components/EntitlementEditor.vue'
 
-/** 表单草稿：ConfigItem 业务字段 + 变更说明 / 引用确认（服务层审计字段） */
-export type FormDraft = Partial<ConfigItem> & { note?: string; confirmReferences?: boolean }
+/** 表单草稿：ConfigItem 业务字段 + 版本名称/变更说明 / 引用确认（服务层审计字段） */
+export type FormDraft = Partial<ConfigItem> & { versionName?: string; note?: string; confirmReferences?: boolean }
 
 /** 套餐表单抽屉（P1 逻辑保持不变，仅抽离为独立组件） */
 const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean }>()
