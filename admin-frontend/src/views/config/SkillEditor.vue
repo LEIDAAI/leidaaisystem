@@ -98,11 +98,14 @@ function buildPayload(): FormDraft {
   }
 }
 
+let autosaveSeq = 0
 async function doAutosave(): Promise<void> {
   if (suppress || !props.canEdit || !currentId.value || !dirty.value || !draftComplete.value) return
+  const seq = ++autosaveSeq
   autosaveState.value = 'saving'
   try {
     await saveConfig('skills', { ...buildPayload(), skipVersion: true })
+    if (seq !== autosaveSeq) return // 保存期间又有新编辑在途，交给最新一次保存收尾
     dirty.value = false
     autosaveState.value = 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -235,7 +238,8 @@ async function tryClose(): Promise<void> {
         <div class="se-header-left">
           <span class="back-btn" title="关闭（先询问）" @click="tryClose">←</span>
           <el-input v-model="draft.name" class="name-input" :disabled="!canEdit" placeholder="未命名技能" />
-          <el-tag v-if="draft.code" size="small" effect="plain">{{ draft.code }}</el-tag>
+          <el-input v-if="!currentId" v-model="draft.code" class="code-input" :disabled="!canEdit" placeholder="编码（字母数字_-）" />
+          <el-tag v-else-if="draft.code" size="small" effect="plain">{{ draft.code }}</el-tag>
           <el-tag size="small" :type="draft.status === 1 ? 'success' : 'info'" effect="plain">{{ draft.status === 1 ? '已上架' : '未上架' }}</el-tag>
           <span class="autosave" :class="autosaveState">{{ autosaveText }}</span>
         </div>
@@ -316,6 +320,8 @@ async function tryClose(): Promise<void> {
 .name-input { width: 260px; }
 .name-input :deep(.el-input__wrapper) { box-shadow: none; background: transparent; }
 .name-input :deep(.el-input__inner) { font-size: 16px; font-weight: 600; }
+.code-input { width: 200px; }
+.code-input :deep(.el-input__inner) { font-family: ui-monospace, Consolas, monospace; }
 .autosave { font-size: 12px; color: var(--el-text-color-secondary); white-space: nowrap; }
 .autosave.saved { color: var(--el-color-success); }
 .autosave.error { color: var(--el-color-danger); }

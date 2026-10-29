@@ -15,6 +15,10 @@ const props = defineProps<{
   /** 预填版本名称（恢复场景传「恢复自 <源版本名>」）；留空按当前时间生成 */
   defaultName?: string
   confirmText?: string
+  /** 异步确认：点确认后不自关闭，由父组件在提交成功后关闭（失败时保留输入） */
+  async?: boolean
+  /** 确认按钮 loading（异步模式下父组件传入提交状态） */
+  loading?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; confirm: [{ versionName: string; note: string }] }>()
 const versionName = ref('')
@@ -32,7 +36,7 @@ watch(
 
 function onConfirm(): void {
   emit('confirm', { versionName: versionName.value.trim() || dayjs().format('YYYYMMDDHHmmss'), note: note.value.trim() })
-  emit('update:modelValue', false)
+  if (!props.async) emit('update:modelValue', false)
 }
 </script>
 <template>
@@ -48,8 +52,8 @@ function onConfirm(): void {
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="emit('update:modelValue', false)">取消</el-button>
-      <el-button type="primary" @click="onConfirm">{{ confirmText || '确认并保存' }}</el-button>
+      <el-button :disabled="loading" @click="emit('update:modelValue', false)">取消</el-button>
+      <el-button type="primary" :loading="loading" @click="onConfirm">{{ confirmText || '确认并保存' }}</el-button>
     </template>
   </el-dialog>
 </template>

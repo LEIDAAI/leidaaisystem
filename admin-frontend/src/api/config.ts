@@ -122,6 +122,10 @@ export const saveModelStatus = (id: number, status: number) => put<LlmModel>(`/m
 /** 模型连通测试（Mock 演示模拟，不发真实网络请求） */
 export interface ModelTestResult { result: 'SUCCESS' | 'FAILED'; detail: string; latencyMs: number; testedAt: string }
 export const testModelConnection = (id: number) => post<ModelTestResult>(`/models/${id}/test`)
+/** 渠道批量接入：探测清单勾选后一次落库（共享 endpoint/apiKey/provider，重复编码由服务端跳过） */
+export interface BatchCreateModelsPayload { endpoint: string; apiKey?: string; provider: string; remark?: string; status?: number; items: Array<{ code: string; name: string }> }
+export interface BatchCreateModelsResult { created: number; skipped: string[]; list: LlmModel[] }
+export const createModelsBatch = (payload: BatchCreateModelsPayload) => post<BatchCreateModelsResult>('/models/batch', payload)
 
 // ---------------------------------------------------------------- 模型端点探测（填地址 + Key 自动发现模型列表）
 /** 端点返回的单个模型：id 为 OpenAI 兼容模型标识（存为模型编码），displayName 取 display_name/name 兜底 id */

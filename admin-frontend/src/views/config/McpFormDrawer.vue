@@ -60,6 +60,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       versionName: v.versionName, note: v.note
     })
     ElMessage.success('连接配置已保存，版本 +1（快照已写入版本历史）；凭据已按掩码入库，请执行「连接测试」验证')
+    versionDialog.value = false
     emit('saved')
     emit('update:modelValue', false)
   } finally {
@@ -70,8 +71,8 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
 <template>
   <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑连接' : '新建工具服务器连接'}`" size="700px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
     <el-form label-width="120px" :disabled="!canEdit">
-      <el-form-item label="连接编码"><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="如 gateway / dld / amazon_data" /></el-form-item>
-      <el-form-item label="名称"><el-input v-model="draft.name" /></el-form-item>
+      <el-form-item label="连接编码" required><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="如 gateway / dld / amazon_data" /></el-form-item>
+      <el-form-item label="名称" required><el-input v-model="draft.name" /></el-form-item>
       <el-form-item label="平台">
         <el-select v-model="draft.platforms" multiple style="width:100%" placeholder="至少选择一个平台">
           <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
@@ -134,6 +135,8 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       v-model="versionDialog"
       title="发布版本确认"
       description="确认后将写库、版本 +1 并生成连接配置快照（含工具绑定，进入版本历史）。"
+      async
+      :loading="saving"
       @confirm="save"
     />
   </el-drawer>

@@ -47,10 +47,9 @@ watch(
   () => props.modelValue,
   async (v) => {
     if (!v) return
-    if (!skills.value.length || !models.value.length) {
-      const [sk, sv, pl, md] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listConfig('plans'), listModels({ page: 1, pageSize: 100 })])
-      skills.value = sk; servers.value = sv; plans.value = pl; models.value = md.list
-    }
+    // 每次打开都重拉选择器数据源，避免期间新建的技能/MCP/套餐/模型不可见
+    const [sk, sv, pl, md] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listConfig('plans'), listModels({ page: 1, pageSize: 200 })])
+    skills.value = sk; servers.value = sv; plans.value = pl; models.value = md.list
     currentId.value = props.item?.id ?? null
     autosaveAt.value = ''
     autosaveState.value = currentId.value ? 'idle' : 'idle'
@@ -148,11 +147,14 @@ function buildPayload(): FormDraft {
   }
 }
 
+let autosaveSeq = 0
 async function doAutosave(): Promise<void> {
   if (suppress || !props.canEdit || !currentId.value || !dirty.value || !draftComplete.value) return
+  const seq = ++autosaveSeq
   autosaveState.value = 'saving'
   try {
     await saveConfig('experts', { ...buildPayload(), skipVersion: true })
+    if (seq !== autosaveSeq) return // 保存期间又有新编辑在途，交给最新一次保存收尾
     dirty.value = false
     autosaveState.value = 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -222,6 +224,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
     autosaveState.value = 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     ElMessage.success('已发布：版本 +1 并生成快照；启用状态即上架前台')
+    versionDialog.value = false
     emit('saved')
   } finally {
     saving.value = false
@@ -466,7 +469,7 @@ async function tryClose(): Promise<void> {
       </template>
     </el-dialog>
 
-    <VersionConfirmDialog v-model="versionDialog" title="发布版本确认" description="确认后将写库、版本 +1 并生成快照（进入版本历史）。" @confirm="save" />
+    <VersionConfirmDialog v-model="versionDialog" title="发布版本确认" description="确认后将写库、版本 +1 并生成快照（进入版本历史）。" async :loading="saving" @confirm="save" />
     <VersionDrawer v-if="currentId" v-model="historyDrawer" kind="experts" :item="historyItem" :can-edit="canEdit" @restored="onRestored" />
   </el-dialog>
 </template>
@@ -491,6 +494,9 @@ async function tryClose(): Promise<void> {
 .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 .col-mid { flex: 1 1 0; min-width: 0; overflow-y: auto; }
 .col-right { flex: 0 0 400px; min-height: 0; display: flex; border-left: 1px solid var(--el-border-color-light); padding-left: 14px; }
+/* 窄屏压缩左右栏宽度，避免中栏（提示词编辑区）被挤成一条竖线 */
+@media (max-width: 1440px) { .col-left { flex-basis: 280px; } .col-right { flex-basis: 350px; } }
+@media (max-width: 1280px) { .col-left { flex-basis: 240px; } .col-right { flex-basis: 300px; } }
 .sec-title { font-size: 14px; font-weight: 600; }
 .plat-badge { font-size: 12px; padding: 0 8px; border-radius: 4px; border: 1px solid; line-height: 20px; }
 .chip-box { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

@@ -47,11 +47,18 @@ const filtered = computed(() => {
   return items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
 })
 
+/** 模型模块服务端查询序号：丢弃乱序响应，防止旧结果覆盖新结果 */
+let modelReqSeq = 0
+
 async function load(): Promise<void> {
   loading.value = true
   try {
     if (kind.value === 'models') {
+      const seq = ++modelReqSeq
       const p = await listModels({ keyword: keyword.value, status: status.value, page: modelPage.value, pageSize: modelPageSize.value })
+      if (seq !== modelReqSeq) return // 乱序响应：已有更新的查询在途，丢弃本次结果
+      // 删除/筛选后末页可能变空页：回退一页重查
+      if (!p.list.length && modelPage.value > 1) { modelPage.value -= 1; void load(); return }
       items.value = p.list as unknown as ConfigItem[]
       modelTotal.value = p.total
     } else {
@@ -59,14 +66,20 @@ async function load(): Promise<void> {
     }
     if (kind.value === 'mcp/servers') tools.value = await listTools()
     // 专家表单/列表的基础模型下拉数据源：取模型管理全量（pageSize 上限内）
-    if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 100 })).list
+    if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 200 })).list
   } finally {
     loading.value = false
   }
 }
 watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; void load() }, { immediate: true })
-// 模型模块：keyword/status 为服务端筛选，变更时回第一页重查；其余模块走本地过滤无需重查
-watch([keyword, status], () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+// 模型模块：status 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
+watch(status, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
+watch(keyword, () => {
+  if (module.value !== 'model') return
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { modelPage.value = 1; void load() }, 300)
+})
 
 /** 平台徽章元数据（历史未知值兜底显示） */
 function platMeta(p: string): { label: string; color: string; bg: string; border: string } {
@@ -165,6 +178,20 @@ async function setDefault(item: ConfigItem): Promise<void> {
   await load()
 }
 
+/** 操作列「更多」下拉统一分发（收纳低频操作，避免行内按钮过多换行溢出） */
+function onRowCommand(cmd: string, row: ConfigItem): void {
+  if (cmd === 'history') void history(row)
+  else if (cmd === 'toggle') void toggleStatus(row)
+  else if (cmd === 'toggleModel') void toggleModel(row)
+  else if (cmd === 'refresh') void refresh(row)
+  else if (cmd === 'refreshFail') void refresh(row, true)
+  else if (cmd === 'setDefault') void setDefault(row)
+  else if (cmd === 'export') void exportJson(row)
+  else if (cmd === 'discover') void action(row, 'discover')
+  else if (cmd === 'health') void action(row, 'health-check')
+  else if (cmd === 'remove') void remove(row)
+}
+
 // -------------------------------------------------------------- 专家：前台预览 / 导出
 function preview(item: ConfigItem): void {
   previewItem.value = item
@@ -221,15 +248,21 @@ async function action(item: ConfigItem, name: string): Promise<void> {
 
 const toolVersionDialog = ref(false)
 const toolChangeTarget = ref<Tool | null>(null)
+const toolChanging = ref(false)
 function askToolChange(tool: Tool): void {
   toolChangeTarget.value = tool
   toolVersionDialog.value = true
 }
 async function toolChange(v: { versionName: string; note: string }): Promise<void> {
-  if (!toolChangeTarget.value) return
-  await toggleTool(toolChangeTarget.value.id, !toolChangeTarget.value.enabled, v)
-  toolVersionDialog.value = false
-  await load()
+  if (!toolChangeTarget.value || toolChanging.value) return
+  toolChanging.value = true
+  try {
+    await toggleTool(toolChangeTarget.value.id, !toolChangeTarget.value.enabled, v)
+    toolVersionDialog.value = false
+    await load()
+  } finally {
+    toolChanging.value = false
+  }
 }
 
 const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指定套餐', PRIVATE: '私有' }
@@ -254,7 +287,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
       </el-select>
       <el-button @click="load">刷新列表</el-button>
-      <el-button v-if="canEdit" type="primary" @click="edit()">新建</el-button>
+      <el-button v-if="canEdit" type="primary" @click="edit()">{{ module === 'model' ? '新建 / 接入渠道' : '新建' }}</el-button>
       <el-button v-if="canEdit && module === 'expert'" @click="importJson()">导入预设 JSON</el-button>
     </div>
     <el-table v-loading="loading" :data="filtered">
@@ -321,28 +354,33 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
           <el-tag size="small" :type="row.refreshStatus === 'FAILED' ? 'danger' : row.refreshStatus === 'PENDING' ? 'warning' : 'success'">{{ row.refreshStatus }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" :min-width="module === 'model' ? 240 : 330" :fixed="module === 'model' ? false : 'right'">
+      <el-table-column label="操作" min-width="185" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="edit(row)">{{ canEdit ? '编辑' : '详情' }}</el-button>
-          <el-button v-if="module === 'expert'" link type="success" @click="preview(row)">前台预览</el-button>
-          <el-button v-if="module === 'expert' || module === 'mcp'" link @click="history(row)">版本历史</el-button>
-          <template v-if="canEdit">
-            <el-button v-if="module === 'expert'" link :disabled="row.status === 1 && row.isDefault" @click="toggleStatus(row)">{{ row.status === 1 ? '下架' : '上架' }}</el-button>
-            <el-button v-if="module === 'model'" link @click="toggleModel(row)">{{ row.status === 1 ? '停用' : '启用' }}</el-button>
-            <el-button v-if="module === 'model'" link type="success" @click="testModel(row)">连通测试</el-button>
-            <template v-if="module !== 'model'">
-              <el-button link @click="refresh(row)">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-button>
-              <el-button v-if="USE_MOCK" link @click="refresh(row, true)">模拟失败</el-button>
-            </template>
-          </template>
-          <el-button v-if="module === 'expert' && canEdit && !row.isDefault" link @click="setDefault(row)">设为默认</el-button>
-          <el-button v-if="module === 'expert' && canEdit" link @click="exportJson(row)">导出</el-button>
-          <el-button v-if="module === 'mcp' && canEdit" link type="success" @click="testConnection(row)">连接测试</el-button>
-          <template v-if="module === 'mcp' && canEdit">
-            <el-button link @click="action(row, 'discover')">发现工具</el-button>
-            <el-button link @click="action(row, 'health-check')">健康检查</el-button>
-          </template>
-          <el-button v-if="canEdit" link type="danger" @click="remove(row)">删除</el-button>
+          <div class="row-actions">
+            <el-button link type="primary" @click="edit(row)">{{ canEdit ? '编辑' : '详情' }}</el-button>
+            <el-button v-if="module === 'expert'" link type="success" @click="preview(row)">前台预览</el-button>
+            <el-button v-if="module === 'mcp' && canEdit" link type="success" @click="testConnection(row)">连接测试</el-button>
+            <el-button v-if="module === 'model' && canEdit" link type="success" @click="testModel(row)">连通测试</el-button>
+            <el-dropdown v-if="module === 'expert' || module === 'mcp' || canEdit" @command="(cmd: string | number | object) => onRowCommand(String(cmd), row)">
+              <el-button link type="primary">更多 ▾</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="module === 'expert' || module === 'mcp'" command="history">版本历史</el-dropdown-item>
+                  <template v-if="canEdit">
+                    <el-dropdown-item v-if="module === 'expert'" command="toggle" :disabled="row.status === 1 && row.isDefault">{{ row.status === 1 ? '下架' : '上架' }}</el-dropdown-item>
+                    <el-dropdown-item v-if="module === 'model'" command="toggleModel">{{ row.status === 1 ? '停用' : '启用' }}</el-dropdown-item>
+                    <el-dropdown-item v-if="module !== 'model'" command="refresh">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-dropdown-item>
+                    <el-dropdown-item v-if="module !== 'model' && USE_MOCK" command="refreshFail">模拟失败</el-dropdown-item>
+                    <el-dropdown-item v-if="module === 'expert' && !row.isDefault" command="setDefault">设为默认</el-dropdown-item>
+                    <el-dropdown-item v-if="module === 'expert'" command="export">导出 JSON</el-dropdown-item>
+                    <el-dropdown-item v-if="module === 'mcp'" command="discover">发现工具</el-dropdown-item>
+                    <el-dropdown-item v-if="module === 'mcp'" command="health">健康检查</el-dropdown-item>
+                    <el-dropdown-item command="remove" divided>删除</el-dropdown-item>
+                  </template>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -370,7 +408,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
   <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <ExpertOrchestrator v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
-  <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" :existing-codes="items.map(i => i.code)" @saved="onSaved" />
   <VersionDrawer v-model="versionDrawer" :kind="historyKind" :item="historyItem" :can-edit="canEdit" @restored="load" />
   <WorkspacePreviewDrawer v-model="previewDrawer" :expert="previewItem" />
   <!-- v5：MCP 工具启停同样走版本确认框（默认时间戳版本名可改 + 变更说明，确认后才写库并生成快照） -->
@@ -379,6 +417,11 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
     title="工具启停确认"
     :description="`确认将${toolChangeTarget?.enabled ? '停用' : '启用'}工具「${toolChangeTarget?.name || ''}」，所属服务版本 +1 并生成快照。`"
     confirm-text="确认并变更"
+    async
+    :loading="toolChanging"
     @confirm="toolChange"
   />
 </template>
+<style scoped>
+.row-actions { display: flex; align-items: center; white-space: nowrap; }
+</style>

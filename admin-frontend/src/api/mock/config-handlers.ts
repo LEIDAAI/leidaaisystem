@@ -25,13 +25,21 @@ export function validateEntitlements(value:unknown, ErrorType:Services['error'])
   })
 }
 
-/** 引用了指定资源的套餐/个体权益是否存在（删除拦截用） */
-function entitledOf(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): boolean {
-  return [...db.plans.flatMap(p=>p.entitlements || []),...db.users.flatMap(u=>u.entitlements)].some(e=>e.resourceType===resourceType && ids.includes(e.resourceId))
+/** 引用了指定资源的套餐/个体权益来源清单（删除拦截用，报错指明来源便于解除） */
+function entitledBy(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): string[] {
+  const by: string[] = []
+  db.plans.forEach(p=>(p.entitlements||[]).forEach(e=>{ if(e.resourceType===resourceType && ids.includes(e.resourceId)) by.push(`套餐「${p.name}」`) }))
+  db.users.forEach(u=>(u.entitlements||[]).forEach(e=>{ if(e.resourceType===resourceType && ids.includes(e.resourceId)) by.push(`用户「${u.nickname}#${u.id}」`) }))
+  return [...new Set(by)]
 }
 
 export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   const fail = (message:string,code=422):never=>{ throw new ErrorType(code,message) }
+  /** 引用来源报错文案：最多列 5 处，其余计数 */
+  const entitledFail = (plant:'专家'|'技能'|'MCP 服务', by:string[]):never => {
+    const shown = by.slice(0,5).join('、')
+    throw new ErrorType(409, `${plant}被以下套餐或用户权益引用：${shown}${by.length>5?` 等 ${by.length} 处引用`:''}；请先在套餐或用户权益中解除引用`)
+  }
   const perm = (ctx:Context,code:string)=>{ if(!permissionCodesOf(ctx.adminId).includes(code)) fail('无权限执行该操作',403) }
   const find = (items:ConfigItem[],id:string)=>items.find(i=>i.id===Number(id)) || fail('配置不存在',404)
   const snapshot = (item:ConfigItem)=>JSON.parse(JSON.stringify(item)) as ConfigItem
@@ -182,17 +190,17 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       if(module==='plan') {
         if(db.users.some(u=>u.planId===item.id) || db.orders.some(o=>o.planId===item.id)) fail('套餐已被用户或订单引用，不能删除',409)
       } else if(module==='expert') {
-        if(entitledOf('EXPERT',[item.id])) fail('专家被套餐或用户权益引用，不能删除',409)
+        const by=entitledBy('EXPERT',[item.id]);if(by.length) entitledFail('专家',by)
         if(item.isDefault) fail('默认专家不能删除，请先切换其他专家为默认',409)
         if(db.chats.some(c=>c.expertId===item.id)) fail('专家存在历史会话，不能删除',409)
       } else if(module==='skill') {
-        if(entitledOf('SKILL',[item.id])) fail('技能被套餐或用户权益引用，不能删除',409)
+        const by=entitledBy('SKILL',[item.id]);if(by.length) entitledFail('技能',by)
         const refs=db.experts.filter(e=>e.skillIds?.includes(item.id))
         if(refs.length && !confirm) fail(`技能被以下专家引用：${refs.map(r=>r.name).join('、')}；确认删除请勾选引用确认`,409)
         db.experts.forEach(e=>{ e.skillIds=(e.skillIds||[]).filter(id=>id!==item.id) })
       } else {
         const toolIds=db.tools.filter(t=>t.serverId===item.id).map(t=>t.id)
-        if(entitledOf('MCP_TOOL',toolIds)) fail('MCP 服务被套餐或用户权益引用，不能删除',409)
+        const by=entitledBy('MCP_TOOL',toolIds);if(by.length) entitledFail('MCP 服务',by)
         const refs=db.experts.filter(e=>e.mcpServerIds?.includes(item.id))
         if(refs.length) fail(`MCP 服务被专家引用（${refs.map(r=>r.name).join('、')}），不能删除`,409)
         db.tools=db.tools.filter(t=>t.serverId!==item.id)
@@ -251,6 +259,29 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     return publicModel(item)
   }
   route('POST','/models',saveModel);route('PUT','/models/:id',saveModel)
+  // 批量接入（渠道式）：「链接 + 密钥」探测出的模型清单勾选后一次落库；共享 endpoint/apiKey/provider，重复编码自动跳过
+  route('POST','/models/batch',ctx=>{
+    perm(ctx,'model:edit')
+    const b=(ctx.body || {}) as Record<string,unknown>
+    const arr=Array.isArray(b.items)?(b.items as Array<Record<string,unknown>>):[]
+    if(!arr.length) fail('批量添加列表为空，请先探测并勾选模型')
+    const provider=String(b.provider || '').trim() || 'OpenAI兼容'
+    const endpoint=String(b.endpoint || '').trim()
+    if(endpoint && !/^https?:\/\//i.test(endpoint)) fail('接入地址须以 http(s):// 开头')
+    const apiKey=typeof b.apiKey==='string' && b.apiKey.trim() ? b.apiKey.trim() : undefined
+    const status=(b.status===0?0:1) as 0|1
+    const created:LlmModel[]=[];const skipped:string[]=[]
+    for(const it of arr){
+      const raw=String(it.code || '').trim()
+      const code=raw.replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')
+      if(!code || db.models.some(m=>m.code===code)) { skipped.push(raw || '(空)'); continue }
+      const item:LlmModelRow={ id:nextMockId(), code, name:String(it.name || '').trim() || code, provider, endpoint, apiKey, defaultParams:{ temperature:0.7, max_tokens:4096 }, remark:String(b.remark || '').trim(), status, createdAt:nowStr(), updatedAt:nowStr() }
+      db.models.push(item);created.push(publicModel(item))
+      audit(ctx.adminId,'model.create','model',item.id,null,publicModel(item))
+    }
+    audit(ctx.adminId,'model.batch','model',0,null,{ requested:arr.length,created:created.length,skipped:skipped.length })
+    return { created:created.length, skipped, list:created }
+  })
   route('PUT','/models/:id/status',ctx=>{
     perm(ctx,'model:edit');const m=findModel(ctx.params.id)
     const status=Number((ctx.body as Record<string,unknown>)?.status)
@@ -315,6 +346,21 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const baseUrl=String(b.baseUrl || '').trim().replace(/\/+$/,'')
     const apiKey=String(b.apiKey || '').trim()
     if(!/^https?:\/\//i.test(baseUrl)) fail('接入地址须以 http(s):// 开头')
+    // ---- Mock 演示端点：demo.* / *.local / 种子演示网关（192.168.1.10）不发真实网络请求，
+    // 按「链接+密钥」直接返回该渠道全部可用模型清单（演示数据，via=mock-demo）----
+    let demoHost=''
+    try { demoHost=new URL(baseUrl).hostname } catch { /* 已在上面校验过协议 */ }
+    if(/^demo\.|\.local$/i.test(demoHost) || demoHost==='192.168.1.10') {
+      const catalogs:Array<{match:RegExp, models:Array<[string,string]>}>= [
+        { match:/bigmodel|zhipu/i, models:[['glm-5.3','GLM-5.3'],['glm-5.3-air','GLM-5.3-Air'],['glm-5.3-flash','GLM-5.3-Flash'],['glm-4.7','GLM-4.7'],['glm-4.7-plus','GLM-4.7-Plus'],['glm-4.5v','GLM-4.5V'],['cogview-4','CogView-4'],['cogvideox-3','CogVideoX-3'],['embedding-3','Embedding-3']] },
+        { match:/openai/i, models:[['gpt-5.2','GPT-5.2'],['gpt-5.2-mini','GPT-5.2-Mini'],['gpt-4.1','GPT-4.1'],['gpt-4.1-mini','GPT-4.1-Mini'],['gpt-4o','GPT-4o'],['gpt-4o-mini','GPT-4o-Mini'],['o3','o3'],['o4-mini','o4-mini'],['text-embedding-3-large','text-embedding-3-large'],['dall-e-3','DALL·E 3'],['whisper-1','Whisper']] },
+        // 兜底清单：内网聚合网关（one-api 式多供应商转发）与未识别演示域名共用
+        { match:/.*/, models:[['glm-5.3','GLM-5.3'],['glm-4.7','GLM-4.7'],['deepseek-v3.2','DeepSeek-V3.2'],['deepseek-r2','DeepSeek-R2'],['qwen3-max','Qwen3-Max'],['qwen-max','Qwen-Max'],['qwen-plus','Qwen-Plus'],['kimi-k2','Kimi-K2'],['doubao-seed-1.6','Doubao-Seed-1.6'],['gemini-3-pro','Gemini-3-Pro'],['claude-sonnet-4.5','Claude-Sonnet-4.5'],['gpt-4o','GPT-4o']] }
+      ]
+      const cat=catalogs.find(c=>c.match.test(baseUrl))!
+      const models=cat.models.map(([id,name])=>({ id, displayName:name, ownedBy:demoHost }))
+      return { models, resolvedUrl:`${baseUrl}/models`, via:'mock-demo（演示数据，未发起真实网络请求）' } satisfies ProbeModelsResult
+    }
     const parse=(res:Response, url:string):Promise<ProbedModel[]>=>res.json().then((data:unknown)=>{
       if(!res.ok) throw new ErrorType(422, `HTTP ${res.status}`)
       const arr=(data as { data?: unknown } | null)?.data

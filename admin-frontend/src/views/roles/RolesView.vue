@@ -107,7 +107,13 @@ async function handleDelete(row: RoleItem) {
               >
                 {{ row.status === 1 ? '禁用' : '启用' }}
               </el-button>
-              <el-button v-perm="'role:manage'" link type="danger" @click="handleDelete(row)">删除</el-button>
+              <el-button
+                v-perm="'role:manage'"
+                link
+                type="danger"
+                :disabled="row.code === 'SUPER_ADMIN'"
+                @click="handleDelete(row)"
+              >删除</el-button>
             </div>
           </template>
         </el-table-column>

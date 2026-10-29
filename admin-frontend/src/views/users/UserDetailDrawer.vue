@@ -56,6 +56,7 @@ watch(visible, async (value) => {
 // -------------------------------------------------- 权益覆盖编辑（受 user:entitlement 权限控制的按钮触发）
 const editingEntitlements = ref(false)
 const draftEntitlements = ref<EntitlementPayload[]>([])
+const savingEntitlements = ref(false)
 
 function startEditEntitlements() {
   const source = detail.value?.entitlements ?? []
@@ -70,17 +71,22 @@ function startEditEntitlements() {
 }
 
 async function saveEntitlements() {
-  if (props.userId === null) return
+  if (props.userId === null || savingEntitlements.value) return
   const invalid = draftEntitlements.value.some((e) => !Number.isFinite(e.quotaLimit) || e.quotaLimit < 0)
   if (invalid) {
     ElMessage.warning('限额值必须为不小于 0 的数字')
     return
   }
-  await updateUserEntitlements(props.userId, draftEntitlements.value)
-  ElMessage.success('权益已更新')
-  editingEntitlements.value = false
-  detail.value = await getUserDetail(props.userId)
-  emit('changed')
+  savingEntitlements.value = true
+  try {
+    await updateUserEntitlements(props.userId, draftEntitlements.value)
+    ElMessage.success('权益已更新')
+    editingEntitlements.value = false
+    detail.value = await getUserDetail(props.userId)
+    emit('changed')
+  } finally {
+    savingEntitlements.value = false
+  }
 }
 
 async function cancelEditEntitlements() {
@@ -128,7 +134,7 @@ async function cancelEditEntitlements() {
             </span>
             <template v-else>
               <el-button size="small" @click="cancelEditEntitlements">取消</el-button>
-              <el-button size="small" type="primary" @click="saveEntitlements">保存</el-button>
+              <el-button size="small" type="primary" :loading="savingEntitlements" @click="saveEntitlements">保存</el-button>
             </template>
           </div>
 

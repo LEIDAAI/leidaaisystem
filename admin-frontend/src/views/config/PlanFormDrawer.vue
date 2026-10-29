@@ -40,8 +40,8 @@ async function save(): Promise<void> {
 <template>
   <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑套餐' : '新建套餐'}`" size="640px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
     <el-form label-width="110px" :disabled="!canEdit">
-      <el-form-item label="名称"><el-input v-model="draft.name" /></el-form-item>
-      <el-form-item label="唯一编码"><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="字母数字下划线短横线，创建后不可修改" /></el-form-item>
+      <el-form-item label="名称" required><el-input v-model="draft.name" /></el-form-item>
+      <el-form-item label="唯一编码" required><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="字母数字下划线短横线，创建后不可修改" /></el-form-item>
       <el-form-item label="启用 / 上架"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" /></el-form-item>
       <el-form-item label="价格（元）"><el-input-number v-model="draft.price" :min="0" :precision="2" /></el-form-item>
       <el-form-item label="有效天数"><el-input-number v-model="draft.durationDays" :min="1" :precision="0" /></el-form-item>

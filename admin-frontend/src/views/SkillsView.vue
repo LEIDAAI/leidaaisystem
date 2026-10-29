@@ -76,12 +76,22 @@ async function onJsonChange(e: Event): Promise<void> {
   input.value = ''
   if (!file) return
   const text = await file.text()
-  const payload = JSON.parse(text)
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    ElMessage.error('JSON 解析失败：文件内容不是合法 JSON')
+    return
+  }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     ElMessage.error('导入内容须为单个技能 JSON 对象（不支持数组）')
     return
   }
-  await importSkillJson(payload)
+  try {
+    await importSkillJson(payload)
+  } catch {
+    return // 失败提示由全局请求层透出
+  }
   ElMessage.success('导入成功（新建条目，如编码冲突请修改 JSON 中的 code 后重试）')
   await load()
 }
@@ -195,6 +205,15 @@ function history(item: ConfigItem): void {
   versionDrawer.value = true
 }
 
+/** 行操作「更多」下拉统一分发（收纳低频操作，避免行内按钮过多折行） */
+function onRowCommand(cmd: string, row: ConfigItem): void {
+  if (cmd === 'history') history(row)
+  else if (cmd === 'clone') void clone(row)
+  else if (cmd === 'export') void exportJson(row)
+  else if (cmd === 'stats') void stats(row)
+  else if (cmd === 'remove') void remove(row)
+}
+
 function platMetaOf(p: string): { label: string; color: string; bg: string; border: string } {
   return platformMeta(p)
 }
@@ -251,11 +270,18 @@ function boundExpertCount(row: ConfigItem): number {
         <div class="row-actions">
           <el-switch :model-value="row.status === 1" :disabled="!canEdit" @change="(v: string | number | boolean) => toggleStatus(row, v)" />
           <el-button link type="primary" @click="edit(row)">{{ canEdit ? '编辑' : '详情' }}</el-button>
-          <el-button link @click="history(row)">版本历史</el-button>
-          <el-button v-if="canClone" link @click="clone(row)">克隆</el-button>
-          <el-button v-if="canExport" link @click="exportJson(row)">导出</el-button>
-          <el-button link @click="stats(row)">统计</el-button>
-          <el-button v-if="canEdit" link type="danger" @click="remove(row)">删除</el-button>
+          <el-dropdown @command="(cmd: string | number | object) => onRowCommand(String(cmd), row)">
+            <el-button link type="primary">更多 ▾</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="history">版本历史</el-dropdown-item>
+                <el-dropdown-item v-if="canClone" command="clone">克隆</el-dropdown-item>
+                <el-dropdown-item v-if="canExport" command="export">导出 JSON</el-dropdown-item>
+                <el-dropdown-item command="stats">统计</el-dropdown-item>
+                <el-dropdown-item v-if="canEdit" command="remove" divided>删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
       <el-empty v-if="!filtered.length && !loading" description="暂无技能，点击右上「创建」开始" />
@@ -281,6 +307,6 @@ function boundExpertCount(row: ConfigItem): number {
 .row-name { font-weight: 600; }
 .row-desc { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--el-text-color-regular); flex: 0 0 150px; }
-.row-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
+.row-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; justify-content: flex-end; white-space: nowrap; }
 .muted { color: var(--el-text-color-secondary); }
 </style>

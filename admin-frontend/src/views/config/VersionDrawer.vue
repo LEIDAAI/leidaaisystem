@@ -15,6 +15,7 @@ const newVer = ref<number | null>(null)
 /** 恢复走版本确认框：待恢复版本与默认版本名（恢复自 <源版本名>） */
 const restoreDialog = ref(false)
 const restoreTarget = ref<{ version: number; defaultName: string } | null>(null)
+const restoring = ref(false)
 
 const sorted = computed(() => [...versions.value].sort((a, b) => b.version - a.version))
 const oldSnap = computed(() => versions.value.find((v) => v.version === oldVer.value))
@@ -54,11 +55,17 @@ function askRestore(version: number, sourceName?: string): void {
 }
 
 async function onRestoreConfirm(v: { versionName: string; note: string }): Promise<void> {
-  if (!props.item || !restoreTarget.value) return
-  await restoreConfigVersion(props.kind, props.item.id, restoreTarget.value.version, v.versionName, v.note || undefined)
-  ElMessage.success('已恢复并生成新版本')
-  versions.value = await configVersions(props.kind, props.item.id)
-  emit('restored')
+  if (!props.item || !restoreTarget.value || restoring.value) return
+  restoring.value = true
+  try {
+    await restoreConfigVersion(props.kind, props.item.id, restoreTarget.value.version, v.versionName, v.note || undefined)
+    ElMessage.success('已恢复并生成新版本')
+    restoreDialog.value = false
+    versions.value = await configVersions(props.kind, props.item.id)
+    emit('restored')
+  } finally {
+    restoring.value = false
+  }
 }
 </script>
 <template>
@@ -97,6 +104,8 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
       description="恢复旧版本将以新版本形式写入（当前内容自动进入历史），不覆盖既有版本记录。"
       :default-name="restoreTarget?.defaultName"
       confirm-text="确认并恢复"
+      async
+      :loading="restoring"
       @confirm="onRestoreConfirm"
     />
   </el-drawer>

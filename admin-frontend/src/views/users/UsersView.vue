@@ -54,7 +54,7 @@ async function handleBan(row: UserItem) {
     inputErrorMessage: '请填写至少 2 个字的原因'
   })
   if (reason === null) return
-  await updateUserStatus(row.id, true, reason)
+  await updateUserStatus(row.id, true, reason.trim())
   ElMessage.success('已封禁')
   tableRef.value?.refresh()
 }

@@ -140,7 +140,7 @@ async function handleDelete(row: AdminItem) {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="250" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button v-perm="'admin:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>

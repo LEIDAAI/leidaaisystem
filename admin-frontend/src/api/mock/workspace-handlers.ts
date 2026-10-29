@@ -5,7 +5,7 @@ import type { ConfigItem } from '../config'
 /**
  * C 端工作台只读契约（附录 12.4，Mock 演示实现）：
  * - 仅返回启用（上架）资源；专家按 visibility 匹配（匿名=仅 PUBLIC，传入 userPlanIds=PUBLIC + 命中套餐）；
- * - 技能/MCP 自身无可见性字段，展示口径为"被至少一个可见专家绑定"；
+ * - 技能/MCP 自身无可见性字段，展示口径为"启用（上架）资源全量展示"，并在字段中回传绑定专家数 / 启用工具数供前台参考；
  * - v0.5：三个列表端点支持 `?platform=` 查询过滤（单值 1688/OZON/AMAZON/TEMU，资源 platforms 数组命中任一即返回；未传=不过滤）；
  * - 契约只读，全部为 GET，不校验管理端权限（真实接入时由 C 端网关按用户 token 鉴权）。
  */

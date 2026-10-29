@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { listResources, type Entitlement } from '@/api/config'
 const props=defineProps<{ modelValue:Entitlement[]; disabled?:boolean }>()
 const emit=defineEmits<{ 'update:modelValue':[Entitlement[]] }>()
 const resources=ref<Entitlement[]>([])
 const selected=ref('')
 onMounted(async()=>{ resources.value=await listResources() })
-function add(){ const r=resources.value.find(r=>`${r.resourceType}:${r.resourceId}`===selected.value);if(r && !props.modelValue.some(e=>e.resourceType===r.resourceType && e.resourceId===r.resourceId)) emit('update:modelValue',[...props.modelValue,{...r}]) }
+function add(){
+  const r=resources.value.find(r=>`${r.resourceType}:${r.resourceId}`===selected.value)
+  if(!r) return
+  if(props.modelValue.some(e=>e.resourceType===r.resourceType && e.resourceId===r.resourceId)){ ElMessage.warning('该资源权益已存在，请直接调整限额与周期'); return }
+  emit('update:modelValue',[...props.modelValue,{...r}])
+}
 </script>
 <template>
   <div v-if="!disabled" style="display:flex;gap:8px;margin:12px 0"><el-select v-model="selected" placeholder="选择专家 / 技能 / MCP工具" filterable style="width:320px"><el-option v-for="r in resources" :key="`${r.resourceType}:${r.resourceId}`" :value="`${r.resourceType}:${r.resourceId}`" :label="`${r.resourceType} · ${r.resourceName}`" /></el-select><el-button @click="add">新增权益</el-button></div>
