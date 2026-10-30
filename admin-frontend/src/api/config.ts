@@ -115,9 +115,10 @@ export const configVersions = (kind: 'experts' | 'skills' | 'mcp/servers', id: n
 export const restoreConfigVersion = (kind: 'experts' | 'skills' | 'mcp/servers', id: number, version: number, versionName?: string, note?: string) => post<ConfigItem>(`/${kind}/${id}/restore`, { version, versionName, note })
 
 // ---------------------------------------------------------------- 模型管理（基础 LLM 模型注册，v5）
-/** GET /models 为分页契约：keyword（名称/编码模糊）/ status 服务端筛选 + page/pageSize 分页 */
-export interface ModelQuery { keyword?: string; status?: number | ''; page?: number; pageSize?: number }
-export const listModels = (q: ModelQuery = {}) => get<PageData<LlmModel>>('/models', { ...q })
+/** GET /models 为分页契约：keyword（名称/编码模糊）/ status / domain（接入地址 host）服务端筛选 + page/pageSize 分页；domains 为全量域名清单（筛选项） */
+export interface ModelQuery { keyword?: string; status?: number | ''; domain?: string; page?: number; pageSize?: number }
+export type ModelPageData = PageData<LlmModel> & { domains?: string[] }
+export const listModels = (q: ModelQuery = {}) => get<ModelPageData>('/models', { ...q })
 export const saveModelStatus = (id: number, status: number) => put<LlmModel>(`/models/${id}/status`, { status })
 /** 模型连通测试（Mock 演示模拟，不发真实网络请求） */
 export interface ModelTestResult { result: 'SUCCESS' | 'FAILED'; detail: string; latencyMs: number; testedAt: string }

@@ -33,6 +33,9 @@ const plans = ref<ConfigItem[]>([])
 const models = ref<LlmModel[]>([])
 const keyword = ref('')
 const status = ref<number | ''>('')
+/** v6：模型域名筛选（接入地址 host），不同渠道的模型区分开 */
+const modelDomain = ref('')
+const modelDomains = ref<string[]>([])
 /** v5：平台筛选（专家/技能/MCP；下拉多选，空=全部；命中任一所选平台即显示） */
 const platformFilter = ref<PlatformType[]>([])
 const loading = ref(false)
@@ -55,12 +58,13 @@ async function load(): Promise<void> {
   try {
     if (kind.value === 'models') {
       const seq = ++modelReqSeq
-      const p = await listModels({ keyword: keyword.value, status: status.value, page: modelPage.value, pageSize: modelPageSize.value })
+      const p = await listModels({ keyword: keyword.value, status: status.value, domain: modelDomain.value, page: modelPage.value, pageSize: modelPageSize.value })
       if (seq !== modelReqSeq) return // 乱序响应：已有更新的查询在途，丢弃本次结果
       // 删除/筛选后末页可能变空页：回退一页重查
       if (!p.list.length && modelPage.value > 1) { modelPage.value -= 1; void load(); return }
       items.value = p.list as unknown as ConfigItem[]
       modelTotal.value = p.total
+      modelDomains.value = p.domains || []
     } else {
       items.value = await listConfig(kind.value)
     }
@@ -71,10 +75,11 @@ async function load(): Promise<void> {
     loading.value = false
   }
 }
-watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; void load() }, { immediate: true })
+watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; void load() }, { immediate: true })
 let searchTimer: ReturnType<typeof setTimeout> | undefined
-// 模型模块：status 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
+// 模型模块：status/domain 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
 watch(status, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
+watch(modelDomain, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
 watch(keyword, () => {
   if (module.value !== 'model') return
   if (searchTimer) clearTimeout(searchTimer)
@@ -84,6 +89,17 @@ watch(keyword, () => {
 /** 平台徽章元数据（历史未知值兜底显示） */
 function platMeta(p: string): { label: string; color: string; bg: string; border: string } {
   return platformMeta(p)
+}
+/** v6：接入地址取 host（域名区分；无协议等非法地址原样显示） */
+function hostOf(endpoint?: string): string {
+  if (!endpoint) return ''
+  try { return new URL(endpoint).host } catch { return endpoint }
+}
+/** v6：域名→彩色标签（按域名在 domains 清单中的序号取色：同域名恒同色，相邻域名必不同色，不同渠道一眼区分） */
+const DOMAIN_TAG_TYPES = ['primary', 'success', 'warning', 'danger', 'info'] as const
+function domainTagType(host: string): (typeof DOMAIN_TAG_TYPES)[number] {
+  const idx = modelDomains.value.indexOf(host)
+  return DOMAIN_TAG_TYPES[(idx >= 0 ? idx : 0) % DOMAIN_TAG_TYPES.length]
 }
 /** 专家基础模型显示名（模型表解析；未注册则原样显示 code） */
 function modelNameOf(code: string | undefined): string {
@@ -276,6 +292,18 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <el-option label="启用 / 上架" :value="1" /><el-option label="停用 / 下架" :value="0" />
       </el-select>
       <el-select
+        v-if="module === 'model' && modelDomains.length"
+        v-model="modelDomain"
+        placeholder="全部域名"
+        clearable
+        filterable
+        style="width:220px"
+      >
+        <el-option v-for="d in modelDomains" :key="d" :value="d" :label="d">
+          <el-tag size="small" effect="plain" :type="domainTagType(d)" style="margin-right:8px">{{ d }}</el-tag>
+        </el-option>
+      </el-select>
+      <el-select
         v-if="module === 'expert' || module === 'mcp'"
         v-model="platformFilter"
         multiple
@@ -328,7 +356,15 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'model'" prop="code" label="编码" min-width="130" show-overflow-tooltip><template #default="{ row }"><code>{{ row.code }}</code></template></el-table-column>
       <el-table-column v-if="module === 'model'" label="供应商" width="120"><template #default="{ row }">{{ row.provider || '-' }}</template></el-table-column>
       <el-table-column v-if="module === 'model'" label="API Key" width="110"><template #default="{ row }">{{ row.apiKeyMasked || '—' }}</template></el-table-column>
-      <el-table-column v-if="module === 'model'" label="接入地址" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.endpoint || '—' }}</template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="渠道域名 / 接入地址" min-width="215">
+        <template #default="{ row }">
+          <template v-if="row.endpoint">
+            <el-tag size="small" effect="plain" :type="domainTagType(hostOf(row.endpoint))">{{ hostOf(row.endpoint) }}</el-tag>
+            <br /><small class="muted" style="word-break:break-all">{{ row.endpoint }}</small>
+          </template>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column v-if="module === 'expert'" label="标签" min-width="140">
         <template #default="{ row }"><el-tag v-for="t in row.tags || []" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag></template>
       </el-table-column>

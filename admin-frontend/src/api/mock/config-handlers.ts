@@ -227,10 +227,14 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   route('GET','/models',ctx=>{
     perm(ctx,'model:view')
     const keyword=String(ctx.query.keyword || '');const status=ctx.query.status==='' || ctx.query.status===undefined ? undefined:Number(ctx.query.status)
-    // v5 契约：分页 + keyword/status 筛选，返回 {total, list}
-    const list=db.models.filter(m=>(!keyword || `${m.name} ${m.code}`.includes(keyword)) && (status===undefined || m.status===status)).sort((a,b)=>a.id-b.id).map(publicModel)
+    // v6 域名区分：domain（接入地址 host）服务端筛选；domain 列表全量返回供筛选项
+    const domain=String(ctx.query.domain || '').trim()
+    const hostOf=(m:LlmModelRow):string=>{ if(!m.endpoint) return ''; try { return new URL(m.endpoint).host } catch { return m.endpoint } }
+    // v5 契约：分页 + keyword/status 筛选，返回 {total, list}；按域名分组排序（同域名模型相邻）
+    const list=db.models.filter(m=>(!keyword || `${m.name} ${m.code}`.includes(keyword)) && (status===undefined || m.status===status) && (!domain || hostOf(m)===domain)).sort((a,b)=>hostOf(a).localeCompare(hostOf(b)) || a.id-b.id).map(publicModel)
     const page=Math.max(1,Number(ctx.query.page)||1);const pageSize=Math.min(100,Math.max(1,Number(ctx.query.pageSize)||20))
-    return { total:list.length, list:list.slice((page-1)*pageSize,page*pageSize) }
+    const domains=[...new Set(db.models.map(hostOf).filter(Boolean))].sort()
+    return { total:list.length, list:list.slice((page-1)*pageSize,page*pageSize), domains }
   })
   route('GET','/models/:id',ctx=>{perm(ctx,'model:view');return publicModel(findModel(ctx.params.id))})
   const saveModel = (ctx:Context)=>{
@@ -346,15 +350,16 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const baseUrl=String(b.baseUrl || '').trim().replace(/\/+$/,'')
     const apiKey=String(b.apiKey || '').trim()
     if(!/^https?:\/\//i.test(baseUrl)) fail('接入地址须以 http(s):// 开头')
-    // ---- Mock 演示端点：demo.* / *.local / 种子演示网关（192.168.1.10）不发真实网络请求，
-    // 按「链接+密钥」直接返回该渠道全部可用模型清单（演示数据，via=mock-demo）----
+    // ---- Mock 演示端点：demo.* / *.local 域名不发真实网络请求，
+    // 按「链接+密钥」直接返回该渠道模拟模型清单（演示数据，via=mock-demo）；
+    // 其余地址（如内网真实网关 192.168.1.10）走下方真实拉取路径 ----
     let demoHost=''
     try { demoHost=new URL(baseUrl).hostname } catch { /* 已在上面校验过协议 */ }
-    if(/^demo\.|\.local$/i.test(demoHost) || demoHost==='192.168.1.10') {
+    if(/^demo\.|\.local$/i.test(demoHost)) {
       const catalogs:Array<{match:RegExp, models:Array<[string,string]>}>= [
         { match:/bigmodel|zhipu/i, models:[['glm-5.3','GLM-5.3'],['glm-5.3-air','GLM-5.3-Air'],['glm-5.3-flash','GLM-5.3-Flash'],['glm-4.7','GLM-4.7'],['glm-4.7-plus','GLM-4.7-Plus'],['glm-4.5v','GLM-4.5V'],['cogview-4','CogView-4'],['cogvideox-3','CogVideoX-3'],['embedding-3','Embedding-3']] },
         { match:/openai/i, models:[['gpt-5.2','GPT-5.2'],['gpt-5.2-mini','GPT-5.2-Mini'],['gpt-4.1','GPT-4.1'],['gpt-4.1-mini','GPT-4.1-Mini'],['gpt-4o','GPT-4o'],['gpt-4o-mini','GPT-4o-Mini'],['o3','o3'],['o4-mini','o4-mini'],['text-embedding-3-large','text-embedding-3-large'],['dall-e-3','DALL·E 3'],['whisper-1','Whisper']] },
-        // 兜底清单：内网聚合网关（one-api 式多供应商转发）与未识别演示域名共用
+        // 兜底清单：未识别演示域名共用
         { match:/.*/, models:[['glm-5.3','GLM-5.3'],['glm-4.7','GLM-4.7'],['deepseek-v3.2','DeepSeek-V3.2'],['deepseek-r2','DeepSeek-R2'],['qwen3-max','Qwen3-Max'],['qwen-max','Qwen-Max'],['qwen-plus','Qwen-Plus'],['kimi-k2','Kimi-K2'],['doubao-seed-1.6','Doubao-Seed-1.6'],['gemini-3-pro','Gemini-3-Pro'],['claude-sonnet-4.5','Claude-Sonnet-4.5'],['gpt-4o','GPT-4o']] }
       ]
       const cat=catalogs.find(c=>c.match.test(baseUrl))!

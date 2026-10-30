@@ -41,12 +41,12 @@ function isExisting(id: string): boolean {
 
 /** 供应商字典（可扩展：allow-create） */
 const PROVIDERS = ['智谱', 'OpenAI兼容', 'Anthropic兼容', '自定义']
-/** Mock 演示地址（demo.* / .local / 种子网关由 mock 层返回模拟模型清单，不发真实网络请求） */
+/** Mock 演示地址（demo.* / .local 域名由 mock 层返回模拟清单；内网网关为真实端点，点击后走真实拉取） */
 const DEMO_ENDPOINTS = [
   { label: '智谱演示', provider: '智谱', endpoint: 'https://demo.bigmodel.cn/api/paas/v4' },
   { label: 'OpenAI 演示', provider: 'OpenAI', endpoint: 'https://demo.openai.local/v1' },
   { label: '聚合网关演示', provider: 'OpenAI兼容', endpoint: 'https://demo.oneapi.local/v1' },
-  { label: '内网演示网关', provider: 'OpenAI兼容', endpoint: 'http://192.168.1.10:8080/v1' }
+  { label: '内网模型网关（真实）', provider: 'OpenAI兼容', endpoint: 'http://192.168.1.10:8080/v1' }
 ]
 
 function fillDemo(d: (typeof DEMO_ENDPOINTS)[number]): void {
@@ -192,7 +192,7 @@ async function save(): Promise<void> {
           <div class="demo-chips">
             <el-tag v-for="d in DEMO_ENDPOINTS" :key="d.endpoint" class="demo-chip" type="info" @click="fillDemo(d)">{{ d.label }}</el-tag>
           </div>
-          <p class="muted">Mock 环境：点击演示地址一键填充，即刻体验「链接+密钥 → 拉取全部模型」全流程（模拟数据，不发真实请求）。</p>
+          <p class="muted">点击演示地址一键填充；demo.* / .local 返回模拟清单（不发真实请求），「内网模型网关」为真实端点，将实际拉取可用模型。</p>
         </el-form-item>
         <el-form-item label="拉取模型">
           <div style="display:flex;gap:10px;width:100%">
