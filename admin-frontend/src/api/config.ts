@@ -20,14 +20,16 @@ export interface AuthConfig { type: 'NONE' | 'BEARER' | 'API_KEY' | 'HEADER'; he
  * 平台维度（专家/技能/MCP 通用，v5）：多选 JSON 数组，至少一个；
  * AMAZON 显示「亚马逊」；无「通用」单值（覆盖全平台=多选全部，见设计文档附录 12.5）
  */
-export type PlatformType = '1688' | 'OZON' | 'AMAZON' | 'TEMU'
-export const PLATFORMS: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU']
-/** 平台显示名与徽章配色（对齐 work.html 平台徽章风格：1688绿/Ozon青绿/亚马逊橙/Temu红） */
+export type PlatformType = '1688' | 'OZON' | 'AMAZON' | 'TEMU' | 'TIKTOK' | 'SHOPEE'
+export const PLATFORMS: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU', 'TIKTOK', 'SHOPEE']
+/** 平台显示名与徽章配色（对齐 work.html 平台徽章风格：1688绿/Ozon青绿/亚马逊橙/Temu红/TikTok黑/虾皮橘红） */
 export const PLATFORM_META: Record<PlatformType, { label: string; color: string; bg: string; border: string }> = {
   '1688': { label: '1688', color: '#389e0d', bg: '#f6ffed', border: '#b7eb8f' },
   OZON: { label: 'Ozon', color: '#0e9488', bg: '#e6fffb', border: '#87e8de' },
   AMAZON: { label: '亚马逊', color: '#d46b08', bg: '#fff7e6', border: '#ffd591' },
-  TEMU: { label: 'Temu', color: '#cf1322', bg: '#fff1f0', border: '#ffa39e' }
+  TEMU: { label: 'Temu', color: '#cf1322', bg: '#fff1f0', border: '#ffa39e' },
+  TIKTOK: { label: 'TikTok', color: '#262626', bg: '#f5f5f5', border: '#bfbfbf' },
+  SHOPEE: { label: '虾皮', color: '#d4380d', bg: '#fff2e8', border: '#ffbb96' }
 }
 /** 平台徽章元数据兜底（历史数据中的未知值防御显示） */
 export function platformMeta(p: string): { label: string; color: string; bg: string; border: string } {

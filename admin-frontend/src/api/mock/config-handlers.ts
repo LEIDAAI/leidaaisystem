@@ -70,16 +70,16 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       if(items.some(i=>i.id!==item.id && i.code===item.code)) fail('编码已存在')
       if(![0,1].includes(item.status)) fail('状态无效')
       if(module!=='plan') {
-        // v5：平台维度多选（专家/技能/MCP 通用），枚举 1688/OZON/AMAZON/TEMU，至少一个
+        // v5：平台维度多选（专家/技能/MCP 通用），枚举 1688/OZON/AMAZON/TEMU/TIKTOK/SHOPEE，至少一个
         if(!Array.isArray(item.platforms) || !(item.platforms as unknown[]).length) {
           // 兼容回填（旧导出 JSON / 存量调用方）：旧单值 platform 映射为数组；无平台信息按 code 关键词推断，否则默认 ['1688']
           const legacyPlat=(input as Record<string,unknown>).platform
           const valid=(v:unknown):v is PlatformType=>typeof v==='string' && (PLATFORM_VALUES as string[]).includes(v)
           const text=`${item.code} ${item.name}`.toLowerCase()
-          item.platforms = valid(legacyPlat) ? [legacyPlat] : legacyPlat==='ALL' ? ['1688','OZON','AMAZON','TEMU'] : /ozon/.test(text) ? ['OZON'] : /amazon|亚马逊/.test(text) ? ['AMAZON'] : /temu/.test(text) ? ['TEMU'] : ['1688']
+          item.platforms = valid(legacyPlat) ? [legacyPlat] : legacyPlat==='ALL' ? ['1688','OZON','AMAZON','TEMU','TIKTOK','SHOPEE'] : /ozon/.test(text) ? ['OZON'] : /amazon|亚马逊/.test(text) ? ['AMAZON'] : /temu/.test(text) ? ['TEMU'] : /tiktok/.test(text) ? ['TIKTOK'] : /shopee|虾皮/.test(text) ? ['SHOPEE'] : ['1688']
         }
         const plats=[...new Set(item.platforms as string[])]
-        if(!plats.length || plats.some(p=>!PLATFORM_VALUES.includes(p as PlatformType))) fail('平台必须为 1688/OZON/AMAZON/TEMU 且至少选择一个')
+        if(!plats.length || plats.some(p=>!PLATFORM_VALUES.includes(p as PlatformType))) fail('平台必须为 1688/OZON/AMAZON/TEMU/TIKTOK/SHOPEE 且至少选择一个')
         item.platforms=plats as PlatformType[]
       }
       if(module==='plan') {

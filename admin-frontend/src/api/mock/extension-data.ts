@@ -20,7 +20,7 @@ export interface Extensions {
 export type LlmModelRow = LlmModel & { apiKey?: string }
 
 /** 平台枚举（与 schema.sql platforms 增列注释一致；多选数组至少一个，无单值「通用」） */
-export const PLATFORM_VALUES: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU']
+export const PLATFORM_VALUES: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU', 'TIKTOK', 'SHOPEE']
 
 /** 专家能力开关字典（用户确认的 OpenWebUI 能力集；v3 旧键 file 映射为 file_context+file_upload） */
 export const CAPABILITY_KEYS = ['file_context', 'file_upload', 'vision', 'web_search', 'image_generation', 'code_interpreter', 'terminal', 'citations', 'status_updates', 'memory', 'builtin_tools', 'usage'] as const
@@ -94,13 +94,15 @@ export function seedLlmModels(): LlmModelRow[] {
 
 /**
  * 存量数据平台回填（v4→v5 迁移规则）：按 code/name/description 关键词推断——
- * ozon→OZON、amazon/亚马逊→AMAZON、temu→TEMU，否则默认 ['1688']。
+ * ozon→OZON、amazon/亚马逊→AMAZON、temu→TEMU、tiktok→TIKTOK、shopee/虾皮→SHOPEE，否则默认 ['1688']。
  */
 export function detectPlatforms(item: Pick<ConfigItem, 'code' | 'name' | 'description'>): PlatformType[] {
   const text = `${item.code || ''} ${item.name || ''} ${item.description || ''}`.toLowerCase()
   if (/ozon/.test(text)) return ['OZON']
   if (/amazon|亚马逊/.test(text)) return ['AMAZON']
   if (/temu/.test(text)) return ['TEMU']
+  if (/tiktok/.test(text)) return ['TIKTOK']
+  if (/shopee|虾皮/.test(text)) return ['SHOPEE']
   return ['1688']
 }
 
@@ -439,7 +441,7 @@ export function migrateLegacyConfig(target: Extensions): void {
       if (arr.length) return arr
     }
     if (valid(item.platform)) return [item.platform]
-    if (item.platform === 'ALL') return ['1688', 'OZON', 'AMAZON', 'TEMU']
+    if (item.platform === 'ALL') return ['1688', 'OZON', 'AMAZON', 'TEMU', 'TIKTOK', 'SHOPEE']
     return detectPlatforms(fallback)
   }
   const experts = target.experts || []
