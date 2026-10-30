@@ -1,0 +1,1 @@
+import{O as i}from"./index-DAtRveCi.js";const n="YYYY-MM-DD HH:mm:ss";function m(t){if(!t)return"-";const r=i(t);return r.isValid()?r.format(n):String(t)}function s(t){return t==null?"-":`¥${Number(t).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2})}`}function f(t){return t==null||t===""?"-":String(t)}export{s as a,m as f,f as o};
