@@ -1,1 +1,0 @@
-import{z as t,P as o,C as e,D as c}from"./index-DujcPF2t.js";const h=s=>t("/chats",s),d=s=>t(`/chats/${s}/messages`),n=(s,a)=>o(`/chats/${s}`,{reason:a}),l=s=>e(`/chats/${s}/restore`),p=(s,a)=>c(`/chats/${s}/export`,{format:a}),C=s=>t("/audit-logs",s),i=()=>t("/dashboard");export{n as a,C as b,d as c,i as d,p as e,h as l,l as r};
