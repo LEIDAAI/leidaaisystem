@@ -377,9 +377,12 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     })
     // 代理路径约定：/__llm-proxy/<相对 baseUrl 的路径>（如 /models），由代理拼接 `${baseUrl}${path}`；勿用 URL.pathname（会把 base 自带的 /v1 重复拼入）
     // 仅开发模式尝试该通道：线上静态站无此代理（GitHub Pages 会以 404 HTML 应答，徒增「响应解析失败」困惑）
+    // https 页面直连 http 渠道必被浏览器混合内容拦截（实测 fetch 挂起数十秒不失败），直接短路给出明确指引
+    if(location.protocol==='https:' && /^http:\/\//i.test(baseUrl)) fail(`线上站点为 https，浏览器禁止直连 http 渠道（${baseUrl}）。真实拉取请在开发模式（npm run dev，本地 /#/models）使用，或由后端提供代理端点（/admin/api/models/probe）。`, 422)
     const attempts:Array<{label:string, run:(url:string)=>Promise<Response>}>=[
       ...(import.meta.env.DEV ? [{ label:'vite-dev-proxy', run:(url:string):Promise<Response>=>fetch(`/__llm-proxy${url.startsWith(baseUrl)?url.slice(baseUrl.length):new URL(url).pathname}`, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) , 'x-llm-base-url':baseUrl } }) }] : []),
-      { label:'direct', run:(url:string):Promise<Response>=>fetch(url, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) } }) }
+      // 直连加 15s 超时：网关不可达/被浏览器拦截时 fetch 可能长时间挂起，超时转为可控失败
+      { label:'direct', run:(url:string)=>{ const c=new AbortController(); const t=setTimeout(()=>c.abort(), 15000); return fetch(url, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) }, signal:c.signal }).finally(()=>clearTimeout(t)) } }
     ]
     const candidates=[`${baseUrl}/models`, ...(/\/v\d+$/.test(baseUrl)?[]:[`${baseUrl}/v1/models`])]
     const errors:string[]=[]
@@ -387,7 +390,10 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       try {
         const models=await parse(await a.run(url), url)
         return { models, resolvedUrl:url, via:a.label } satisfies ProbeModelsResult
-      } catch(e) { errors.push(`[${a.label}] ${url}：${e instanceof ErrorType?e.message:String(e)}`) }
+      } catch(e) {
+        const msg=e instanceof ErrorType ? e.message : (e as Error).name==='AbortError' ? '请求超时（15s 无响应，可能被浏览器拦截或网关不可达）' : String(e)
+        errors.push(`[${a.label}] ${url}：${msg}`)
+      }
     }
     // 线上静态站（https）直连 http 内网渠道必被混合内容 + CORS 双重拦截，属部署形态限制而非配置错误，提示应指向可行路径
     const hint=import.meta.env.DEV
