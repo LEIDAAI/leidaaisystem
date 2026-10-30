@@ -474,8 +474,12 @@ async function tryClose(): Promise<void> {
   </el-dialog>
 </template>
 <style scoped>
-.orchestrator-dialog :deep(.el-dialog__header) { padding: 0; margin: 0; border-bottom: 1px solid var(--el-border-color-light); }
-.orchestrator-dialog :deep(.el-dialog__body) { padding: 12px 16px; height: calc(100vh - 57px); overflow: hidden; }
+/* append-to-body 后 scoped data-v 不落在 .el-dialog 上，:deep(.el-dialog__body) 匹配不到，
+   弹窗会整体滚动（左右栏跟着滚）。改用 :global 精确命中本弹窗结构：
+   弹窗纵向 flex 锁死高度，只有中栏（.col-mid）滚动。 */
+:global(.el-dialog.orchestrator-dialog) { display: flex; flex-direction: column; overflow: hidden; }
+:global(.el-dialog.orchestrator-dialog .el-dialog__header) { padding: 0; margin: 0; border-bottom: 1px solid var(--el-border-color-light); flex: none; }
+:global(.el-dialog.orchestrator-dialog .el-dialog__body) { padding: 12px 16px; flex: 1; min-height: 0; overflow: hidden; }
 .orch-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; }
 .orch-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .back-btn { font-size: 20px; cursor: pointer; color: var(--el-text-color-regular); padding: 0 6px; line-height: 1; }
