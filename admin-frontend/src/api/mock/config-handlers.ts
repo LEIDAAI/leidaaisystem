@@ -375,10 +375,11 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       if(e instanceof ErrorType) throw e
       throw new ErrorType(422, `HTTP ${res.status}（${url} 响应解析失败）`)
     })
+    // 代理路径约定：/__llm-proxy/<相对 baseUrl 的路径>（如 /models），由代理拼接 `${baseUrl}${path}`；勿用 URL.pathname（会把 base 自带的 /v1 重复拼入）
+    // 仅开发模式尝试该通道：线上静态站无此代理（GitHub Pages 会以 404 HTML 应答，徒增「响应解析失败」困惑）
     const attempts:Array<{label:string, run:(url:string)=>Promise<Response>}>=[
-      // 代理路径约定：/__llm-proxy/<相对 baseUrl 的路径>（如 /models），由代理拼接 `${baseUrl}${path}`；勿用 URL.pathname（会把 base 自带的 /v1 重复拼入）
-      { label:'vite-dev-proxy', run:url=>fetch(`/__llm-proxy${url.startsWith(baseUrl)?url.slice(baseUrl.length):new URL(url).pathname}`, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) , 'x-llm-base-url':baseUrl } }) },
-      { label:'direct', run:url=>fetch(url, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) } }) }
+      ...(import.meta.env.DEV ? [{ label:'vite-dev-proxy', run:(url:string):Promise<Response>=>fetch(`/__llm-proxy${url.startsWith(baseUrl)?url.slice(baseUrl.length):new URL(url).pathname}`, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) , 'x-llm-base-url':baseUrl } }) }] : []),
+      { label:'direct', run:(url:string):Promise<Response>=>fetch(url, { headers:{ 'Content-Type':'application/json', ...(apiKey?{ Authorization:`Bearer ${apiKey}` }:{}) } }) }
     ]
     const candidates=[`${baseUrl}/models`, ...(/\/v\d+$/.test(baseUrl)?[]:[`${baseUrl}/v1/models`])]
     const errors:string[]=[]
@@ -388,7 +389,11 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         return { models, resolvedUrl:url, via:a.label } satisfies ProbeModelsResult
       } catch(e) { errors.push(`[${a.label}] ${url}：${e instanceof ErrorType?e.message:String(e)}`) }
     }
-    fail(`模型探测失败。${errors.join('；')}。提示：请确认地址为 OpenAI 兼容端点（如 http://host:8080/v1）且密钥有效；浏览器直连失败多为 CORS 拦截。`, 422)
+    // 线上静态站（https）直连 http 内网渠道必被混合内容 + CORS 双重拦截，属部署形态限制而非配置错误，提示应指向可行路径
+    const hint=import.meta.env.DEV
+      ? '提示：请确认地址为 OpenAI 兼容端点（如 http://host:8080/v1）且密钥有效；浏览器直连失败多为 CORS 拦截。'
+      : '提示：线上静态站点受浏览器 CORS 与 https 混合内容限制，无法直连内网渠道；真实拉取请在开发模式（npm run dev，本地 /#/models）使用，或由后端提供代理端点（/admin/api/models/probe）。'
+    fail(`模型探测失败。${errors.join('；')}。${hint}`, 422)
   })
 
   route('PUT','/plans/:id/entitlements',ctx=>{ perm(ctx,'plan:edit');const p=find(db.plans,ctx.params.id);const entries=validateEntitlements(ctx.body,ErrorType);const before=snapshot(p);p.entitlements=entries;touch(p);audit(ctx.adminId,'plan.entitlements','plan',p.id,before,p);return publicItem(p) })
