@@ -1,13 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { apiLogin, apiLogout, apiMe } from '@/api/auth'
+import { ApiError } from '@/api/request'
 import type { AdminInfo, LoginResult } from '@/api/types'
-import { AUTH_STORAGE_KEY } from '@/utils/constants'
+import { readStoredToken, writeStoredToken, clearStoredToken } from '@/utils/token'
 
 export const useAuthStore = defineStore('auth', () => {
-  let savedToken = ''
-  try { savedToken = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || '{}').token || '' } catch { localStorage.removeItem(AUTH_STORAGE_KEY) }
-  const token = ref(savedToken)
+  const token = ref(readStoredToken())
   const admin = ref<AdminInfo | null>(null)
   const roles = ref<string[]>([])
   const permissions = ref<string[]>([])
@@ -15,7 +14,7 @@ export const useAuthStore = defineStore('auth', () => {
   let restoring: Promise<void> | null = null
 
   function hasPerm(code: string): boolean { return permissions.value.includes(code) }
-  function persist(): void { localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: token.value })) }
+  function persist(): void { writeStoredToken(token.value) }
   function setSession(result: LoginResult): void {
     token.value = result.token
     admin.value = result.admin
@@ -31,7 +30,7 @@ export const useAuthStore = defineStore('auth', () => {
     roles.value = []
     permissions.value = []
     ready.value = false
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    clearStoredToken()
   }
   async function refreshSession(): Promise<void> {
     if (!token.value) return
@@ -43,7 +42,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
   async function restore(): Promise<void> {
     if (ready.value || !token.value) return
-    if (!restoring) restoring = refreshSession().catch(() => clearSession()).finally(() => { restoring = null })
+    // 仅 401（会话失效）清除会话；网络异常等保留 token，下次导航自动重试
+    if (!restoring) restoring = refreshSession().catch((e) => { if (e instanceof ApiError && e.code === 401) clearSession() }).finally(() => { restoring = null })
     await restoring
   }
   async function logout(): Promise<void> {

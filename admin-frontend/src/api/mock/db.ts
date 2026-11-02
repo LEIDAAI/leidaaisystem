@@ -1,4 +1,5 @@
 import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
 import { migrateLegacyConfig, seedExtensions, redact, type Extensions } from './extension-data'
 
 // =====================================================================
@@ -57,6 +58,8 @@ export interface MockUser {
   nickname: string
   phone: string
   email: string
+  wechatNickname: string
+  region: string
   status: number
   planId: number
   planName: string
@@ -71,7 +74,8 @@ export interface MockTxn {
   id: number
   txnNo: string
   type: 'PAY' | 'REFUND'
-  payChannel: 'WECHAT' | 'ALIPAY'
+  /** v11：手工订单使用 OFFLINE（线下录入）渠道 */
+  payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
   amount: number
   status: string
   createdAt: string
@@ -83,8 +87,16 @@ export interface MockOrder {
   userId: number
   planId: number
   planName: string
+  /** 实付金额（退款按此金额全额退） */
   amount: number
-  payChannel: 'WECHAT' | 'ALIPAY'
+  goodsAmount: number
+  discountAmount: number
+  remainingCredits: number
+  durationMonths: number
+  last7DaysUsage: number
+  /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
+  source: 'ONLINE' | 'MANUAL' | 'GIFT'
+  payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
   status: 'PENDING' | 'PAID' | 'REFUNDED' | 'CLOSED'
   remark: string
   paidAt: string | null
@@ -151,15 +163,27 @@ const PERMISSIONS: MockPermission[] = [
 ]
 
 ;['plan:view','plan:edit','expert:view','skill:view','mcp:view','chat:restore'].forEach((code, i) => PERMISSIONS.push({ id: 20+i, code, name: ({ 'plan:view':'套餐查看','plan:edit':'套餐编辑','expert:view':'专家查看','skill:view':'技能查看','mcp:view':'MCP查看','chat:restore':'对话恢复' } as Record<string,string>)[code], module:code.split(':')[0], type:code.endsWith(':view')?1:2, sort:100+i }))
-// v4 新增：技能克隆/导出权限点（专家导出/导入按约定复用 expert:edit，不新增权限点；见 schema.sql 同步授权）
+// v4 新增：技能克隆/导出权限点（专家导出独立权限点见下方 v6；专家导入仍复用 expert:edit）
 ;([['skill:clone','技能克隆','skill',61],['skill:export','技能导出','skill',62]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: code==='skill:clone'?27:28, code, name, module, type: 2, sort }))
 // v5 新增：模型管理权限点（超管全量、运营增量授予；viewer 不授予）
 ;([['model:view','模型查看','model',71,1],['model:edit','模型编辑','model',72,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 29+i, code, name, module, type, sort }))
+// v6 新增：专家导出独立权限点（与技能导出 skill:export 对齐；导入仍走 expert:edit）
+;([['expert:export','专家导出','expert',52]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 31, code, name, module, type: 2, sort }))
+// v7 新增：知识库管理权限点
+;([['knowledge:view','知识库查看','knowledge',80,1],['knowledge:edit','知识库编辑','knowledge',81,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 32+i, code, name, module, type, sort }))
+// v11 新增：手工/赠送订单创建权限点（授予所有已持有 order:refund 的角色）
+;([['order:create','订单创建','order',45]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 34, code, name, module, type: 2, sort }))
 const ALL_PERM_IDS = PERMISSIONS.map((p) => p.id)
 /** v4 新增权限点 id（运营角色增量授予） */
 export const V4_PERMISSION_IDS = [27, 28]
 /** v5 新增权限点 id（运营角色增量授予） */
 export const V5_PERMISSION_IDS = [29, 30]
+/** v6 新增权限点 id（专家导出；授予所有已持有 expert:edit 的角色） */
+export const V6_PERMISSION_IDS = [31]
+/** v7 新增权限点 id（知识库管理；授予所有已持有 expert:edit 的角色） */
+export const V7_PERMISSION_IDS = [32, 33]
+/** v11 新增权限点 id（订单创建；授予所有已持有 order:refund 的角色） */
+export const V11_PERMISSION_IDS = [34]
 
 // -------------------------------------------------------------- 角色
 const ROLES: MockRole[] = [
@@ -221,6 +245,19 @@ function maskedPhone(i: number): string {
   return `${prefix}****${tail}`
 }
 
+const REGIONS = [
+  '广东深圳', '广东广州', '浙江杭州', '浙江宁波', '江苏南京', '江苏苏州', '上海', '北京',
+  '四川成都', '湖北武汉', '陕西西安', '福建厦门', '山东青岛', '湖南长沙', '河南郑州', '重庆',
+  '天津', '安徽合肥', '辽宁沈阳', '河北石家庄'
+]
+/** 微信昵称与用户昵称取不同偏移，保证两者不同名（buildUsers 与 v9 存量迁移共用） */
+export function userWechatNickname(i: number): string {
+  return NICKNAMES[(i + 13) % NICKNAMES.length]
+}
+export function userRegion(i: number): string {
+  return REGIONS[i % REGIONS.length]
+}
+
 export const ENT_RESOURCE_POOL: MockEntitlement[] = [
   { resourceType: 'EXPERT', resourceId: 1, resourceName: '1688分销选品', quotaType: 'CHAT_COUNT', quotaLimit: 100, used: 32 },
   { resourceType: 'EXPERT', resourceId: 2, resourceName: '跨境电商选品', quotaType: 'CHAT_COUNT', quotaLimit: 200, used: 87 },
@@ -254,6 +291,8 @@ function buildUsers(): MockUser[] {
       nickname: NICKNAMES[i - 1],
       phone: maskedPhone(i),
       email: `${EMAIL_PREFIXES[i - 1]}${i}@${EMAIL_DOMAINS[i % EMAIL_DOMAINS.length]}`,
+      wechatNickname: userWechatNickname(i),
+      region: userRegion(i),
       status: i % 9 === 4 ? 0 : 1,
       planId,
       planName: PLANS[planId - 1].name,
@@ -270,6 +309,20 @@ function buildUsers(): MockUser[] {
 // -------------------------------------------------------------- 订单
 const ORDER_REMARKS = ['', '', '', '', '', '客户要求开具电子发票', '', '活动赠品随单发出', '', '异常订单待核实']
 
+/** 订单金额/积分扩展字段（buildOrders 与 v10 存量迁移共用，i 为订单 id） */
+export function orderDiscountAmount(i: number): number {
+  return [0, 10, 20, 30, 50][i % 5]
+}
+export function orderRemainingCredits(i: number): number {
+  return ((i * 137) % 18 + 2) * 100
+}
+export function orderDurationMonths(planId: number): number {
+  return [0, 1, 3, 12][planId - 1] ?? 1
+}
+export function orderLast7DaysUsage(i: number): number {
+  return (i * 53) % 480 + 20
+}
+
 function buildOrders(users: MockUser[]): MockOrder[] {
   const paidUserIds = users.filter((u) => u.planId >= 2).map((u) => u.id)
   const orders: MockOrder[] = []
@@ -279,7 +332,7 @@ function buildOrders(users: MockUser[]): MockOrder[] {
     const user = users.find((u) => u.id === userId)
     const planId = user ? user.planId : 2
     const plan = PLANS[planId - 1]
-    const payChannel: 'WECHAT' | 'ALIPAY' = i % 2 === 0 ? 'WECHAT' : 'ALIPAY'
+    const payChannel: MockTxn['payChannel'] = i % 2 === 0 ? 'WECHAT' : 'ALIPAY'
     const status: MockOrder['status'] = i % 10 === 0 ? 'PENDING' : i % 10 === 1 ? 'REFUNDED' : i % 10 === 2 ? 'CLOSED' : 'PAID'
     const createdAt = daysAgo(60 - (i % 55), 8 + (i % 14))
     const paidAt = status === 'PENDING' || status === 'CLOSED' ? null : fmt(dayjs(createdAt).add(6, 'minute'))
@@ -310,10 +363,16 @@ function buildOrders(users: MockUser[]): MockOrder[] {
     orders.push({
       id: i,
       orderNo: `ORD2026${String(10000000 + i)}`,
+      source: 'ONLINE',
       userId,
       planId,
       planName: plan.name,
       amount: plan.price,
+      goodsAmount: plan.price + orderDiscountAmount(i),
+      discountAmount: orderDiscountAmount(i),
+      remainingCredits: orderRemainingCredits(i),
+      durationMonths: orderDurationMonths(planId),
+      last7DaysUsage: orderLast7DaysUsage(i),
       payChannel,
       status,
       remark: ORDER_REMARKS[i % ORDER_REMARKS.length],
@@ -457,8 +516,13 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4, 5].includes(saved.version)) {
-      Object.assign(db, saved.data, { permissions: PERMISSIONS, tokens: new Map(saved.tokens) })
+    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(saved.version) && saved.data && typeof saved.data === 'object') {
+      // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
+      const restored: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(saved.data)) {
+        if (value !== null && typeof value === 'object') restored[key] = value
+      }
+      Object.assign(db, restored, { permissions: PERMISSIONS, tokens: new Map(Array.isArray(saved.tokens) ? saved.tokens : []) })
       idSeq = saved.idSeq ?? 5000
       if (saved.version === 1) {
         const remarkPermissionId = PERMISSIONS.find((p) => p.code === 'order:remark')!.id
@@ -469,7 +533,7 @@ try {
           })
       }
       // v3 → v4 → v5：附录12 助手体系模型改造与模型管理/平台维度/版本名称（只增不删的增量迁移，幂等）；
-      // 已存 v5 数据同样过一遍迁移（能力键净化、平台/版本名称回填等）
+      // 已存 v5/v6 数据同样过一遍迁移（能力键净化、平台/版本名称回填等；v6 仅新增权限点，配置结构未变）
       if (saved.version <= 5) migrateLegacyConfig(db)
     }
   }
@@ -492,14 +556,143 @@ if (storedVersion < 5) {
   // v5 新增权限点：运营增量授予模型管理查看/编辑
   db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V5_PERMISSION_IDS])] })
 }
+if (storedVersion < 6) {
+  // v6 新增权限点：专家导出授予所有已持有 expert:edit(id 12) 的角色（能力不回退；超管由上方全量覆盖自动获得）
+  db.roles.filter(r => r.permissionIds.includes(12)).forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V6_PERMISSION_IDS])] })
+}
+if (storedVersion < 7) {
+  // v7 新增权限点：知识库管理授予所有已持有 expert:edit(id 12) 的角色
+  db.roles.filter(r => r.permissionIds.includes(12)).forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V7_PERMISSION_IDS])] })
+  // v7 新增场景与知识库集合（幂等：已存在则跳过；seedExtensions 已在顶部导入）
+  if (!db.scenarios || !db.knowledgeBases) {
+    const ext = seedExtensions()
+    if (!db.scenarios) db.scenarios = ext.scenarios
+    if (!db.knowledgeBases) db.knowledgeBases = ext.knowledgeBases
+  }
+}
+if (storedVersion < 8) {
+  // v8 知识库文档：kbFiles 集合兜底（旧数据恢复时无此集合则取种子）、knowledgeBases 补 access 默认公开、fileCount 按真实文档数同步
+  if (!Array.isArray(db.kbFiles)) db.kbFiles = seedExtensions().kbFiles
+  ;(db.knowledgeBases || []).forEach((kb) => {
+    if (kb.access !== 'PRIVATE' && kb.access !== 'PUBLIC') kb.access = 'PUBLIC'
+    kb.fileCount = db.kbFiles.filter((f) => f.kbId === kb.id).length
+  })
+}
+if (storedVersion < 9) {
+  // v9 用户字段扩展：微信昵称/客户地区（存量数据按 id 幂等回填，与新种子同一生成函数）
+  db.users.forEach((u) => {
+    if (!u.wechatNickname) u.wechatNickname = userWechatNickname(u.id)
+    if (!u.region) u.region = userRegion(u.id)
+  })
+}
+if (storedVersion < 10) {
+  // v10 订单字段扩展：商品金额/优惠金额/剩余积分/套餐时长/近7日消耗（存量按 id 幂等回填，与新种子同一生成函数）
+  db.orders.forEach((o) => {
+    o.discountAmount = orderDiscountAmount(o.id)
+    o.goodsAmount = o.amount + o.discountAmount
+    o.remainingCredits = orderRemainingCredits(o.id)
+    o.durationMonths = orderDurationMonths(o.planId)
+    o.last7DaysUsage = orderLast7DaysUsage(o.id)
+  })
+}
+if (storedVersion < 11) {
+  // v11 订单来源（线上/手工/赠送）+ 赠送套餐体系（与套餐管理联动）：
+  // 1) 存量订单幂等回填 source='ONLINE'；存量套餐幂等回填 planType='NORMAL'
+  db.orders.forEach((o) => { if (!o.source) o.source = 'ONLINE' })
+  db.plans.forEach((p) => { if (!p.planType) p.planType = 'NORMAL' })
+  // 2) 注入内置赠送套餐 plan_gift（幂等；fresh 库种子已含则跳过）：价格 0、长期有效（durationDays=0）
+  if (!db.plans.some((p) => p.code === 'plan_gift')) {
+    db.plans.push({
+      id: 5, code: 'plan_gift', name: '赠送体验包', price: 0, durationDays: 0,
+      entitlements: [], planType: 'GIFT', status: 1, version: 1,
+      updatedAt: nowStr(), refreshStatus: 'PENDING', appliedVersion: 1, refreshMessage: ''
+    })
+  }
+  // 3) 幂等种演示单：1 笔手工订单 + 1 笔赠送订单（unshift 置顶便于演示）
+  const activeUsers = db.users.filter((u) => u.status === 1)
+  const manualUser = activeUsers[1] || activeUsers[0]
+  const giftUser = activeUsers[2] || activeUsers[0]
+  const manualPlan = db.plans.find((p) => (p.planType || 'NORMAL') !== 'GIFT' && p.status === 1 && Number(p.price) > 0)
+  if (manualUser && manualPlan && !db.orders.some((o) => o.source === 'MANUAL')) {
+    const mid = nextMockId()
+    const mat = nowStr()
+    db.orders.unshift({
+      id: mid, orderNo: `ORD2026${String(10000000 + mid)}`, source: 'MANUAL', userId: manualUser.id,
+      planId: manualPlan.id, planName: manualPlan.name, amount: Number(manualPlan.price), goodsAmount: Number(manualPlan.price), discountAmount: 0,
+      remainingCredits: 5000, durationMonths: Math.max(1, Math.round(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
+      payChannel: 'OFFLINE', status: 'PAID', remark: '线下对公转账，人工核实到账后录入',
+      paidAt: mat, refundedAt: null, createdAt: mat,
+      transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + mid)}`, type: 'PAY', payChannel: 'OFFLINE', amount: Number(manualPlan.price), status: 'SUCCESS', createdAt: mat }]
+    })
+  }
+  const giftPlan = db.plans.find((p) => p.planType === 'GIFT' && p.status === 1)
+  if (giftUser && giftPlan && !db.orders.some((o) => o.source === 'GIFT')) {
+    const gid = nextMockId()
+    const gat = nowStr()
+    db.orders.unshift({
+      id: gid, orderNo: `ORD2026${String(10000000 + gid)}`, source: 'GIFT', userId: giftUser.id,
+      planId: giftPlan.id, planName: giftPlan.name, amount: 0, goodsAmount: 0, discountAmount: 0,
+      remainingCredits: 1000, durationMonths: Number(giftPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), last7DaysUsage: 0,
+      payChannel: 'OFFLINE', status: 'PAID', remark: '新客体验赠送',
+      paidAt: gat, refundedAt: null, createdAt: gat, transactions: []
+    })
+  }
+  // 4) 新权限点 order:create：授予所有已持有 order:refund(id 9) 的角色（能力不回退；超管由上方全量覆盖自动获得）
+  db.roles.filter((r) => r.permissionIds.includes(9)).forEach((r) => { r.permissionIds = [...new Set([...r.permissionIds, ...V11_PERMISSION_IDS])] })
+}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
+/** 持久化上限：审计日志与版本快照仅保留最近 N 条，防止 localStorage 无限增长 */
+const PERSIST_AUDIT_LIMIT = 500
+const PERSIST_VERSION_LIMIT = 20
+
+/** 配额告警节流：写满后仅提示一次，写入恢复成功后复位 */
+let quotaWarned = false
+
+/** mock token 内嵌签发时间（`mock-token-{adminId}-{issuedAt}`）：过期（2h）条目在持久化前清理，避免 localStorage 无限累积 */
+const MOCK_TOKEN_TTL_MS = 7200_000
+function pruneExpiredTokens(): void {
+  const now = Date.now()
+  for (const tk of [...db.tokens.keys()]) {
+    const issuedAt = Number(tk.slice(tk.lastIndexOf('-') + 1))
+    if (!issuedAt || now - issuedAt > MOCK_TOKEN_TTL_MS) db.tokens.delete(tk)
+  }
+}
+
+pruneExpiredTokens() // 恢复自 localStorage 的历史 token 先清理一次过期条目
 persistMockDB()
 
 export function persistMockDB(): void {
-  const { tokens, permissions: _permissions, ...data } = db
-  localStorage.setItem(DB_KEY, JSON.stringify({ version: 5, data, tokens: [...tokens], idSeq }))
+  try {
+    pruneExpiredTokens()
+    const { tokens, permissions: _permissions, auditLogs, expertVersions, skillVersions, mcpVersions, promptHistory, ...data } = db
+    const trimMap = <T>(map: Record<string, T[]>): Record<string, T[]> =>
+      Object.fromEntries(Object.entries(map).map(([k, v]) => [k, v.slice(-PERSIST_VERSION_LIMIT)]))
+    localStorage.setItem(
+      DB_KEY,
+      JSON.stringify({
+        version: 11,
+        data: {
+          ...data,
+          auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],
+          expertVersions: trimMap(expertVersions || {}),
+          skillVersions: trimMap(skillVersions || {}),
+          mcpVersions: trimMap(mcpVersions || {}),
+          promptHistory: trimMap(promptHistory || {})
+        },
+        tokens: [...tokens],
+        idSeq
+      })
+    )
+    quotaWarned = false
+  } catch {
+    // localStorage 满/被禁用时降级：本次变更仅保留在内存，并提示用户可能丢失
+    if (!quotaWarned) {
+      quotaWarned = true
+      ElMessage.warning('本地存储空间不足或被禁用，本次改动刷新后可能丢失')
+    }
+  }
 }
 
 export function nextMockId(): number {

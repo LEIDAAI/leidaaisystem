@@ -1,11 +1,15 @@
 import dayjs from 'dayjs'
-import type { ConfigItem, LlmModel, PlatformType, SkillFile, Tool } from '../config'
+import type { ConfigItem, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
+import { PLATFORMS } from '../config'
 
 export interface Chat { id: number; userId: number; expertId: number; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
 export interface ConfigVersion { version: number; versionName?: string; operator?: string; note: string; createdAt: string; snapshot: ConfigItem }
 export interface Extensions {
   models: LlmModelRow[]
   plans: ConfigItem[]; experts: ConfigItem[]; skills: ConfigItem[]; servers: ConfigItem[]; tools: Tool[]
+  scenarios: Scenario[]; knowledgeBases: KnowledgeBase[]
+  /** v8：知识库文档（Open WebUI 式文档管理，纯文本内容存 localStorage） */
+  kbFiles: KnowledgeFile[]
   chats: Chat[]; promptHistory: Record<string, Array<{ version: number; systemPrompt: string; createdAt: string }>>
   skillCalls: Array<{ skillId: number; success: boolean; createdAt: string }>
   /** 专家（助手预设）全量版本快照：每次保存生成，可查看/恢复 */
@@ -18,9 +22,6 @@ export interface Extensions {
 
 /** 存储行：在 API 形态基础上额外持有 API Key 明文（仅 mock 存储层，任何接口响应不得返回） */
 export type LlmModelRow = LlmModel & { apiKey?: string }
-
-/** 平台枚举（与 schema.sql platforms 增列注释一致；多选数组至少一个，无单值「通用」） */
-export const PLATFORM_VALUES: PlatformType[] = ['1688', 'OZON', 'AMAZON', 'TEMU', 'TIKTOK', 'SHOPEE']
 
 /** 专家能力开关字典（用户确认的 OpenWebUI 能力集；v3 旧键 file 映射为 file_context+file_upload） */
 export const CAPABILITY_KEYS = ['file_context', 'file_upload', 'vision', 'web_search', 'image_generation', 'code_interpreter', 'terminal', 'citations', 'status_updates', 'memory', 'builtin_tools', 'usage'] as const
@@ -79,7 +80,8 @@ export function skillMdOf(name: string, description: string): string {
 
 /** 演示网关（内网 OpenAI 兼容端点）：种子与迁移共用；专家预览「真实调用」经此走通演示（Key 仅存 mock db，界面只显掩码） */
 export const DEMO_GATEWAY_ENDPOINT = 'http://192.168.1.10:8080/v1'
-export const DEMO_GATEWAY_KEY = 'sk-4a2e997b4531ad4ed0c85d499ed00273ef06962c0790862929171a51352eb718'
+// Key 经环境变量注入，源码不落明文；未配置时用占位值（预览真实调用会失败，但不泄露任何凭据）
+export const DEMO_GATEWAY_KEY = import.meta.env.VITE_DEMO_GATEWAY_KEY || 'sk-demo-internal-gateway'
 
 /** 基础 LLM 模型注册预置（v5：GLM-5.3/GLM-4.7/deepseek-v3/qwen-max；glm-5.3 指向内网演示网关可真实调用） */
 export function seedLlmModels(): LlmModelRow[] {
@@ -367,6 +369,8 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     files: [],
     // v5 平台维度：通用分析技能覆盖多平台，1688 专属技能仅 1688
     platforms: ({ 11: ['1688'], 12: ['1688', 'AMAZON', 'TEMU'], 13: ['1688'], 14: ['1688', 'AMAZON', 'TEMU'], 15: ['1688'], 16: ['1688', 'AMAZON', 'TEMU'], 17: ['1688', 'OZON', 'AMAZON', 'TEMU'] } as Record<number, PlatformType[]>)[id] || ['1688'],
+    // v7 场景分组：按技能功能分配到对应场景
+    scenarioId: ({ 11: 1, 12: 3, 13: 1, 14: 1, 15: 2, 16: 1, 17: 1 } as Record<number, number>)[id],
     paramSchema: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] },
     execConfig: { handler: 'demo', timeoutMs: 30000 }
   }))
@@ -380,12 +384,155 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     { ...base, id: 5, code: 'echotik', name: 'EchoTik 达人数据（MCP）', platforms: ['1688', 'OZON', 'AMAZON', 'TEMU'], connType: 'MCP', transport: 'SSE', endpoint: 'https://echotik.example.com', path: '/mcp', authConfig: { type: 'NONE' }, toolFilter: [], healthStatus: 'UNKNOWN' },
     { ...base, id: 6, code: 'gateway-ozon', name: 'Ozon 网关（OpenAPI）', platforms: ['OZON'], connType: 'OpenAPI', transport: 'STREAMABLE_HTTP', endpoint: 'https://gateway-ozon.example.com', path: '/openapi.json', authConfig: { type: 'BEARER', credential: 'MOCK_SECRET_CONFIGURED' }, toolFilter: [], healthStatus: 'UNKNOWN' }
   ]
+  // 场景（v7）：平台下的细分场景，用于技能分组
+  const scenarios: Scenario[] = [
+    { id: 1, name: '分销选品', platformId: '1688', description: '1688 平台分销场景下的选品分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 2, name: '供应链对接', platformId: '1688', description: '1688 平台供应商对接与管理', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 3, name: '竞品监控', platformId: '1688', description: '1688 平台竞品价格与销量监控', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 4, name: '亚马逊选品', platformId: 'AMAZON', description: '亚马逊平台商品选择与榜单分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 5, name: '跨境物流', platformId: 'AMAZON', description: '亚马逊跨境物流与仓储管理', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 6, name: 'Temu 爆款追踪', platformId: 'TEMU', description: 'Temu 平台爆款商品趋势追踪', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 7, name: 'Ozon 选品', platformId: 'OZON', description: 'Ozon 平台商品选择与市场分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 8, name: 'TikTok 带货', platformId: 'TIKTOK', description: 'TikTok 直播带货选品与内容分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 9, name: 'Shopee 运营', platformId: 'SHOPEE', description: 'Shopee 平台店铺运营与商品管理', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  ]
+  // 知识库（v7）：专家可绑定的知识资源；v8 增加 access 权限（对齐 Open WebUI：私有/公开）
+  const knowledgeBases: KnowledgeBase[] = [
+    { id: 1, name: '1688 选品指南', description: '1688 平台选品策略与最佳实践', platform: '1688', access: 'PUBLIC', fileCount: 2, status: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 2, name: '跨境电商合规手册', description: '各平台跨境电商合规要求与政策', platform: 'AMAZON', access: 'PUBLIC', fileCount: 2, status: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 3, name: '利润测算模型', description: '分销利润测算公式与案例', platform: '1688', access: 'PUBLIC', fileCount: 1, status: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 4, name: '竞品分析模板', description: '竞品分析标准模板与方法论', access: 'PRIVATE', fileCount: 0, status: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 5, name: 'TikTok 内容运营指南', description: 'TikTok 短视频与直播运营策略', platform: 'TIKTOK', access: 'PUBLIC', fileCount: 1, status: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  ]
+  // v8：知识库示例文档（含 Markdown 表格，用于真实渲染预览演示；fileCount 与上表保持一致）
+  const kbFileAt = (daysAgoN: number): string => new Date(Date.now() - daysAgoN * 86400000).toISOString()
+  const kbFiles: KnowledgeFile[] = [
+    {
+      id: 71, kbId: 1, name: '1688选品核心指标说明.md', size: 0, createdAt: kbFileAt(12), updatedAt: kbFileAt(3),
+      content: `# 1688 选品核心指标说明
+
+选品决策依赖以下核心指标，结论必须附带数据来源与采集时间。
+
+## 指标定义与健康区间
+
+| 指标 | 含义 | 健康区间 | 说明 |
+| --- | --- | --- | --- |
+| 竞争度 | 搜索结果数 / 搜索热度比值 | < 0.35 | 越低代表供给缺口越大 |
+| 复购率 | 90 天内重复采购买家占比 | > 18% | 分销场景核心指标 |
+| 起批量 | 最低起订数量 | ≤ 10 件 | 过高不利于中小分销商 |
+| 拿货毛利 | 售价 - 拿货价 - 物流 | > 25% | 低于 15% 建议放弃 |
+| 48h 发货率 | 48 小时内发货订单占比 | > 95% | 供应链稳定性指标 |
+
+## 使用约定
+
+1. 竞争度与复购率优先级高于毛利，二者不达标直接淘汰。
+2. 数据源以店雷达 1688 接口为准，禁止凭经验臆造。
+3. 结论输出时必须列出指标快照表，便于回溯。`
+    },
+    {
+      id: 72, kbId: 1, name: '2026年Q4厨房收纳类目简报.md', size: 0, createdAt: kbFileAt(6), updatedAt: kbFileAt(1),
+      content: `# 2026 年 Q4 厨房收纳类目简报
+
+## 类目大盘
+
+Q4 受年终备货驱动，厨房收纳类目销量环比明显增长，抽屉式收纳盒与调料架为两大主力款式。
+
+| 子类目 | 月销量（件） | 环比 | 客单价（元） | 备注 |
+| --- | --- | --- | --- | --- |
+| 抽屉式收纳盒 | 486,000 | +22.4% | 18.5 | 头部集中在 3-5 家 |
+| 调料架 | 312,000 | +15.1% | 12.8 | 不锈钢材质占比上升 |
+| 水槽置物架 | 198,000 | +9.7% | 24.0 | 下沉市场增速快 |
+| 密封罐套装 | 154,000 | +4.2% | 16.2 | 玻璃材质退货率高 |
+
+## 选品建议
+
+- 优先关注抽屉式收纳盒中「带滚轮」细分款，竞争度低且毛利空间好。
+- 密封罐类目注意物流破损风险，建议选择带缓冲包装的供应商。`
+    },
+    {
+      id: 73, kbId: 2, name: 'Ozon realFBS 中国至俄罗斯物流线路摘要.md', size: 0, createdAt: kbFileAt(9), updatedAt: kbFileAt(2),
+      content: `# Ozon realFBS 中国 → 俄罗斯物流线路摘要
+
+realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约评分。
+
+## 主流线路对比
+
+| 线路 | 时效（天） | 参考运费（元/kg） | 计泡比 | 适用品类 |
+| --- | --- | --- | --- | --- |
+| 空运专线 | 8-12 | 42.0 | 1:8000 | 高客单、小件 |
+| 中俄班列 | 18-25 | 18.5 | 1:6000 | 中等体积常规货 |
+| 海外仓补货（海运） | 35-45 | 9.8 | 1:5000 | 大件、备货型 |
+| 卡航专线 | 14-20 | 22.0 | 1:7000 | 平衡时效与成本 |
+
+## 履约要求
+
+1. realFBS 订单须在 48 小时内交付物流，超时影响店铺评分。
+2. 每单需附俄语报关信息，品名与申报价值保持一致。
+3. 空运线路禁止含电池、液体类商品。`
+    },
+    {
+      id: 74, kbId: 2, name: '跨境电商合规检查清单.md', size: 0, createdAt: kbFileAt(20), updatedAt: kbFileAt(20),
+      content: `# 跨境电商合规检查清单
+
+上架与发货前逐项核对，任一项不通过即暂停流程。
+
+| 检查项 | 适用平台 | 要求 | 责任角色 |
+| --- | --- | --- | --- |
+| CE / EAC 认证 | Ozon、亚马逊欧站 | 按品类提供证书扫描件 | 供应商 |
+| 商品标签双语化 | 全平台 | 俄语/英语必填字段完整 | 运营 |
+| 知识产权排查 | 全平台 | 商标与外观专利检索无风险 | 法务 |
+| 申报价值一致性 | 全平台 | 报关价与售价逻辑自洽 | 物流 |
+| 禁限售词检查 | TikTok、Temu | 标题与详情过滤敏感词 | 运营 |`
+    },
+    {
+      id: 75, kbId: 3, name: '分销毛利测算公式与示例.md', size: 0, createdAt: kbFileAt(30), updatedAt: kbFileAt(5),
+      content: `# 分销毛利测算公式与示例
+
+## 公式
+
+> 毛利 = 售价 − 拿货价 − 物流费 − 平台费用（佣金 + 履约）
+
+## 测算示例
+
+| 案例 | 拿货价（元） | 售价（元） | 物流（元） | 平台费用（元） | 毛利（元） | 毛利率 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 收纳盒 A | 6.8 | 29.9 | 4.5 | 3.6 | 15.0 | 50.2% |
+| 调料架 B | 11.2 | 39.9 | 7.8 | 4.8 | 16.1 | 40.4% |
+| 密封罐 C | 9.5 | 35.0 | 9.2 | 4.2 | 12.1 | 34.6% |
+
+## 结论约定
+
+毛利率低于 15% 的案例必须输出负向警示，不得隐藏或四舍五入掩盖。`
+    },
+    {
+      id: 76, kbId: 5, name: 'TikTok 爆款视频结构模板.md', size: 0, createdAt: kbFileAt(15), updatedAt: kbFileAt(15),
+      content: `# TikTok 爆款视频结构模板
+
+## 三段式结构
+
+1. **0-3s 钩子**：痛点提问或效果冲击画面，决定完播率。
+2. **3-20s 演示**：产品使用前后对比，字幕同步卖点。
+3. **20-30s 转化**：引导点击购物车，附促销信息。
+
+## 钩子类型参考
+
+| 钩子类型 | 示例开场 | 适用场景 |
+| --- | --- | --- |
+| 痛点提问 | 「厨房永远乱？三秒搞定」 | 家居收纳 |
+| 效果冲击 | 使用后 vs 使用前对比 | 清洁、整理 |
+| 悬念揭秘 | 「主播们都不说的拿货渠道」 | 分销带货 |
+| 数据背书 | 「月销 10 万件的秘密」 | 爆款复刻 |`
+    }
+  ]
   return {
     models: seedLlmModels(),
-    plans: ['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, entitlements:[] })),
+    plans: [...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, entitlements:[], planType:'NORMAL' as const })), { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }],
     experts,
     skills,
     servers,
+    scenarios,
+    knowledgeBases,
+    kbFiles,
     tools: [
       { id: 21, serverId: 1, name: 'ali_product_search', enabled: true },
       { id: 22, serverId: 1, name: 'ali_keyword_trend', enabled: true },
@@ -435,13 +582,13 @@ export function migrateLegacyConfig(target: Extensions): void {
   }
   /** 平台迁移：platforms 数组规范化；旧单值 platform 语义保留；「ALL/通用」→ 全平台；无信息 → 关键词推断（否则 1688） */
   const normalizePlatforms = (item: ConfigItem & { platform?: unknown }, fallback: { code: string; name: string; description?: string }): PlatformType[] => {
-    const valid = (v: unknown): v is PlatformType => typeof v === 'string' && (PLATFORM_VALUES as string[]).includes(v)
+    const valid = (v: unknown): v is PlatformType => typeof v === 'string' && (PLATFORMS as string[]).includes(v)
     if (Array.isArray(item.platforms)) {
       const arr = [...new Set(item.platforms.filter(valid))]
       if (arr.length) return arr
     }
     if (valid(item.platform)) return [item.platform]
-    if (item.platform === 'ALL') return ['1688', 'OZON', 'AMAZON', 'TEMU', 'TIKTOK', 'SHOPEE']
+    if (item.platform === 'ALL') return [...PLATFORMS]
     return detectPlatforms(fallback)
   }
   const experts = target.experts || []
@@ -467,6 +614,18 @@ export function migrateLegacyConfig(target: Extensions): void {
     if (!legacy.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(legacy.visibility.type)) legacy.visibility = { type: 'PUBLIC', planIds: [] }
     const derived = (e.mcpToolIds || []).map(serverIdOfTool).filter((v): v is number => typeof v === 'number')
     if (!Array.isArray(legacy.mcpServerIds) || !legacy.mcpServerIds.length) legacy.mcpServerIds = [...new Set(derived)]
+    // v9：绑定级 MCP 工具裁剪幂等清理（仅保留已绑定服务下真实存在的工具；无效形态整体丢弃）
+    if (legacy.mcpToolSelection && typeof legacy.mcpToolSelection === 'object' && !Array.isArray(legacy.mcpToolSelection)) {
+      const cleaned: Record<string, number[]> = {}
+      for (const [k, v] of Object.entries(legacy.mcpToolSelection)) {
+        const sid = Number(k)
+        if (!legacy.mcpServerIds!.includes(sid) || !Array.isArray(v)) continue
+        const ids = v.filter(id => target.tools.some(t => t.id === id && t.serverId === sid))
+        if (ids.length) cleaned[k] = ids
+      }
+      if (Object.keys(cleaned).length) legacy.mcpToolSelection = cleaned
+      else delete legacy.mcpToolSelection
+    } else if (legacy.mcpToolSelection !== undefined) delete legacy.mcpToolSelection
     // v6：编排扩展字段幂等补默认（标题/介绍/开场白 HTML；核心能力/参考提示词数组；问题建议配置）
     if (typeof legacy.titleHtml !== 'string') legacy.titleHtml = ''
     if (typeof legacy.introduction !== 'string') legacy.introduction = ''
@@ -490,6 +649,8 @@ export function migrateLegacyConfig(target: Extensions): void {
       try { const url = new URL(s.endpoint || ''); legacy.path = url.pathname !== '/' ? url.pathname : '/mcp'; s.endpoint = url.origin } catch { legacy.path = '/mcp' }
     }
     if (!Array.isArray(legacy.toolFilter)) legacy.toolFilter = []
+    // v9：MCP 前台可见性幂等补默认（历史数据视为全员可见；仅控制 C 端展示，不影响专家调用）
+    if (!legacy.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(legacy.visibility.type)) legacy.visibility = { type: 'PUBLIC', planIds: [] }
     s.platforms = normalizePlatforms(s, s)
   })
   // v5：历史快照补 versionName（旧条目按其 createdAt 格式化为 yyyyMMddHHmmss，幂等——补过即跳过）/ operator；

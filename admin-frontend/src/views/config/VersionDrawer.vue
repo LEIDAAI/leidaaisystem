@@ -1,35 +1,50 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Check } from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
 import { configVersions, restoreConfigVersion, type ConfigItem, type ConfigVersion } from '@/api/config'
 import { simpleLineDiff, type DiffLine } from '@/utils/jsonio'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 
-/** 版本历史抽屉：专家全量快照 / 技能 SKILL.md 快照 / MCP 连接配置快照，支持两版本行级 diff 与恢复（v5 补齐 MCP） */
+/**
+ * 版本历史抽屉（v6 Coze 风格改版）：左侧时间线卡片列表（最新版本带橙色「当前」徽章 + 绿勾保存结果行），
+ * 点击卡片在右侧预览该版本快照（技能为 SKILL.md 正文，专家/MCP 为 JSON），可切换「对比上一版」行级 diff；
+ * 底部「还原为此版本」走版本确认框，恢复以新版本形式写入，不覆盖历史。
+ */
 const props = defineProps<{ modelValue: boolean; kind: 'experts' | 'skills' | 'mcp/servers'; item: ConfigItem | null; canEdit: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; restored: [] }>()
 const versions = ref<ConfigVersion[]>([])
 const loading = ref(false)
-const oldVer = ref<number | null>(null)
-const newVer = ref<number | null>(null)
+/** 当前选中（右侧预览）的版本号，打开时默认选最新 */
+const selectedVer = ref<number | null>(null)
+/** 预览区切换：与上一版本的行级 diff */
+const comparePrev = ref(false)
 /** 恢复走版本确认框：待恢复版本与默认版本名（恢复自 <源版本名>） */
 const restoreDialog = ref(false)
 const restoreTarget = ref<{ version: number; defaultName: string } | null>(null)
 const restoring = ref(false)
 
 const sorted = computed(() => [...versions.value].sort((a, b) => b.version - a.version))
-const oldSnap = computed(() => versions.value.find((v) => v.version === oldVer.value))
-const newSnap = computed(() => versions.value.find((v) => v.version === newVer.value))
-const snapText = (v?: ConfigVersion): string => {
+const selectedIndex = computed(() => sorted.value.findIndex((v) => v.version === selectedVer.value))
+const selected = computed(() => (selectedIndex.value >= 0 ? sorted.value[selectedIndex.value] : null))
+/** 选中版本的上一版本（时间线上更早的一条） */
+const prevSnap = computed(() => (selectedIndex.value >= 0 ? sorted.value[selectedIndex.value + 1] : undefined))
+const isLatest = computed(() => !!selected.value && sorted.value[0]?.version === selected.value.version)
+const canCompare = computed(() => !!selected.value && !!prevSnap.value)
+const previewTitle = computed(() =>
+  props.kind === 'skills' ? 'SKILL.md 快照预览' : props.kind === 'mcp/servers' ? '连接配置快照预览（凭据已按服务端策略脱敏）' : '全量配置快照预览（凭据/提示词已按服务端策略脱敏）'
+)
+const snapText = (v?: ConfigVersion | null): string => {
   if (!v) return ''
   if (props.kind === 'skills') return String(v.snapshot.content || '')
   return JSON.stringify(v.snapshot, null, 2)
 }
 const diffLines = computed<DiffLine[]>(() => {
-  if (!oldSnap.value || !newSnap.value) return []
-  return simpleLineDiff(snapText(oldSnap.value), snapText(newSnap.value))
+  if (!comparePrev.value || !prevSnap.value) return []
+  return simpleLineDiff(snapText(prevSnap.value), snapText(selected.value))
 })
-const diffTitle = computed(() => (props.kind === 'skills' ? 'SKILL.md 正文差异' : props.kind === 'mcp/servers' ? '连接配置 JSON 差异（含工具绑定；凭据已按服务端策略脱敏）' : '全量配置 JSON 差异（凭据/提示词已按服务端策略脱敏）'))
+const shortTime = (t: string): string => (dayjs(t).isValid() ? dayjs(t).format('MM-DD HH:mm') : String(t))
 
 watch(
   () => [props.modelValue, props.item?.id] as const,
@@ -38,19 +53,26 @@ watch(
     loading.value = true
     try {
       versions.value = await configVersions(props.kind, props.item.id)
-      oldVer.value = sorted.value[1]?.version ?? null
-      newVer.value = sorted.value[0]?.version ?? null
     } finally {
       loading.value = false
     }
+    selectedVer.value = sorted.value[0]?.version ?? null
+    comparePrev.value = false
   },
   { immediate: true }
 )
 
-function askRestore(version: number, sourceName?: string): void {
-  if (!props.item) return
-  // v5：恢复同样走版本确认框，默认生成新版本名「恢复自 <源版本名>」（源版本无名称则用 v{N}）
-  restoreTarget.value = { version, defaultName: `恢复自 ${sourceName || `v${version}`}` }
+/** 点击时间线卡片：切换右侧预览目标 */
+function selectVersion(v: ConfigVersion): void {
+  if (selectedVer.value === v.version) return
+  selectedVer.value = v.version
+  comparePrev.value = false
+}
+
+/** 恢复走版本确认框，默认生成新版本名「恢复自 <源版本名>」（源版本无名称则用 v{N}） */
+function askRestore(): void {
+  if (!props.item || !selected.value) return
+  restoreTarget.value = { version: selected.value.version, defaultName: `恢复自 ${selected.value.versionName || `v${selected.value.version}`}` }
   restoreDialog.value = true
 }
 
@@ -62,6 +84,8 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
     ElMessage.success('已恢复并生成新版本')
     restoreDialog.value = false
     versions.value = await configVersions(props.kind, props.item.id)
+    selectedVer.value = sorted.value[0]?.version ?? null
+    comparePrev.value = false
     emit('restored')
   } finally {
     restoring.value = false
@@ -69,35 +93,57 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
 }
 </script>
 <template>
-  <el-drawer :model-value="modelValue" :title="`版本历史 · ${item?.name || ''}`" size="820px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
-    <el-alert title="每次保存生成快照；恢复旧版本会以新版本形式写入，不覆盖历史。" type="info" :closable="false" style="margin-bottom:12px" />
-    <el-table v-loading="loading" :data="sorted" size="small">
-      <el-table-column prop="version" label="版本" width="70"><template #default="{ row }">v{{ row.version }}</template></el-table-column>
-      <el-table-column prop="versionName" label="版本名称" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.versionName || '—' }}</template></el-table-column>
-      <el-table-column prop="operator" label="操作人" width="90"><template #default="{ row }">{{ row.operator || '—' }}</template></el-table-column>
-      <el-table-column prop="createdAt" label="保存时间" width="165" />
-      <el-table-column prop="note" label="变更说明" min-width="150" show-overflow-tooltip />
-      <el-table-column label="操作" width="160">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="newVer = row.version; oldVer = sorted.find((v) => v.version < row.version)?.version ?? row.version">对比</el-button>
-          <el-button v-if="canEdit" link type="warning" @click="askRestore(row.version, row.versionName)">恢复</el-button>
+  <el-drawer :model-value="modelValue" :title="`版本历史 · ${item?.name || ''}`" size="900px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
+    <div class="hist-wrap">
+      <!-- 左：时间线版本列表（点击卡片预览该版本） -->
+      <div v-loading="loading" class="hist-list">
+        <el-empty v-if="!loading && !sorted.length" description="暂无版本记录" :image-size="60" />
+        <div v-else class="timeline">
+          <div
+            v-for="v in sorted"
+            :key="v.version"
+            class="vitem"
+            :class="{ active: v.version === selectedVer, current: v.version === sorted[0]?.version }"
+            @click="selectVersion(v)"
+          >
+            <span class="dot" />
+            <div class="vcard">
+              <div class="vhead">
+                <span class="badge pub">发布</span>
+                <span v-if="v.version === sorted[0]?.version" class="badge cur">当前</span>
+                <span class="vtime" :title="v.createdAt">{{ shortTime(v.createdAt) }}</span>
+              </div>
+              <div class="vname">Version: {{ v.versionName || `v${v.version}` }}</div>
+              <div class="vmeta"><el-icon class="ok"><Check /></el-icon>保存成功<span v-if="v.operator"> · {{ v.operator }}</span></div>
+              <div v-if="v.note" class="vnote">{{ v.note }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 右：选中版本快照预览 / 与上一版行级 diff -->
+      <div class="preview">
+        <template v-if="selected">
+          <div class="preview-head">
+            <span class="ptitle">{{ previewTitle }}</span>
+            <el-switch v-model="comparePrev" size="small" :disabled="!canCompare" active-text="对比上一版" />
+          </div>
+          <div v-if="comparePrev && prevSnap" class="preview-body">
+            <div v-for="(l, i) in diffLines" :key="i" :class="['diff-line', l.type]">
+              <template v-if="l.type !== 'same'">{{ l.type === 'add' ? '+ ' : '- ' }}{{ l.text }}</template>
+              <template v-else>&nbsp;{{ l.text }}</template>
+            </div>
+          </div>
+          <div v-else class="preview-body">{{ snapText(selected) }}</div>
         </template>
-      </el-table-column>
-    </el-table>
-    <div style="display:flex;gap:12px;align-items:center;margin:16px 0 8px">
-      <span>对比：</span>
-      <el-select v-model="oldVer" placeholder="旧版本" style="width:140px"><el-option v-for="v in sorted" :key="`o${v.version}`" :value="v.version" :label="`v${v.version} ${v.versionName || ''}`" /></el-select>
-      <span>→</span>
-      <el-select v-model="newVer" placeholder="新版本" style="width:140px"><el-option v-for="v in sorted" :key="`n${v.version}`" :value="v.version" :label="`v${v.version} ${v.versionName || ''}`" /></el-select>
-      <span class="muted">{{ diffTitle }}</span>
-    </div>
-    <div v-if="diffLines.length" class="diff-box">
-      <div v-for="(l, i) in diffLines" :key="i" :class="['diff-line', l.type]">
-        <template v-if="l.type !== 'same'">{{ l.type === 'add' ? '+ ' : '- ' }}{{ l.text }}</template>
-        <template v-else>&nbsp;{{ l.text }}</template>
+        <el-empty v-else description="点击左侧版本查看快照" :image-size="60" />
       </div>
     </div>
-    <el-empty v-else description="选择两个版本查看差异" :image-size="60" />
+    <template #footer>
+      <div class="drawer-footer">
+        <span class="muted">恢复将以新版本写入，当前内容自动进入历史，不覆盖既有版本记录。</span>
+        <el-button v-if="canEdit" type="primary" :disabled="!selected || isLatest" @click="askRestore">还原为此版本</el-button>
+      </div>
+    </template>
     <VersionConfirmDialog
       v-model="restoreDialog"
       title="恢复版本确认"
@@ -111,9 +157,34 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
   </el-drawer>
 </template>
 <style scoped>
-.diff-box { border: 1px solid var(--el-border-color); border-radius: 4px; max-height: 420px; overflow: auto; font-family: Consolas, Menlo, monospace; font-size: 12px; }
+.hist-wrap { display: flex; gap: 16px; height: 100%; min-height: 0; }
+.hist-list { width: 330px; flex-shrink: 0; overflow: auto; padding-right: 4px; }
+.timeline { position: relative; }
+.timeline::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: var(--el-border-color-lighter); }
+.vitem { position: relative; padding: 0 0 12px 28px; cursor: pointer; }
+.vitem:last-child { padding-bottom: 4px; }
+.dot { position: absolute; left: 1px; top: 14px; width: 12px; height: 12px; border-radius: 50%; background: var(--el-color-primary); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--el-color-primary-light-5); z-index: 1; box-sizing: border-box; }
+.vitem.current .dot { background: var(--el-color-success); box-shadow: 0 0 0 1px var(--el-color-success-light-5); }
+.vcard { border: 1px solid var(--el-border-color-lighter); border-radius: 8px; padding: 10px 12px; background: var(--el-bg-color); transition: border-color 0.2s, background 0.2s; }
+.vitem:hover .vcard { border-color: var(--el-color-primary-light-5); }
+.vitem.active .vcard { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.vhead { display: flex; align-items: center; gap: 6px; }
+.badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 12px; line-height: 18px; white-space: nowrap; }
+.badge.pub { background: var(--el-fill-color); color: var(--el-text-color-regular); }
+.badge.cur { background: var(--el-color-warning-light-9); color: var(--el-color-warning); border: 1px solid var(--el-color-warning-light-5); }
+.vtime { margin-left: auto; font-size: 12px; color: var(--el-text-color-secondary); }
+.vname { margin-top: 6px; font-size: 13px; color: var(--el-text-color-primary); word-break: break-all; }
+.vmeta { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12px; color: var(--el-color-success); }
+.vmeta .ok { font-size: 14px; }
+.vnote { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.ptitle { font-size: 13px; color: var(--el-text-color-regular); }
+.preview-body { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 10px 12px; font-family: Consolas, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--el-text-color-primary); }
 .diff-line { padding: 1px 8px; white-space: pre-wrap; word-break: break-all; }
 .diff-line.add { background: #f0f9eb; color: #67c23a; }
 .diff-line.del { background: #fef0f0; color: #f56c6c; text-decoration: line-through; }
 .diff-line.same { color: #909399; }
+.drawer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

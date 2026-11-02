@@ -30,7 +30,9 @@ const MODULE_LABELS: Record<string, string> = {
   expert: '专家',
   skill: '技能',
   mcp: 'MCP',
-  chat: '对话'
+  chat: '对话',
+  model: '模型',
+  knowledge: '知识库'
 }
 
 const visible = computed({

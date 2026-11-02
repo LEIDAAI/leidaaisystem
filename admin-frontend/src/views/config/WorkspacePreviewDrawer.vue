@@ -143,6 +143,6 @@ watch(platformTab, () => { void refresh() })
         </el-table>
       </el-tab-pane>
     </el-tabs>
-    <p class="muted">数据来源：GET /api/v1/workspace/experts|skills|mcps（C 端只读契约，按启用 + visibility 过滤；PLAN 需套餐匹配，PRIVATE 不出）。</p>
+    <p class="muted">数据来源：GET /api/v1/workspace/experts|skills|mcps（C 端只读契约，按启用 + visibility 过滤；PLAN 需套餐匹配，PRIVATE 不出；v9：MCP 隐藏仅影响此处展示，专家/技能绑定调用不受影响）。</p>
   </el-drawer>
 </template>

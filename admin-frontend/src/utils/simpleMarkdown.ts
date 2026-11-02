@@ -1,6 +1,6 @@
 /**
- * 手写简易 Markdown → HTML 渲染（无第三方依赖），用于技能编辑器「预览」页签。
- * 支持：标题 h1-h4、粗体、斜体、行内代码、代码块、无序/有序列表、引用、链接、分隔线、段落。
+ * 手写简易 Markdown → HTML 渲染（无第三方依赖），用于技能编辑器「预览」页签与知识库文档预览。
+ * 支持：标题 h1-h4、粗体、斜体、行内代码、代码块、无序/有序列表、引用、链接、分隔线、表格、段落。
  * 输出前做 HTML 转义防注入。
  */
 
@@ -19,7 +19,10 @@ function inline(text: string): string {
   })
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+  // 链接协议白名单：仅放行 http/https/mailto/站内相对路径，拦截 javascript: 等危险协议（防 XSS）
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label: string, href: string) =>
+    /^(https?:|mailto:|[/#])/i.test(href) ? `<a href="${href}" target="_blank" rel="noopener">${label}</a>` : label
+  )
   // 还原行内代码
   s = s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => codes[Number(i)] || '')
   return s
@@ -64,6 +67,29 @@ export function renderSimpleMarkdown(md: string): string {
       i++
       continue
     }
+    // 表格：表头行（| a | b |）+ 分隔行（| --- | :-: |）+ 数据行（GFM 风格）
+    const rowCells = (l: string): string[] =>
+      l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
+    const isRow = (l: string): boolean => /^\s*\|.*\|\s*$/.test(l)
+    const isSep = (l: string): boolean =>
+      /^\s*\|/.test(l) && rowCells(l).length > 0 && rowCells(l).every((c) => /^:?-+:?$/.test(c))
+    if (isRow(line) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      closeList()
+      const header = rowCells(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && isRow(lines[i])) { rows.push(rowCells(lines[i])); i++ }
+      html.push(
+        '<table><thead><tr>' +
+          header.map((c) => `<th>${inline(c)}</th>`).join('') +
+          '</tr></thead><tbody>' +
+          rows
+            .map((r) => '<tr>' + header.map((_, ci) => `<td>${inline(r[ci] ?? '')}</td>`).join('') + '</tr>')
+            .join('') +
+          '</tbody></table>'
+      )
+      continue
+    }
     // 引用
     const q = line.match(/^>\s?(.*)/)
     if (q) {
@@ -98,7 +124,7 @@ export function renderSimpleMarkdown(md: string): string {
     closeList()
     const buf: string[] = [line]
     i++
-    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|>\s?|\s*[-*+]\s|\s*\d+[.)]\s)/.test(lines[i])) {
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|>\s?|\s*[-*+]\s|\s*\d+[.)]\s|\s*\|)/.test(lines[i])) {
       buf.push(lines[i])
       i++
     }

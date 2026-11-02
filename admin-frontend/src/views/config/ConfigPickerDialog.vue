@@ -2,21 +2,26 @@
 /**
  * Coze 式资源选择弹窗（v6，参考图1「添加插件」交互）：
  * 左侧筛选栏（搜索 + 分类：全部 / 已绑定 / 所选平台）+ 右侧行式列表（点行切换选中、右端勾选态）。
- * 技能与 MCP 共用：type 区分数据源与展示标签。停用项（status!==1）禁选并置灰。
+ * 技能 / MCP / 知识库共用：type 区分数据源与展示标签。停用项（status!==1）禁选并置灰。
  */
 import { computed, ref, watch } from 'vue'
-import { platformMeta, type ConfigItem, type PlatformType } from '@/api/config'
+import { platformMeta, PLATFORMS, type ConfigItem, type KnowledgeBase, type PlatformType } from '@/api/config'
 import { formatDateTime } from '@/utils/format'
+
+/** type 对应展示文案（标题 / 分类 / 行标签共用） */
+const TYPE_LABEL: Record<'skill' | 'mcp' | 'knowledge', string> = { skill: '技能', mcp: 'MCP 插件', knowledge: '知识库' }
 
 const props = defineProps<{
   modelValue: boolean
-  type: 'skill' | 'mcp'
+  type: 'skill' | 'mcp' | 'knowledge'
   /** 当前专家草稿所选平台：决定「平台」筛选项与默认可见范围 */
   platforms: PlatformType[]
   /** 已绑定 ID（进入弹窗时回显勾选） */
   selectedIds: number[]
   skills: ConfigItem[]
   servers: ConfigItem[]
+  /** 知识库数据源（type='knowledge' 时使用） */
+  knowledgeBases: KnowledgeBase[]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; confirm: [number[]] }>()
 
@@ -25,7 +30,12 @@ const activeCat = ref('all')
 /** 弹窗内暂存选中集（确认才回写草稿，取消即丢弃） */
 const picked = ref<Set<number>>(new Set())
 
-const source = computed<ConfigItem[]>(() => (props.type === 'skill' ? props.skills : props.servers))
+const source = computed<ConfigItem[]>(() => {
+  if (props.type === 'skill') return props.skills
+  if (props.type === 'mcp') return props.servers
+  // 知识库 → ConfigItem 形状适配：无平台=通用（映射为全平台以通过交集筛选）
+  return props.knowledgeBases.map((k) => ({ ...k, code: k.name, platforms: k.platform ? [k.platform] : [...PLATFORMS] }) as unknown as ConfigItem)
+})
 
 /** 分类筛选：全部 / 已绑定 / 某平台（仅展示与专家平台有交集的资源） */
 const scoped = computed(() => source.value.filter((s) => (s.platforms || []).some((p) => props.platforms.includes(p as PlatformType))))
@@ -41,7 +51,7 @@ const catCount = (cat: string): number =>
   cat === 'all' ? scoped.value.length : cat === 'bound' ? scoped.value.filter((s) => picked.value.has(s.id)).length : scoped.value.filter((s) => (s.platforms || []).includes(cat as PlatformType)).length
 
 const cats = computed(() => [
-  { key: 'all', label: `全部${props.type === 'skill' ? '技能' : 'MCP'}` },
+  { key: 'all', label: `全部${TYPE_LABEL[props.type]}` },
   { key: 'bound', label: '已绑定' },
   ...props.platforms.map((p) => ({ key: p, label: platformMeta(p).label }))
 ])
@@ -74,7 +84,7 @@ function onConfirm(): void {
 <template>
   <el-dialog
     :model-value="modelValue"
-    :title="`添加${type === 'skill' ? '技能' : 'MCP 插件'}`"
+    :title="`添加${TYPE_LABEL[type]}`"
     width="860px"
     :close-on-click-modal="false"
     :close-on-press-escape="false"
@@ -103,8 +113,8 @@ function onConfirm(): void {
             <div class="pick-info">
               <div class="pick-name">
                 {{ s.name }}
-                <el-tag size="small" :type="type === 'skill' ? 'primary' : 'warning'" effect="plain" class="pick-tag">
-                  {{ type === 'skill' ? '技能' : 'MCP 插件' }}
+                <el-tag size="small" :type="type === 'skill' ? 'primary' : type === 'mcp' ? 'warning' : 'success'" effect="plain" class="pick-tag">
+                  {{ TYPE_LABEL[type] }}
                 </el-tag>
                 <span v-for="p in s.platforms" :key="p" class="plat-dot" :style="{ color: platformMeta(p).color, background: platformMeta(p).bg, borderColor: platformMeta(p).border }">{{ platformMeta(p).label }}</span>
                 <el-tag v-if="s.status !== 1" size="small" type="info" effect="plain">已停用</el-tag>
@@ -141,7 +151,7 @@ function onConfirm(): void {
 .cat-count { font-size: 12px; color: var(--el-text-color-secondary); }
 .picker-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .picker-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
-.pick-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+.pick-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; cursor: pointer; transition: border-color 0.12s, background 0.12s; user-select: none; }
 .pick-row:hover { border-color: var(--el-color-primary-light-5); }
 .pick-row.picked { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .pick-row.disabled { opacity: 0.5; cursor: not-allowed; }

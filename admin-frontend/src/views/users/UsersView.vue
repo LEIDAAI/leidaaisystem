@@ -115,7 +115,7 @@ async function handleUnban(row: UserItem) {
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="nickname" label="昵称" min-width="130" show-overflow-tooltip />
         <el-table-column prop="phone" label="手机号" min-width="130" />
-        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="wechatNickname" label="微信昵称" min-width="140" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <StatusTag kind="user" :value="row.status" />
@@ -128,6 +128,13 @@ async function handleUnban(row: UserItem) {
         <el-table-column label="注册时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.registeredAt) }}</template>
         </el-table-column>
+        <el-table-column label="到期时间" width="170">
+          <template #default="{ row }">{{ row.expireAt ? formatDateTime(row.expireAt) : '长期有效' }}</template>
+        </el-table-column>
+        <el-table-column label="最后登录时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
+        </el-table-column>
+        <el-table-column prop="region" label="客户地区" min-width="110" />
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">

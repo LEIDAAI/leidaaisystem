@@ -14,6 +14,7 @@ export interface PreviewDraftLike {
   systemPrompt?: unknown
   skillIds?: unknown
   mcpServerIds?: unknown
+  mcpToolSelection?: unknown // v9：绑定级工具裁剪（serverId → 允许的工具 id；缺省/空 = 放开全部）
   capabilities?: unknown
   modelParams?: unknown
 }
@@ -72,12 +73,19 @@ function matchSkills(boundSkills: ConfigItem[], message: string): ConfigItem[] {
   return boundSkills.filter((s) => skillKeywords(s).some((k) => text.includes(k)))
 }
 
-/** 绑定 MCP 连接（启用）下的已启用工具池 */
+/** 绑定 MCP 连接（启用）下的已启用工具池；按 mcpToolSelection 裁剪取交集（v9：缺省/空 = 放开全部） */
 function boundTools(draft: PreviewDraftLike): Array<{ toolName: string; serverName: string }> {
   const serverIds = numIds(draft.mcpServerIds)
   const servers = db.servers.filter((s) => serverIds.includes(s.id) && s.status === 1)
+  const sel = (draft.mcpToolSelection && typeof draft.mcpToolSelection === 'object' && !Array.isArray(draft.mcpToolSelection))
+    ? (draft.mcpToolSelection as Record<string, unknown>)
+    : {}
   return db.tools
-    .filter((t) => t.enabled && servers.some((s) => s.id === t.serverId))
+    .filter((t) => {
+      if (!t.enabled || !servers.some((s) => s.id === t.serverId)) return false
+      const allowed = sel[String(t.serverId)]
+      return !Array.isArray(allowed) || !allowed.length || allowed.includes(t.id)
+    })
     .map((t) => ({ toolName: t.name, serverName: servers.find((s) => s.id === t.serverId)!.name }))
 }
 

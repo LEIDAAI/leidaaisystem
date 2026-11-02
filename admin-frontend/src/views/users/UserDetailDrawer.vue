@@ -5,6 +5,8 @@ import { ElMessage } from 'element-plus'
 import StatusTag from '@/components/StatusTag.vue'
 import EntitlementEditor from '@/components/EntitlementEditor.vue'
 import { getUserDetail, updateUserEntitlements } from '@/api/user'
+import { listChats, chatMessages, type ChatItem, type Message } from '@/api/operations'
+import { ApiError } from '@/api/request'
 import type { EntitlementPayload, UserDetail } from '@/api/types'
 import { formatAmount, formatDateTime, orDash } from '@/utils/format'
 import { confirmAction } from '@/utils/feedback'
@@ -46,12 +48,95 @@ watch(visible, async (value) => {
   detail.value = null
   editingEntitlements.value = false
   activeTab.value = 'profile'
+  // 对话记录状态复位（切到「对话记录」Tab 时按需加载）
+  chatList.value = []
+  chatTotal.value = 0
+  chatPage.value = 1
+  chatsDenied.value = false
+  chatsError.value = false
+  msgCache.value = {}
+  msgFailed.value = {}
   try {
     detail.value = await getUserDetail(props.userId)
   } finally {
     loading.value = false
   }
 })
+
+// 切到对话记录 Tab 时懒加载会话列表
+watch(activeTab, (tab) => {
+  // 权限不足/上次失败时不再自动重发（避免每次切 Tab 重复 403），失败可手动重试
+  if (tab === 'chatLogs' && !chatList.value.length && !chatsLoading.value && !chatsDenied.value && !chatsError.value) loadChats()
+})
+
+// -------------------------------------------------- 对话记录（每次会话的过程与结果）
+const chatList = ref<ChatItem[]>([])
+const chatTotal = ref(0)
+const chatPage = ref(1)
+const chatPageSize = ref(10)
+const chatsLoading = ref(false)
+/** 无 chat:view 权限（403）标记：对话为敏感数据，权限不足时降级提示且不再重试 */
+const chatsDenied = ref(false)
+/** 加载失败（非权限原因）标记：允许手动重试 */
+const chatsError = ref(false)
+/** 会话消息缓存：会话ID → 消息列表（过程=往来消息，最后一条 AI 回复=结果） */
+const msgCache = ref<Record<number, Message[]>>({})
+/** 会话消息加载失败标记：会话ID → true（重新展开可重试） */
+const msgFailed = ref<Record<number, boolean>>({})
+const msgLoadingId = ref<number | null>(null)
+/** 请求序号：快速切换用户/翻页时丢弃乱序响应，防止旧数据写入新列表 */
+let chatReqSeq = 0
+
+async function loadChats(): Promise<void> {
+  if (props.userId === null) return
+  const seq = ++chatReqSeq
+  chatsLoading.value = true
+  chatsDenied.value = false
+  chatsError.value = false
+  try {
+    const data = await listChats({ userId: props.userId, page: chatPage.value, pageSize: chatPageSize.value, deleted: 'all' })
+    if (seq !== chatReqSeq) return // 已切换用户/翻页，丢弃过期响应
+    chatList.value = data.list
+    chatTotal.value = data.total
+  } catch (e) {
+    if (seq !== chatReqSeq) return
+    // 区分权限不足与加载失败：权限不足提示授权，其他失败允许重试
+    if (e instanceof ApiError && e.code === 403) chatsDenied.value = true
+    else chatsError.value = true
+    chatList.value = []
+    chatTotal.value = 0
+  } finally {
+    if (seq === chatReqSeq) chatsLoading.value = false
+  }
+}
+
+function handleChatPageChange(): void {
+  loadChats()
+}
+
+function handleChatSizeChange(): void {
+  chatPage.value = 1
+  loadChats()
+}
+
+function onExpandChat(row: ChatItem, expanded: ChatItem[]): void {
+  if (!expanded.some((r) => r.id === row.id) || msgCache.value[row.id]) return
+  loadMessages(row)
+}
+
+/** 加载会话消息：失败不缓存空数组（标记后可重新展开重试） */
+async function loadMessages(row: ChatItem): Promise<void> {
+  msgLoadingId.value = row.id
+  delete msgFailed.value[row.id]
+  try {
+    msgCache.value[row.id] = await chatMessages(row.id)
+  } catch {
+    delete msgCache.value[row.id]
+    msgFailed.value[row.id] = true
+  } finally {
+    msgLoadingId.value = null
+  }
+}
 
 // -------------------------------------------------- 权益覆盖编辑（受 user:entitlement 权限控制的按钮触发）
 const editingEntitlements = ref(false)
@@ -184,6 +269,76 @@ async function cancelEditEntitlements() {
           </el-descriptions>
         </el-tab-pane>
 
+        <el-tab-pane label="对话记录" name="chatLogs" lazy>
+          <div v-loading="chatsLoading">
+            <el-alert
+              v-if="chatsDenied"
+              title="无对话查看权限（chat:view）"
+              description="对话为敏感数据，需单独授权后才能查看该用户的对话记录"
+              type="info"
+              :closable="false"
+            />
+            <el-alert v-else-if="chatsError" title="对话记录加载失败，请稍后重试" type="error" :closable="false">
+              <el-button size="small" type="primary" plain @click="loadChats">重试</el-button>
+            </el-alert>
+            <el-empty v-else-if="!chatList.length" description="该用户暂无对话记录" />
+            <template v-else>
+              <el-table :data="chatList" border size="small" @expand-change="onExpandChat">
+                <el-table-column type="expand">
+                  <template #default="{ row }">
+                    <div v-loading="msgLoadingId === row.id" class="msg-wrap">
+                      <article
+                        v-for="(m, i) in msgCache[row.id] || []"
+                        :key="i"
+                        class="msg-item"
+                        :class="{ 'msg-result': m.role !== 'user' && i === (msgCache[row.id] || []).length - 1 }"
+                      >
+                        <div class="msg-head">
+                          <el-tag size="small" :type="m.role === 'user' ? 'primary' : 'success'">{{ m.role === 'user' ? '用户' : 'AI' }}</el-tag>
+                          <el-tag v-if="m.role !== 'user' && i === (msgCache[row.id] || []).length - 1" size="small" type="warning" effect="plain">结果</el-tag>
+                          <small class="msg-time">{{ formatDateTime(m.createdAt) }}</small>
+                        </div>
+                        <pre class="msg-content">{{ m.content }}</pre>
+                      </article>
+                      <div v-if="msgFailed[row.id] && msgLoadingId !== row.id" class="msg-fail">
+                        <span>消息加载失败</span>
+                        <el-button size="small" type="primary" link @click="loadMessages(row)">重试</el-button>
+                      </div>
+                      <el-empty
+                        v-else-if="msgLoadingId !== row.id && !(msgCache[row.id] || []).length"
+                        description="无消息记录"
+                        :image-size="60"
+                      />
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="id" label="会话ID" width="75" />
+                <el-table-column prop="expertName" label="专家" min-width="100" show-overflow-tooltip />
+                <el-table-column prop="summary" label="摘要" min-width="160" show-overflow-tooltip />
+                <el-table-column prop="messageCount" label="消息数" width="75" />
+                <el-table-column label="状态" width="80">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.deletedAt ? 'danger' : 'success'">{{ row.deletedAt ? '已删除' : '正常' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="开始时间" width="160">
+                  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+              </el-table>
+              <el-pagination
+                v-model:current-page="chatPage"
+                v-model:page-size="chatPageSize"
+                :total="chatTotal"
+                layout="total, sizes, prev, pager, next"
+                style="margin-top: 12px; justify-content: flex-end"
+                @current-change="handleChatPageChange"
+                @size-change="handleChatSizeChange"
+              />
+              <p class="hint-text">展开会话查看完整对话过程；最后一条 AI 回复标记为「结果」。查看会话消息会记录审计。</p>
+            </template>
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane label="登录日志" name="logins">
           <el-table :data="detail.loginLogs" border size="small">
             <el-table-column prop="ip" label="IP" min-width="130" />
@@ -219,5 +374,50 @@ async function cancelEditEntitlements() {
   margin-top: 10px;
   color: #c0c4cc;
   font-size: 12px;
+}
+
+.msg-wrap {
+  padding: 8px 16px 8px 40px;
+}
+
+.msg-fail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f56c6c;
+  font-size: 13px;
+}
+
+.msg-item {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.msg-item.msg-result {
+  border-color: #ffd591;
+  background: #fffbe6;
+}
+
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.msg-time {
+  color: #909399;
+}
+
+.msg-content {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

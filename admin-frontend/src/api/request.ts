@@ -1,7 +1,8 @@
 import axios, { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 
-import { API_BASE, AUTH_STORAGE_KEY, USE_MOCK } from '../utils/constants'
+import { API_BASE, USE_MOCK } from '../utils/constants'
+import { readStoredToken, clearStoredToken } from '../utils/token'
 import type { ApiResponse } from './types'
 
 
@@ -27,32 +28,35 @@ const http = axios.create({ baseURL: API_BASE, timeout: 15000 })
 if (USE_MOCK) http.defaults.adapter = mockAdapter
 
 function clearSessionAndRedirect(): void {
-  localStorage.removeItem(AUTH_STORAGE_KEY)
-  // hash 路由：登录页在 /#/login，静态托管下不能改 pathname
+  clearStoredToken()
+  // hash 路由：登录页在 /#/login，静态托管下不能改 pathname；携带 redirect 便于登录后回到原页面
   if (!window.location.hash.startsWith('#/login')) {
-    window.location.hash = '#/login'
+    const current = window.location.hash.startsWith('#/') ? window.location.hash.slice(1) : '/'
+    window.location.hash = `#/login?redirect=${encodeURIComponent(current)}`
   }
 }
 
 http.interceptors.request.use((config) => {
-  const raw = localStorage.getItem(AUTH_STORAGE_KEY)
-  if (raw) {
-    try {
-      const session = JSON.parse(raw) as { token?: string }
-      if (session.token) config.headers.Authorization = `Bearer ${session.token}`
-    } catch {
-      // 会话数据损坏时按未登录处理
-    }
-  }
+  const token = readStoredToken()
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
+
+/** 业务错误码差异化兜底文案（仅当后端未返回 msg 时使用） */
+const CODE_FALLBACKS: Record<number, string> = {
+  403: '无权限执行该操作',
+  404: '资源不存在或已删除',
+  409: '操作冲突，请刷新后重试',
+  422: '参数校验失败'
+}
 
 http.interceptors.response.use(
   async (response) => {
     if (response.config.responseType === 'blob') {
       const blob = response.data as Blob
       if (!blob.type.includes('json')) return response
-      const parsed = JSON.parse(await blob.text())
+      let parsed: ApiResponse
+      try { parsed = JSON.parse(await blob.text()) as ApiResponse } catch { return response }
       if (typeof parsed.code !== 'number') return response
       response.data = parsed
     }
@@ -61,7 +65,7 @@ http.interceptors.response.use(
     if (res.code === 401) {
       clearSessionAndRedirect()
     } else {
-      ElMessage.error(res.msg || '请求失败')
+      ElMessage.error(res.msg || CODE_FALLBACKS[res.code] || '请求失败')
     }
     return Promise.reject(new ApiError(res.code, res.msg || '请求失败'))
   },

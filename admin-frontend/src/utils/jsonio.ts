@@ -1,14 +1,6 @@
-/** 将文本内容以下载方式保存（带 BOM，保证 Excel 打开中文不乱码） */
-export function downloadTextFile(filename: string, content: string, mime = 'text/csv;charset=utf-8'): void {
-  const url = URL.createObjectURL(new Blob(['\uFEFF' + content], { type: mime }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
+import { downloadTextFile } from './download'
+
+export { downloadTextFile }
 
 /** 导出 JSON 配置文件（预设迁移用） */
 export function downloadJsonFile(filename: string, content: string): void {

@@ -13,8 +13,8 @@ const error = ref('')
 const form = reactive({ username: '', password: '' })
 const accounts = [
   { username: 'admin', password: 'admin123', label: '超级管理员', hint: '全部 P0 权限' },
-  { username: 'support', password: 'support123', label: '客服', hint: '用户、订单查看及订单备注' },
-  { username: 'viewer', password: 'viewer123', label: '只读观察员', hint: '查看用户、订单；订单备注沿用契约权限' }
+  { username: 'support', password: 'support123', label: '客服', hint: '查看用户、订单与对话' },
+  { username: 'viewer', password: 'viewer123', label: '只读观察员', hint: '查看用户、订单与审计日志' }
 ]
 const rules: FormRules = {
   username: [{ required: true, message: '请输入管理员账号', trigger: 'blur' }],

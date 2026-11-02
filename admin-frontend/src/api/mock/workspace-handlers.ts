@@ -5,7 +5,9 @@ import type { ConfigItem } from '../config'
 /**
  * C 端工作台只读契约（附录 12.4，Mock 演示实现）：
  * - 仅返回启用（上架）资源；专家按 visibility 匹配（匿名=仅 PUBLIC，传入 userPlanIds=PUBLIC + 命中套餐）；
- * - 技能/MCP 自身无可见性字段，展示口径为"启用（上架）资源全量展示"，并在字段中回传绑定专家数 / 启用工具数供前台参考；
+ * - 技能自身无可见性字段，展示口径为"启用（上架）资源全量展示"，并在字段中回传绑定专家数供前台参考；
+ * - v9：MCP 按 visibility 过滤（PUBLIC 全员 / PLAN 套餐匹配 / PRIVATE 不出）；可见性仅控制展示，
+ *   专家绑定调用不受影响；专家详情 mcpNames 同口径过滤（隐藏服务不泄露名称，boundMcpCount 保留真实绑定数）；
  * - v0.5：三个列表端点支持 `?platform=` 查询过滤（单值 1688/OZON/AMAZON/TEMU，资源 platforms 数组命中任一即返回；未传=不过滤）；
  * - 契约只读，全部为 GET，不校验管理端权限（真实接入时由 C 端网关按用户 token 鉴权）。
  */
@@ -22,6 +24,18 @@ export function registerWorkspaceHandlers({ route, error: ErrorType }: Services)
     return db.experts.filter(e => {
       if (e.status !== 1) return false
       const vis = e.visibility || { type: 'PUBLIC', planIds: [] }
+      if (vis.type === 'PUBLIC') return true
+      if (vis.type === 'PLAN') return pids.length > 0 && vis.planIds.some(id => pids.includes(id))
+      return false
+    })
+  }
+
+  /** v9：对视角可见的 MCP 服务（启用 + visibility 匹配；可见性仅控制展示，不影响专家调用） */
+  const visibleServers = (ctx: Context): ConfigItem[] => {
+    const pids = planIdsOf(ctx)
+    return db.servers.filter(s => {
+      if (s.status !== 1) return false
+      const vis = s.visibility || { type: 'PUBLIC', planIds: [] }
       if (vis.type === 'PUBLIC') return true
       if (vis.type === 'PLAN') return pids.length > 0 && vis.planIds.some(id => pids.includes(id))
       return false
@@ -57,7 +71,10 @@ export function registerWorkspaceHandlers({ route, error: ErrorType }: Services)
       boundSkillCount: (e.skillIds || []).length,
       boundMcpCount: (e.mcpServerIds || []).length,
       skillNames: (e.skillIds || []).map(id => db.skills.find(s => s.id === id)?.name || `#${id}`),
-      mcpNames: (e.mcpServerIds || []).map(id => db.servers.find(s => s.id === id)?.name || `#${id}`)
+      // v9：仅透出对视角可见的服务名（隐藏服务不泄露名称；boundMcpCount 保留真实绑定数——仅数量不泄露身份）
+      mcpNames: (e.mcpServerIds || [])
+        .filter(id => visibleServers(ctx).some(s => s.id === id))
+        .map(id => db.servers.find(s => s.id === id)?.name || `#${id}`)
     }
   })
 
@@ -72,7 +89,8 @@ export function registerWorkspaceHandlers({ route, error: ErrorType }: Services)
 
   route('GET', '/api/v1/workspace/mcps', ctx => {
     const plat = platformOf(ctx)
-    return db.servers.filter(s => s.status === 1 && hitPlatform(s.platforms, plat)).map(s => ({
+    // v9：按可见性过滤（PUBLIC 全员 / PLAN 套餐匹配 / PRIVATE 不出）
+    return visibleServers(ctx).filter(s => hitPlatform(s.platforms, plat)).map(s => ({
       id: s.id, code: s.code, name: s.name, connType: s.connType || 'MCP',
       endpoint: s.endpoint || '', path: s.path || '',
       platforms: s.platforms || [],

@@ -7,7 +7,8 @@ export function downloadBlobFile(filename: string, blob: Blob): void {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  // 延迟释放：立即 revoke 在部分浏览器会导致下载中断
+  setTimeout(() => URL.revokeObjectURL(url), 1500)
 }
 
 /** 将文本内容以下载方式保存（带 BOM，保证 Excel 打开中文不乱码） */

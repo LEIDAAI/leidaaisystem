@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { saveConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
+import { saveConfig, listConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 import type { FormDraft } from './PlanFormDrawer.vue'
 
@@ -11,6 +11,8 @@ const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 type McpDraft = FormDraft & { argsText?: string; toolFilterText?: string }
 const saving = ref(false)
 const draft = ref<McpDraft>({})
+/** v9：套餐清单（PLAN 可见性选择用） */
+const plans = ref<ConfigItem[]>([])
 
 watch(
   () => [props.modelValue, props.item] as const,
@@ -18,7 +20,8 @@ watch(
     if (!visible) return
     draft.value = {
       status: 1, connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', command: '', args: [],
-      authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], ...JSON.parse(JSON.stringify(props.item || {}))
+      authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], visibility: { type: 'PUBLIC', planIds: [] },
+      ...JSON.parse(JSON.stringify(props.item || {}))
     }
     if (!draft.value.authConfig || typeof draft.value.authConfig !== 'object') draft.value.authConfig = { type: 'NONE' }
     if (!Array.isArray(draft.value.platforms)) draft.value.platforms = ['1688']
@@ -26,8 +29,11 @@ watch(
     if (!draft.value.platforms.length) draft.value.platforms = ['1688']
     if (!Array.isArray(draft.value.args)) draft.value.args = []
     if (!Array.isArray(draft.value.toolFilter)) draft.value.toolFilter = []
+    // v9：前台可见性归一化（仅控制 C 端展示，不影响专家调用）
+    if (!draft.value.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(draft.value.visibility.type || '')) draft.value.visibility = { type: 'PUBLIC', planIds: [] }
     draft.value.argsText = JSON.stringify(draft.value.args)
     draft.value.toolFilterText = (draft.value.toolFilter as string[]).join('\n')
+    if (!plans.value.length) listConfig('plans').then((ps) => { plans.value = ps }).catch(() => {})
   },
   { immediate: true }
 )
@@ -124,6 +130,20 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       <el-form-item label="工具过滤">
         <el-input v-model="draft.toolFilterText" type="textarea" :rows="3" placeholder="每行一个工具名（也可逗号分隔），留空 = 开放全部工具；工具发现结果受此清单过滤" />
         <p class="muted">简化为单一过滤文本域：命中清单的工具才会对助手可见（可作黑/白名单使用）。</p>
+      </el-form-item>
+      <el-form-item label="前台可见性">
+        <el-radio-group v-model="draft.visibility!.type">
+          <el-radio-button value="PUBLIC">全员可见</el-radio-button>
+          <el-radio-button value="PLAN">指定套餐</el-radio-button>
+          <el-radio-button value="PRIVATE">内部隐藏</el-radio-button>
+        </el-radio-group>
+        <el-select
+          v-if="draft.visibility!.type === 'PLAN'"
+          v-model="draft.visibility!.planIds" multiple style="width:100%;margin-top:8px" placeholder="选择对哪些套餐用户可见（不选则不可见）"
+        >
+          <el-option v-for="p in plans" :key="p.id" :value="p.id" :label="`${p.name}（${p.code}）`" />
+        </el-select>
+        <p class="muted">仅控制 C 端工作台「MCP 清单」与专家详情中的服务名展示；已绑定该服务的专家/技能调用不受影响（隐藏 ≠ 不可调用）。</p>
       </el-form-item>
       <el-form-item label="状态"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用" /></el-form-item>
     </el-form>

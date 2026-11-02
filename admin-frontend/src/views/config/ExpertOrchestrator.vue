@@ -1,16 +1,22 @@
 <script setup lang="ts">
 /**
  * 专家编排页（v6，Coze 式三栏全屏编排）：
- * 左栏「人设与回复逻辑」；中栏手风琴分组（基础信息/平台/标签/模型/技能/MCP/标题/简介/介绍/开场白/核心能力/参考提示词/问题建议/能力开关）；
+ * 左栏「人设与回复逻辑」；中栏手风琴分组（基础信息/平台/场景/模型/技能/MCP/知识库/标题/简介/介绍/开场白/核心能力/参考提示词/问题建议/能力开关）；
+ * v10：标签选择升级为「场景选择」——下拉选历史场景 / 输入新名称自动注册进场景库（归属首个所选平台），对齐前台平台→场景两级。
+ * v11：中栏富文本字段（专家标题/专家介绍/开场白）收起为一行摘要预览 +「编辑/删除」按钮，编辑在弹窗内唤起富文本编辑器（RichTextRow），排版更紧凑。
  * 右栏对话预览（ExpertChatPreview 复用）。
  * 交互约定：全屏弹窗禁止点空白关闭；关闭按钮先询问；支持「边编辑边自动保存」（skipVersion 不进版本历史，首次发布后启用）。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { get } from '@/api/request'
-import { saveConfig, listConfig, listModels, PLATFORMS, PLATFORM_META, type ConfigItem, type LlmModel, type PlatformType } from '@/api/config'
+import { saveConfig, listConfig, listModels, listKnowledgeBases, listTools, PLATFORMS, PLATFORM_META, type ConfigItem, type KnowledgeBase, type LlmModel, type PlatformType, type Tool } from '@/api/config'
+import { ensureScenario, ensureScenarios, orderedScenarioOptions, scenarioList } from '@/utils/scenarios'
 import { CAPABILITY_KEYS, CAPABILITY_LABELS, defaultCapabilities } from '@/api/mock/extension-data'
-import RichTextEditor from '@/components/RichTextEditor.vue'
+import YuqueEditor from '@/components/yuque/YuqueEditor.vue'
+import RichTextRow from '@/components/RichTextRow.vue'
+import FilePreviewDialog from '@/components/FilePreviewDialog.vue'
+import { FILE_ACCEPT, MAX_FILE_MB, uploadIntroFile, downloadIntroFile, fileKind, formatSize, type IntroFileMeta } from '@/api/files'
 import ExpertChatPreview from './ExpertChatPreview.vue'
 import ConfigPickerDialog from './ConfigPickerDialog.vue'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
@@ -22,8 +28,10 @@ const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const skills = ref<ConfigItem[]>([])
 const servers = ref<ConfigItem[]>([])
+const kbs = ref<KnowledgeBase[]>([])
 const plans = ref<ConfigItem[]>([])
 const models = ref<LlmModel[]>([])
+const tools = ref<Tool[]>([]) // v9：绑定级工具裁剪候选集（按服务的已启用工具）
 /** 初始即预填归一化默认草稿：打开弹窗的 async 初始化期间模板先行渲染，避免 visibility/nextQuestionConfig/capabilities 读 undefined 崩溃（须在 models 声明之后初始化） */
 const draft = ref<FormDraft>(normalize({}))
 const saving = ref(false)
@@ -35,21 +43,43 @@ const autosaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const dirty = ref(false)
 let suppress = false
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+/** 最近一次「已保存/已应用」草稿的序列化基线：deep watch 触发时与其比对，无实际变化不写盘 */
+let lastSnapshot = ''
+const draftSnapshot = (): string => JSON.stringify(draft.value)
 
 const enabledModels = computed(() => models.value.filter((m) => m.status === 1))
 const baseModelUnavailable = computed(() => Boolean(currentId.value) && !!draft.value.baseModel && !enabledModels.value.some((m) => m.code === draft.value.baseModel))
 
 const skillName = (id: number): string => skills.value.find((s) => s.id === id)?.name || `#${id}`
 const serverName = (id: number): string => servers.value.find((s) => s.id === id)?.name || `#${id}`
+const kbName = (id: number): string => kbs.value.find((k) => k.id === id)?.name || `#${id}`
+
+// ---------------------------------------------------------------- 场景（平台 → 场景，联动场景库）
+/** 场景下拉选项：所选平台场景优先置顶（对齐前台「先平台、后场景」） */
+const scenarioOptions = computed(() => orderedScenarioOptions(draft.value.platforms))
+/** 选择/输入场景后：把不在场景库的新名称注册进场景库（归属首个所选平台）；程序化赋值不触发 @change，打开旧数据不会误建 */
+async function onScenariosChange(names: unknown[]): Promise<void> {
+  const fresh = names.map((n) => String(n || '').trim()).filter((n) => n && !scenarioList().some((s) => s.name === n))
+  if (!fresh.length) return
+  const platformId = (draft.value.platforms || []).filter((p) => PLATFORMS.includes(p as PlatformType))[0]
+  if (!platformId) { ElMessage.warning('请先选择适用平台，新场景才能归属平台并入库'); return }
+  try {
+    for (const nm of fresh) await ensureScenario(nm, platformId)
+    ElMessage.success(`已新增场景：${fresh.join('、')}`)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '场景创建失败')
+  }
+}
 
 // ---------------------------------------------------------------- 打开初始化
 watch(
   () => props.modelValue,
   async (v) => {
     if (!v) return
-    // 每次打开都重拉选择器数据源，避免期间新建的技能/MCP/套餐/模型不可见
-    const [sk, sv, pl, md] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listConfig('plans'), listModels({ page: 1, pageSize: 200 })])
-    skills.value = sk; servers.value = sv; plans.value = pl; models.value = md.list
+    // 每次打开都重拉选择器数据源，避免期间新建的技能/MCP/知识库/套餐/模型不可见
+    const [sk, sv, kbList, pl, md, tl] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listKnowledgeBases(), listConfig('plans'), listModels({ page: 1, pageSize: 200 }), listTools()])
+    skills.value = sk; servers.value = sv; kbs.value = kbList; plans.value = pl; models.value = md.list; tools.value = tl
+    void ensureScenarios().catch(() => {}) // 场景下拉数据源（共享缓存，失败不阻塞打开）
     currentId.value = props.item?.id ?? null
     autosaveAt.value = ''
     autosaveState.value = currentId.value ? 'idle' : 'idle'
@@ -61,8 +91,8 @@ watch(
 /** 草稿归一化（对齐旧表单防御 + v6 编排字段默认值） */
 function normalize(copy: FormDraft): FormDraft {
   const d: FormDraft = {
-    capabilities: defaultCapabilities(), tags: [], suggestedQuestions: [], skillIds: [], mcpServerIds: [],
-    coreAbilities: [], referencePrompts: [], titleHtml: '', introduction: '', greeting: '',
+    capabilities: defaultCapabilities(), tags: [], suggestedQuestions: [], skillIds: [], mcpServerIds: [], knowledgeBaseIds: [],
+    systemPrompt: '', coreAbilities: [], referencePrompts: [], titleHtml: '', introduction: '', greeting: '', introductionFiles: [],
     baseModel: 'glm-5.3', platforms: ['1688'], visibility: { type: 'PUBLIC', planIds: [] }, status: 1, isDefault: false,
     nextQuestionConfig: { enabled: true, mode: 'default' },
     ...copy
@@ -71,7 +101,9 @@ function normalize(copy: FormDraft): FormDraft {
   d.platforms = d.platforms.filter((p) => PLATFORMS.includes(p as PlatformType))
   if (!d.platforms.length) d.platforms = ['1688']
   if (!d.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(d.visibility.type || '')) d.visibility = { type: 'PUBLIC', planIds: [] }
+  if (!d.mcpToolSelection || typeof d.mcpToolSelection !== 'object' || Array.isArray(d.mcpToolSelection)) d.mcpToolSelection = {} // v9：绑定级工具裁剪防御
   if (!d.capabilities || typeof d.capabilities !== 'object') d.capabilities = defaultCapabilities()
+  if (!Array.isArray(d.introductionFiles)) d.introductionFiles = []
   if (!d.nextQuestionConfig || typeof d.nextQuestionConfig !== 'object') d.nextQuestionConfig = { enabled: true, mode: 'default' }
   const nq = d.nextQuestionConfig
   if (typeof nq.enabled !== 'boolean') nq.enabled = true
@@ -88,6 +120,7 @@ function normalize(copy: FormDraft): FormDraft {
 function applyDraft(next: FormDraft): void {
   suppress = true
   draft.value = next
+  lastSnapshot = draftSnapshot()
   dirty.value = false
   nextTick(() => { suppress = false })
 }
@@ -105,6 +138,7 @@ const temperature = computed<number>({
 // ---------------------------------------------------------------- 自动保存
 watch(draft, () => {
   if (suppress) return
+  if (draftSnapshot() === lastSnapshot) return // 序列化比对：同值赋值/改回原值不触发写盘
   dirty.value = true
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(() => void doAutosave(), 1500)
@@ -121,7 +155,7 @@ const missingLabels = computed<string[]>(() => {
   if (!String(d.description || '').trim()) miss.push('专家简介')
   if (!(d.platforms || []).length) miss.push('平台')
   if (!(d.suggestedQuestions || []).every((q) => String(q).trim())) miss.push('建议问题')
-  if (!(d.tags || []).every((t) => String(t).trim())) miss.push('标签')
+  if (!(d.tags || []).every((t) => String(t).trim())) miss.push('场景')
   if (d.nextQuestionConfig?.mode === 'custom' && !String(d.nextQuestionConfig.customPrompt || '').trim()) miss.push('问题建议·自定义提示词')
   return miss
 })
@@ -133,7 +167,8 @@ function buildPayload(): FormDraft {
     id: currentId.value ?? d.id,
     code: d.code, name: d.name, description: d.description, avatarUrl: d.avatarUrl, baseModel: d.baseModel,
     platforms: (d.platforms || []).filter((p) => PLATFORMS.includes(p as PlatformType)),
-    systemPrompt: d.systemPrompt, skillIds: d.skillIds || [], mcpServerIds: d.mcpServerIds || [],
+    systemPrompt: d.systemPrompt, skillIds: d.skillIds || [], mcpServerIds: d.mcpServerIds || [], knowledgeBaseIds: d.knowledgeBaseIds || [],
+    mcpToolSelection: d.mcpToolSelection || {}, // v9：绑定级工具裁剪（空对象 = 全部放开，后端归一化后不落库）
     suggestedQuestions: (d.suggestedQuestions || []).map((q) => String(q).trim()).filter(Boolean),
     capabilities: defaultCapabilities(d.capabilities || {}),
     modelParams: { ...((d.modelParams as Record<string, unknown> | undefined) || {}) },
@@ -141,6 +176,7 @@ function buildPayload(): FormDraft {
     visibility: { type: d.visibility?.type || 'PUBLIC', planIds: d.visibility?.type === 'PLAN' ? d.visibility?.planIds || [] : [] },
     status: d.status, isDefault: Boolean(d.isDefault),
     titleHtml: d.titleHtml || '', introduction: d.introduction || '', greeting: d.greeting || '',
+    introductionFiles: (d.introductionFiles || []).map((f) => ({ ...f })),
     coreAbilities: (d.coreAbilities || []).map((s) => String(s).trim()).filter(Boolean),
     referencePrompts: (d.referencePrompts || []).map((s) => String(s).trim()).filter(Boolean),
     nextQuestionConfig: d.nextQuestionConfig ? { ...d.nextQuestionConfig } : { enabled: true, mode: 'default' }
@@ -150,11 +186,13 @@ function buildPayload(): FormDraft {
 let autosaveSeq = 0
 async function doAutosave(): Promise<void> {
   if (suppress || !props.canEdit || !currentId.value || !dirty.value || !draftComplete.value) return
+  if (draftSnapshot() === lastSnapshot) { dirty.value = false; return } // 定时器触发时内容已回到已保存状态
   const seq = ++autosaveSeq
   autosaveState.value = 'saving'
   try {
     await saveConfig('experts', { ...buildPayload(), skipVersion: true })
     if (seq !== autosaveSeq) return // 保存期间又有新编辑在途，交给最新一次保存收尾
+    lastSnapshot = draftSnapshot()
     dirty.value = false
     autosaveState.value = 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -174,11 +212,72 @@ const autosaveText = computed(() => {
 })
 
 // ---------------------------------------------------------------- 技能 / MCP 选择（Coze 式弹窗）
-const picker = ref<{ visible: boolean; type: 'skill' | 'mcp' }>({ visible: false, type: 'skill' })
-const pickerIds = computed(() => (picker.value.type === 'skill' ? draft.value.skillIds || [] : draft.value.mcpServerIds || []))
+const picker = ref<{ visible: boolean; type: 'skill' | 'mcp' | 'knowledge' }>({ visible: false, type: 'skill' })
+const pickerIds = computed(() =>
+  picker.value.type === 'skill' ? draft.value.skillIds || [] : picker.value.type === 'knowledge' ? draft.value.knowledgeBaseIds || [] : draft.value.mcpServerIds || []
+)
 function onPickerConfirm(ids: number[]): void {
   if (picker.value.type === 'skill') draft.value.skillIds = ids
-  else draft.value.mcpServerIds = ids
+  else if (picker.value.type === 'knowledge') draft.value.knowledgeBaseIds = ids
+  else {
+    draft.value.mcpServerIds = ids
+    // v9：同步清理已移除服务的裁剪条目（悬空 key 不入库）
+    const sel: Record<string, number[]> = {}
+    for (const id of ids) { const v = draft.value.mcpToolSelection?.[String(id)]; if (v?.length) sel[String(id)] = v }
+    draft.value.mcpToolSelection = sel
+  }
+}
+
+// ---------------------------------------------------------------- v9 绑定级 MCP 工具裁剪
+/** 该服务当前已启用的工具（裁剪候选集） */
+function enabledToolsOf(serverId: number): Tool[] { return tools.value.filter((t) => t.serverId === serverId && t.enabled) }
+/** 勾选变化：空 = 放开全部（删 key 不落配置） */
+function onToolSelChange(serverId: number, ids: Array<string | number>): void {
+  const numIds = ids.map(Number)
+  const sel = { ...(draft.value.mcpToolSelection || {}) }
+  if (numIds.length) sel[String(serverId)] = [...new Set(numIds)]
+  else delete sel[String(serverId)]
+  draft.value.mcpToolSelection = sel
+}
+
+// ---------------------------------------------------------------- 专家介绍附件（图片/PDF/文档 上传与预览）
+const introFileInput = ref<HTMLInputElement | null>(null)
+const introUploading = ref(false)
+const previewFile = ref<IntroFileMeta | null>(null)
+const previewVisible = ref(false)
+
+function pickIntroFiles(): void {
+  introFileInput.value?.click()
+}
+
+async function onIntroFilesChosen(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = '' // 立即清空，便于重复选择同一文件
+  if (!files.length || !props.canEdit) return
+  introUploading.value = true
+  try {
+    for (const f of files) {
+      try {
+        const meta = await uploadIntroFile(f)
+        draft.value.introductionFiles = [...(draft.value.introductionFiles || []), meta]
+      } catch (err) {
+        ElMessage.error(err instanceof Error ? err.message : `「${f.name}」上传失败`)
+      }
+    }
+  } finally {
+    introUploading.value = false
+  }
+}
+
+function removeIntroFile(idx: number): void {
+  // 仅从配置移除元数据；文件实体保留（历史版本快照仍引用该 id，恢复版本后预览不失效）
+  draft.value.introductionFiles = (draft.value.introductionFiles || []).filter((_, i) => i !== idx)
+}
+
+function previewIntroFile(f: IntroFileMeta): void {
+  previewFile.value = f
+  previewVisible.value = true
 }
 
 // ---------------------------------------------------------------- 用户问题建议设置弹窗（图5）
@@ -220,6 +319,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       draft.value.id = resp.id
       nextTick(() => { suppress = false })
     }
+    lastSnapshot = draftSnapshot()
     dirty.value = false
     autosaveState.value = 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -252,6 +352,55 @@ async function tryClose(): Promise<void> {
   }
   emit('update:modelValue', false)
 }
+
+// ---------------------------------------------------------------- 三栏拖拽调整列宽
+/** 默认列宽（中间更宽，两侧收窄） */
+const DEFAULT_LEFT = 260
+const DEFAULT_RIGHT = 300
+const MIN_LEFT = 200
+const MAX_LEFT = 480
+const MIN_RIGHT = 240
+const MAX_RIGHT = 520
+
+const leftWidth = ref(DEFAULT_LEFT)
+const rightWidth = ref(DEFAULT_RIGHT)
+const dragging = ref<'left' | 'right' | null>(null)
+const dragStartX = ref(0)
+const dragStartWidth = ref(0)
+
+function onHandleMouseDown(side: 'left' | 'right', e: MouseEvent): void {
+  e.preventDefault()
+  dragging.value = side
+  dragStartX.value = e.clientX
+  dragStartWidth.value = side === 'left' ? leftWidth.value : rightWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
+function onMouseMove(e: MouseEvent): void {
+  if (!dragging.value) return
+  const dx = e.clientX - dragStartX.value
+  if (dragging.value === 'left') {
+    leftWidth.value = Math.max(MIN_LEFT, Math.min(MAX_LEFT, dragStartWidth.value + dx))
+  } else {
+    rightWidth.value = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, dragStartWidth.value - dx))
+  }
+}
+
+function onMouseUp(): void {
+  dragging.value = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', onMouseMove)
+  document.removeEventListener('mouseup', onMouseUp)
+}
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', onMouseMove)
+  document.removeEventListener('mouseup', onMouseUp)
+})
 </script>
 <template>
   <el-dialog
@@ -282,18 +431,21 @@ async function tryClose(): Promise<void> {
 
     <div class="orch-layout">
       <!-- 左栏：人设与回复逻辑 -->
-      <aside class="col-left">
+      <aside class="col-left" :style="{ flexBasis: leftWidth + 'px' }">
         <div class="panel-title">人设与回复逻辑</div>
         <p class="muted">作为 System Prompt 注入对话；约定角色设定、技能路由规则、工具调用纪律与输出格式。</p>
-        <el-input
-          v-model="draft.systemPrompt"
-          type="textarea"
-          :rows="24"
-          :disabled="!canEdit"
+        <YuqueEditor
+          v-model="draft.systemPrompt!"
+          :can-edit="canEdit"
+          :min-height="320"
           placeholder="你是一位跨境电商选品专家…"
-          resize="none"
         />
       </aside>
+
+      <!-- 左/中拖动手柄 -->
+      <div class="resize-handle" :class="{ active: dragging === 'left' }" @mousedown="onHandleMouseDown('left', $event)">
+        <div class="resize-handle-line"></div>
+      </div>
 
       <!-- 中栏：编排手风琴 -->
       <section class="col-mid">
@@ -331,10 +483,11 @@ async function tryClose(): Promise<void> {
           </el-collapse-item>
 
           <el-collapse-item name="tags">
-            <template #title><span class="sec-title">标签选择</span></template>
-            <el-select v-model="draft.tags" multiple filterable allow-create default-first-option placeholder="输入标签后回车" style="width:100%" :disabled="!canEdit">
-              <el-option v-for="t in ['选品', '1688', '跨境', '抖音', '分销']" :key="t" :value="t" :label="t" />
+            <template #title><span class="sec-title">场景选择</span></template>
+            <el-select v-model="draft.tags" multiple filterable allow-create default-first-option placeholder="选择历史场景，或输入新场景后回车" style="width:100%" :disabled="!canEdit" @change="onScenariosChange">
+              <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.name" :label="s.label" />
             </el-select>
+            <p class="muted">对齐前台「平台 → 场景」：下拉可选历史场景，输入新名称回车自动创建并归入首个所选平台。</p>
           </el-collapse-item>
 
           <el-collapse-item name="model">
@@ -368,11 +521,37 @@ async function tryClose(): Promise<void> {
               <el-button size="small" :disabled="!canEdit" @click="picker = { visible: true, type: 'mcp' }">＋ 添加 MCP</el-button>
             </div>
             <p class="muted">已选 {{ (draft.mcpServerIds || []).length }} 项；仅显示与所选平台有交集的启用 MCP 插件。</p>
+            <!-- v9 绑定级工具裁剪：按服务勾选允许调用的工具子集；不勾选 = 放开全部已启用工具（调用时取交集，隐藏的 MCP 服务不受此影响） -->
+            <div v-for="sid in draft.mcpServerIds" :key="`tsel-${sid}`" class="tool-sel-row">
+              <div class="tool-sel-head">
+                <span class="tool-sel-name">{{ serverName(sid) }} · 工具白名单</span>
+                <span class="muted">不勾选 = 放开全部已启用工具（{{ enabledToolsOf(sid).length }} 个）</span>
+              </div>
+              <el-checkbox-group
+                v-if="enabledToolsOf(sid).length"
+                :model-value="(draft.mcpToolSelection || {})[String(sid)] || []"
+                :disabled="!canEdit"
+                size="small"
+                @change="(v: Array<string | number>) => onToolSelChange(sid, v)"
+              >
+                <el-checkbox v-for="t in enabledToolsOf(sid)" :key="t.id" :value="t.id">{{ t.name }}</el-checkbox>
+              </el-checkbox-group>
+              <p v-else class="muted">该服务暂无已启用工具，请先到「MCP 服务」页发现并启用工具。</p>
+            </div>
+          </el-collapse-item>
+
+          <el-collapse-item name="knowledge">
+            <template #title><span class="sec-title">知识库选择</span></template>
+            <div class="chip-box">
+              <el-tag v-for="id in draft.knowledgeBaseIds" :key="id" closable :disable-transitions="true" type="success" effect="plain" @close="canEdit && (draft.knowledgeBaseIds = draft.knowledgeBaseIds!.filter((x) => x !== id))">{{ kbName(id) }}</el-tag>
+              <el-button size="small" :disabled="!canEdit" @click="picker = { visible: true, type: 'knowledge' }">＋ 添加知识库</el-button>
+            </div>
+            <p class="muted">已选 {{ (draft.knowledgeBaseIds || []).length }} 项；无平台知识库视为通用，全部可选。</p>
           </el-collapse-item>
 
           <el-collapse-item name="title">
             <template #title><span class="sec-title">专家标题 <small class="muted">（前台卡片大标题，支持富文本）</small></span></template>
-            <RichTextEditor v-model="draft.titleHtml!" :maxlength="200" :min-height="72" :disabled="!canEdit" placeholder="如：1688 分销选品专家" />
+            <RichTextRow v-model="draft.titleHtml!" title="专家标题" :maxlength="200" :can-edit="canEdit" placeholder="如：1688 分销选品专家" />
           </el-collapse-item>
 
           <el-collapse-item name="intro">
@@ -382,12 +561,31 @@ async function tryClose(): Promise<void> {
 
           <el-collapse-item name="detail">
             <template #title><span class="sec-title">专家介绍 <small class="muted">（前台详情长文，支持富文本）</small></span></template>
-            <RichTextEditor v-model="draft.introduction!" :maxlength="2000" :min-height="120" :disabled="!canEdit" placeholder="详细介绍专家的能力边界、适用场景与使用建议…" />
+            <RichTextRow v-model="draft.introduction!" title="专家介绍" :maxlength="2000" :can-edit="canEdit" placeholder="详细介绍专家的能力边界、适用场景与使用建议…" />
+            <div class="attach-box">
+              <div class="attach-head">
+                <span class="attach-title">介绍附件</span>
+                <span class="muted">支持图片 / PDF / Word / Excel / PPT / 文本，单文件 ≤ {{ MAX_FILE_MB }}MB，可在线预览与下载</span>
+              </div>
+              <input ref="introFileInput" type="file" :accept="FILE_ACCEPT" multiple style="display:none" @change="onIntroFilesChosen" />
+              <div v-if="(draft.introductionFiles || []).length" class="attach-list">
+                <div v-for="(f, i) in draft.introductionFiles" :key="f.id" class="attach-row">
+                  <span class="attach-emoji">{{ fileKind(f).emoji }}</span>
+                  <span class="attach-name" :title="f.name">{{ f.name }}</span>
+                  <el-tag size="small" effect="plain">{{ fileKind(f).label }}</el-tag>
+                  <span class="muted attach-size">{{ formatSize(f.size) }}</span>
+                  <el-button link type="primary" size="small" @click="previewIntroFile(f)">预览</el-button>
+                  <el-button link type="primary" size="small" @click="downloadIntroFile(f)">下载</el-button>
+                  <el-button v-if="canEdit" link type="danger" size="small" @click="removeIntroFile(i)">删除</el-button>
+                </div>
+              </div>
+              <el-button size="small" :loading="introUploading" :disabled="!canEdit" @click="pickIntroFiles">＋ 上传附件</el-button>
+            </div>
           </el-collapse-item>
 
           <el-collapse-item name="greeting">
             <template #title><span class="sec-title">开场白 <small class="muted">（会话首条消息，支持富文本）</small></span></template>
-            <RichTextEditor v-model="draft.greeting!" :maxlength="500" :min-height="72" :disabled="!canEdit" placeholder="你好！我是…可以帮你…" />
+            <RichTextRow v-model="draft.greeting!" title="开场白" :maxlength="500" :can-edit="canEdit" placeholder="你好！我是…可以帮你…" />
           </el-collapse-item>
 
           <el-collapse-item name="abilities">
@@ -402,7 +600,7 @@ async function tryClose(): Promise<void> {
           <el-collapse-item name="refprompts">
             <template #title><span class="sec-title">专家参考提示词 <small class="muted">（前台紫色高亮框，可一键填入输入框）</small></span></template>
             <div v-for="(p, i) in draft.referencePrompts" :key="i" class="row-list">
-              <el-input :model-value="p" type="textarea" :rows="2" :disabled="!canEdit" placeholder="如：帮我分析最近 7 天 1688 家居类目的热销趋势" @update:model-value="draft.referencePrompts![i] = $event" />
+              <YuqueEditor :model-value="p" :can-edit="canEdit" :min-height="96" placeholder="如：帮我分析最近 7 天 1688 家居类目的热销趋势" @update:model-value="draft.referencePrompts![i] = $event" />
               <el-button :disabled="!canEdit" link type="danger" @click="draft.referencePrompts!.splice(i, 1)">删除</el-button>
             </div>
             <el-button size="small" :disabled="!canEdit" @click="draft.referencePrompts!.push('')">添加参考提示词</el-button>
@@ -438,13 +636,18 @@ async function tryClose(): Promise<void> {
         </el-collapse>
       </section>
 
+      <!-- 中/右拖动手柄 -->
+      <div class="resize-handle" :class="{ active: dragging === 'right' }" @mousedown="onHandleMouseDown('right', $event)">
+        <div class="resize-handle-line"></div>
+      </div>
+
       <!-- 右栏：对话预览 -->
-      <aside class="col-right">
+      <aside class="col-right" :style="{ flexBasis: rightWidth + 'px' }">
         <ExpertChatPreview :draft="draft" :models="models" />
       </aside>
     </div>
 
-    <ConfigPickerDialog v-model="picker.visible" :type="picker.type" :platforms="(draft.platforms || []) as PlatformType[]" :selected-ids="pickerIds" :skills="skills" :servers="servers" @confirm="onPickerConfirm" />
+    <ConfigPickerDialog v-model="picker.visible" :type="picker.type" :platforms="(draft.platforms || []) as PlatformType[]" :selected-ids="pickerIds" :skills="skills" :servers="servers" :knowledge-bases="kbs" @confirm="onPickerConfirm" />
 
     <el-dialog v-model="nqDialog" title="下一步问题建议设置" width="560px" :close-on-click-modal="false" :close-on-press-escape="false" append-to-body>
       <el-form label-width="88px">
@@ -471,6 +674,7 @@ async function tryClose(): Promise<void> {
 
     <VersionConfirmDialog v-model="versionDialog" title="发布版本确认" description="确认后将写库、版本 +1 并生成快照（进入版本历史）。" async :loading="saving" @confirm="save" />
     <VersionDrawer v-if="currentId" v-model="historyDrawer" kind="experts" :item="historyItem" :can-edit="canEdit" @restored="onRestored" />
+    <FilePreviewDialog v-model="previewVisible" :file="previewFile" />
   </el-dialog>
 </template>
 <style scoped>
@@ -491,23 +695,40 @@ async function tryClose(): Promise<void> {
 .autosave.saved { color: var(--el-color-success); }
 .autosave.error { color: var(--el-color-danger); }
 .orch-header-right { display: flex; gap: 8px; }
-.orch-layout { display: flex; gap: 14px; height: 100%; }
-.col-left { flex: 0 0 320px; display: flex; flex-direction: column; min-height: 0; }
+.orch-layout { display: flex; gap: 0; height: 100%; }
+.col-left { flex: 0 0 260px; display: flex; flex-direction: column; min-height: 0; }
 .col-left .el-textarea { flex: 1; }
 .col-left :deep(.el-textarea__inner) { height: 100%; }
 .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 .col-mid { flex: 1 1 0; min-width: 0; overflow-y: auto; }
-.col-right { flex: 0 0 400px; min-height: 0; display: flex; border-left: 1px solid var(--el-border-color-light); padding-left: 14px; }
+.col-right { flex: 0 0 300px; min-height: 0; display: flex; border-left: 1px solid var(--el-border-color-light); padding-left: 14px; }
+/* 拖动手柄 */
+.resize-handle { flex: 0 0 12px; display: flex; align-items: center; justify-content: center; cursor: col-resize; position: relative; z-index: 2; transition: background 0.15s; }
+.resize-handle:hover, .resize-handle.active { background: var(--el-color-primary-light-9); }
+.resize-handle-line { width: 2px; height: 32px; border-radius: 1px; background: var(--el-border-color); transition: background 0.15s, height 0.15s; }
+.resize-handle:hover .resize-handle-line, .resize-handle.active .resize-handle-line { background: var(--el-color-primary); height: 48px; }
 /* 窄屏压缩左右栏宽度，避免中栏（提示词编辑区）被挤成一条竖线 */
-@media (max-width: 1440px) { .col-left { flex-basis: 280px; } .col-right { flex-basis: 350px; } }
-@media (max-width: 1280px) { .col-left { flex-basis: 240px; } .col-right { flex-basis: 300px; } }
+@media (max-width: 1440px) { .col-left { flex-basis: 240px !important; } .col-right { flex-basis: 280px !important; } }
+@media (max-width: 1280px) { .col-left { flex-basis: 220px !important; } .col-right { flex-basis: 260px !important; } }
 .sec-title { font-size: 14px; font-weight: 600; }
 .plat-badge { font-size: 12px; padding: 0 8px; border-radius: 4px; border: 1px solid; line-height: 20px; }
 .chip-box { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tool-sel-row { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; }
+.tool-sel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+.tool-sel-name { font-weight: 600; font-size: 13px; }
 .row-list { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 .nq-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .caps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .cap-item { display: flex; align-items: center; gap: 8px; }
 .cap-label { font-size: 13px; }
+.attach-box { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--el-border-color); border-radius: 6px; background: var(--el-fill-color-lighter); }
+.attach-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.attach-title { font-size: 13px; font-weight: 600; }
+.attach-list { margin-bottom: 8px; }
+.attach-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
+.attach-row:last-child { border-bottom: none; }
+.attach-emoji { font-size: 15px; flex: none; }
+.attach-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.attach-size { flex: none; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

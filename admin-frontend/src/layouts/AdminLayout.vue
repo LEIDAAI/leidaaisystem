@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, MagicStick, Document } from '@element-plus/icons-vue'
+import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, MagicStick, Document, Reading } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -12,19 +12,18 @@ const menus = [
   { path: '/dashboard', title: '工作概览', perm: 'dashboard:view', icon: Grid },
   { path: '/users', title: '用户管理', perm: 'user:view', icon: User },
   { path: '/orders', title: '订单管理', perm: 'order:view', icon: Tickets },
+  { path: '/experts', title: '专家管理', perm: 'expert:view', icon: Cpu },
+  { path: '/skills', title: '技能管理', perm: 'skill:view', icon: Setting },
+  { path: '/mcp', title: 'MCP 服务', perm: 'mcp:view', icon: Connection },
+  { path: '/knowledge', title: '知识库管理', perm: 'knowledge:view', icon: Reading },
+  { path: '/models', title: '模型管理', perm: 'model:view', icon: MagicStick },
   { path: '/admins', title: '管理员账号', perm: 'admin:manage', icon: Avatar },
-  { path: '/roles', title: '角色与权限', perm: 'admin:manage', icon: Lock }
+  { path: '/roles', title: '角色与权限', perm: 'role:manage', icon: Lock },
+  { path: '/plans', title: '套餐管理', perm: 'plan:view', icon: Collection },
+  { path: '/chats', title: '对话管理', perm: 'chat:view', icon: ChatDotRound },
+  { path: '/audit-logs', title: '审计日志', perm: 'audit:view', icon: Document }
 ]
-const future = [
-  { path: '/plans', title: '套餐管理', stage: 'P1', icon: Collection },
-  { path: '/experts', title: '专家管理', stage: 'P1', icon: Cpu },
-  { path: '/skills', title: '技能管理', stage: 'P1', icon: Setting },
-  { path: '/mcp', title: 'MCP 服务', stage: 'P1', icon: Connection },
-  { path: '/models', title: '模型管理', stage: 'P1', icon: MagicStick },
-  { path: '/chats', title: '对话管理', stage: 'P2', icon: ChatDotRound },
-  { path: '/audit-logs', title: '审计日志', stage: 'P2', icon: Document }
-]
-const visibleMenus = computed(() => [...menus, ...future.map(item=>({...item,perm:({'/plans':'plan:view','/experts':'expert:view','/skills':'skill:view','/mcp':'mcp:view','/models':'model:view','/chats':'chat:view','/audit-logs':'audit:view'} as Record<string,string>)[item.path]}))].filter(m => auth.hasPerm(m.perm)))
+const visibleMenus = computed(() => menus.filter((m) => auth.hasPerm(m.perm)))
 const displayName = computed(() => auth.admin?.displayName || auth.admin?.username || '')
 async function logout() { await auth.logout(); await router.replace('/login') }
 </script>
@@ -60,5 +59,5 @@ async function logout() { await auth.logout(); await router.replace('/login') }
 </template>
 
 <style scoped>
-.admin-layout{height:100%;min-width:900px}.admin-aside{background:#142523;color:#fff;display:flex;flex-direction:column;overflow:auto}.admin-logo{display:flex;align-items:center;gap:12px;padding:28px 22px 32px;font-size:22px;font-weight:650;letter-spacing:1px}.admin-logo small{display:block;font-size:9px;color:#91aaa5;letter-spacing:2px;margin-top:4px}.brand-mark{display:grid;place-items:center;width:38px;height:38px;background:#29b49c;border-radius:11px;font-family:Georgia,serif;font-size:28px;font-style:italic;color:#fff}.nav-label{font-size:11px;letter-spacing:1.5px;color:#77948c;padding:0 24px 12px}.future-label{padding-top:30px}.admin-menu{background:transparent;border:0;padding:0 12px;--el-menu-text-color:#b9cbc6;--el-menu-hover-bg-color:#203c35;--el-menu-active-color:#79e2ca}.admin-menu .el-menu-item{height:46px;margin-bottom:5px;border-radius:7px;font-size:13px}.admin-menu .el-menu-item.is-active{background:#21443b;color:#80e5cf}.admin-menu .el-icon{font-size:18px;margin-right:12px}.future-menu .el-menu-item{height:39px}.future-menu small{margin-left:auto;font-size:10px}.aside-foot{margin-top:auto;padding:28px 22px;color:#8da69e;font-size:11px;white-space:nowrap}.aside-foot small{margin-left:10px}.workspace{min-width:0}.admin-header{display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5ebe8;padding:0 30px}.header-right{display:flex;align-items:center;gap:22px}.environment{font-size:10px;letter-spacing:1px;color:#548477;border:1px solid #d9e9e2;border-radius:4px;padding:4px 7px}.admin-user{border:0;background:none;display:flex;align-items:center;gap:10px;text-align:left;cursor:pointer;color:#354940;font:inherit}.admin-user small{display:block;font-size:10px;color:#94a49e;margin-top:3px}.user-avatar{width:32px;height:32px;display:grid;place-items:center;background:#e8f5ef;color:#15816c;border-radius:50%;font-weight:600}.mode-banner{display:flex;align-items:center;gap:8px;min-height:38px;padding:8px 30px;background:#edf7f2;color:#2b806a;font-size:12px;border-bottom:1px solid #d8eae0}.mode-description{color:#708b80;margin-left:12px}.mode-banner.real{background:#f3f6fa}.admin-main{padding:26px 30px;overflow:auto}.page-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.eyebrow{font-size:9px;letter-spacing:2px;color:#93a49c}.page-heading h1{font-size:25px;font-weight:600;letter-spacing:1px;margin:7px 0 0;color:#203a30}.workspace-footer{display:flex;justify-content:space-between;margin-top:28px;color:#a0aea7;font-size:11px}.workspace-footer span{letter-spacing:1px}.status-dot{width:6px;height:6px;border-radius:50%;background:#31b091;display:inline-block;margin-right:4px}@media(max-width:1100px){.admin-aside{width:180px!important}.admin-main{padding:22px 18px}.mode-description{font-size:11px;margin-left:4px}}
+.admin-layout{height:100%;min-width:900px}.admin-aside{background:#142523;color:#fff;display:flex;flex-direction:column;overflow:auto}.admin-logo{display:flex;align-items:center;gap:12px;padding:28px 22px 32px;font-size:22px;font-weight:650;letter-spacing:1px}.admin-logo small{display:block;font-size:9px;color:#91aaa5;letter-spacing:2px;margin-top:4px}.brand-mark{display:grid;place-items:center;width:38px;height:38px;background:#29b49c;border-radius:11px;font-family:Georgia,serif;font-size:28px;font-style:italic;color:#fff}.nav-label{font-size:11px;letter-spacing:1.5px;color:#77948c;padding:0 24px 12px}.admin-menu{background:transparent;border:0;padding:0 12px;--el-menu-text-color:#b9cbc6;--el-menu-hover-bg-color:#203c35;--el-menu-active-color:#79e2ca}.admin-menu .el-menu-item{height:46px;margin-bottom:5px;border-radius:7px;font-size:13px}.admin-menu .el-menu-item.is-active{background:#21443b;color:#80e5cf}.admin-menu .el-icon{font-size:18px;margin-right:12px}.aside-foot{margin-top:auto;padding:28px 22px;color:#8da69e;font-size:11px;white-space:nowrap}.aside-foot small{margin-left:10px}.workspace{min-width:0}.admin-header{display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5ebe8;padding:0 30px}.header-right{display:flex;align-items:center;gap:22px}.environment{font-size:10px;letter-spacing:1px;color:#548477;border:1px solid #d9e9e2;border-radius:4px;padding:4px 7px}.admin-user{border:0;background:none;display:flex;align-items:center;gap:10px;text-align:left;cursor:pointer;color:#354940;font:inherit}.admin-user small{display:block;font-size:10px;color:#94a49e;margin-top:3px}.user-avatar{width:32px;height:32px;display:grid;place-items:center;background:#e8f5ef;color:#15816c;border-radius:50%;font-weight:600}.mode-banner{display:flex;align-items:center;gap:8px;min-height:38px;padding:8px 30px;background:#edf7f2;color:#2b806a;font-size:12px;border-bottom:1px solid #d8eae0}.mode-description{color:#708b80;margin-left:12px}.mode-banner.real{background:#f3f6fa}.admin-main{padding:26px 30px;overflow:auto}.page-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.eyebrow{font-size:9px;letter-spacing:2px;color:#93a49c}.page-heading h1{font-size:25px;font-weight:600;letter-spacing:1px;margin:7px 0 0;color:#203a30}.workspace-footer{display:flex;justify-content:space-between;margin-top:28px;color:#a0aea7;font-size:11px}.workspace-footer span{letter-spacing:1px}.status-dot{width:6px;height:6px;border-radius:50%;background:#31b091;display:inline-block;margin-right:4px}@media(max-width:1100px){.admin-aside{width:180px!important}.admin-main{padding:22px 18px}.mode-description{font-size:11px;margin-left:4px}}
 </style>

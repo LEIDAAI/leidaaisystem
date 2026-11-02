@@ -16,7 +16,8 @@ import {
   persistMockDB,
   roleRefsOf,
   type MockAdmin,
-  type MockOrder
+  type MockOrder,
+  type MockUser
 } from './db'
 
 /** mock 业务错误：以契约错误码抛出，统一包装为 {code, msg} 响应 */
@@ -133,13 +134,19 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { userNickname: string } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { userNickname: string; wechatNickname: string } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
-  return { ...rest, userNickname: user ? user.nickname : `用户${o.userId}` }
+  return {
+    ...rest,
+    userNickname: user ? user.nickname : `用户${o.userId}`,
+    wechatNickname: user ? (user.wechatNickname || '-') : '-'
+  }
 }
 
-const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝' }
+const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
+/** v11 订单来源中文标签（线上/手工/赠送） */
+const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
 const ORDER_STATUS_LABELS: Record<string, string> = {
   PENDING: '待支付',
   PAID: '已支付',
@@ -414,11 +421,14 @@ route('GET', '/users', (ctx) => {
       nickname: u.nickname,
       phone: u.phone,
       email: u.email,
+      wechatNickname: u.wechatNickname,
+      region: u.region,
       status: u.status,
       planName: u.planName,
       chatCount: u.chatCount,
       registeredAt: u.registeredAt,
-      lastLoginAt: u.lastLoginAt
+      lastLoginAt: u.lastLoginAt,
+      expireAt: u.planId >= 2 ? dayjs(u.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
     }))
   }
 })
@@ -448,11 +458,15 @@ route('GET', '/users/:id', (ctx) => {
       totalAmount: orders.filter((o) => o.status === 'PAID').reduce((s, o) => s + o.amount, 0),
       list: orders.slice(0, 10).map((o) => toOrderItem(o))
     },
-    chatStats: {
-      conversationCount: Math.floor(u.chatCount / 8),
-      messageCount: u.chatCount,
-      lastChatAt: u.lastLoginAt
-    },
+    chatStats: (() => {
+      // 由真实会话数据派生，避免「显示有会话但记录为空」的演示数据矛盾
+      const chats = db.chats.filter((c) => c.userId === u.id)
+      return {
+        conversationCount: chats.length,
+        messageCount: chats.reduce((s, c) => s + c.messages.length, 0),
+        lastChatAt: chats.reduce<string | null>((acc, c) => (!acc || c.createdAt > acc ? c.createdAt : acc), null)
+      }
+    })(),
     loginLogs: u.loginLogs.map((l) => ({ ...l }))
   }
 })
@@ -516,9 +530,113 @@ route('GET', '/orders/:id', (ctx) => {
   return { ...toOrderItem(o), transactions: o.transactions.map((t) => ({ ...t })) }
 })
 
+/** v11 手工/赠送订单共用：按手机号定位用户（演示数据手机号为脱敏格式，需精确匹配） */
+function findUserByPhone(phone: string): MockUser {
+  const u = db.users.find((x) => x.phone === phone)
+  if (!u) throw new MockApiError(422, '手机号对应用户不存在')
+  if (u.status !== 1) throw new MockApiError(422, '该用户已被禁用，无法创建订单')
+  return u
+}
+
+/** v11 创建手工订单：线下收款录入，生成 OFFLINE 渠道支付流水 */
+route('POST', '/orders/manual', (ctx) => {
+  assertPerm(ctx, 'order:create')
+  const b = (ctx.body ?? {}) as Record<string, unknown>
+  const phone = String(b.phone ?? '').trim()
+  const planId = Number(b.planId)
+  const credits = Number(b.credits)
+  const amount = Number(b.amount)
+  if (!phone) throw new MockApiError(422, '请填写手机号')
+  const u = findUserByPhone(phone)
+  const plan = db.plans.find((p) => p.id === planId)
+  if (!plan) throw new MockApiError(422, '套餐不存在')
+  if ((plan.planType || 'NORMAL') === 'GIFT') throw new MockApiError(422, '手工订单不能选择赠送套餐')
+  if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
+  if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
+  if (!Number.isFinite(amount) || amount <= 0) throw new MockApiError(422, '支付金额必须大于 0')
+  const at = nowStr()
+  const id = nextMockId()
+  const order: MockOrder = {
+    id,
+    orderNo: `ORD2026${String(10000000 + id)}`,
+    source: 'MANUAL',
+    userId: u.id,
+    planId: plan.id,
+    planName: plan.name,
+    amount,
+    goodsAmount: amount,
+    discountAmount: 0,
+    remainingCredits: Math.round(credits),
+    durationMonths: Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
+    last7DaysUsage: 0,
+    payChannel: 'OFFLINE',
+    status: 'PAID',
+    remark: '线下对公转账，人工核实到账后录入',
+    paidAt: at,
+    refundedAt: null,
+    createdAt: at,
+    transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + id)}`, type: 'PAY', payChannel: 'OFFLINE', amount, status: 'SUCCESS', createdAt: at }]
+  }
+  db.orders.unshift(order)
+  recordAudit(ctx.adminId, 'order.create.manual', 'order', order.orderNo, null, { phone, planId, credits, amount })
+  return null
+})
+
+/** v11 创建赠送订单：金额全 0、无支付流水；套餐为长期有效（durationDays=0）时时长锁定 0（长期有效），否则 1-36 个月 */
+route('POST', '/orders/gift', (ctx) => {
+  assertPerm(ctx, 'order:create')
+  const b = (ctx.body ?? {}) as Record<string, unknown>
+  const phone = String(b.phone ?? '').trim()
+  const planId = Number(b.planId)
+  const durationMonths = Number(b.durationMonths)
+  const credits = Number(b.credits)
+  const remark = String(b.remark ?? '').trim()
+  if (!phone) throw new MockApiError(422, '请填写手机号')
+  const u = findUserByPhone(phone)
+  const plan = db.plans.find((p) => p.id === planId)
+  if (!plan) throw new MockApiError(422, '套餐不存在')
+  if (plan.planType !== 'GIFT') throw new MockApiError(422, '赠送订单只能选择赠送套餐，请先在套餐管理创建')
+  if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
+  if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, '赠送 AI 积分无效')
+  if (remark.length > 200) throw new MockApiError(422, '备注最多 200 字')
+  const isLifetime = Number(plan.durationDays) === 0
+  if (isLifetime) {
+    if (durationMonths !== 0) throw new MockApiError(422, '该套餐为长期有效，赠送时长固定为长期有效')
+  } else if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 36) {
+    throw new MockApiError(422, '赠送时长须为 1-36 个月')
+  }
+  const at = nowStr()
+  const id = nextMockId()
+  const order: MockOrder = {
+    id,
+    orderNo: `ORD2026${String(10000000 + id)}`,
+    source: 'GIFT',
+    userId: u.id,
+    planId: plan.id,
+    planName: plan.name,
+    amount: 0,
+    goodsAmount: 0,
+    discountAmount: 0,
+    remainingCredits: Math.round(credits),
+    durationMonths: isLifetime ? 0 : durationMonths,
+    last7DaysUsage: 0,
+    payChannel: 'OFFLINE',
+    status: 'PAID',
+    remark: remark || '新客体验赠送',
+    paidAt: at,
+    refundedAt: null,
+    createdAt: at,
+    transactions: []
+  }
+  db.orders.unshift(order)
+  recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMonths: isLifetime ? 0 : durationMonths, credits, remark })
+  return null
+})
+
 route('POST', '/orders/:id/refund', (ctx) => {
   assertPerm(ctx, 'order:refund')
   const o = findOr404(db.orders, ctx.params.id, '订单')
+  if (o.source === 'GIFT') throw new MockApiError(422, '赠送订单不支持退款')
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const reason = String(b.reason ?? '').trim()
   const amount = Number(b.amount)
@@ -555,20 +673,26 @@ route('PUT', '/orders/:id/remark', (ctx) => {
 route('GET', '/orders/export', (ctx) => {
   assertPerm(ctx, 'order:export')
   const list = filterOrders(ctx)
-  const header = '订单号,用户ID,用户昵称,套餐,金额,支付渠道,状态,备注,支付时间,下单时间'
+  const header = '订单号,用户ID,微信昵称,套餐,订单来源,剩余积分,套餐时长,近7日消耗,商品金额,优惠金额,实付金额,状态,支付时间,下单时间,支付渠道,备注'
   const rows = list.map((o) => {
     const item = toOrderItem(o)
     return [
       item.orderNo,
       item.userId,
-      item.userNickname,
+      item.wechatNickname,
       item.planName,
+      ORDER_SOURCE_LABELS[item.source] ?? item.source,
+      item.remainingCredits,
+      item.durationMonths === 0 ? '长期有效' : `${item.durationMonths}个月`,
+      item.last7DaysUsage,
+      item.goodsAmount.toFixed(2),
+      item.discountAmount.toFixed(2),
       item.amount.toFixed(2),
-      CHANNEL_LABELS[item.payChannel] ?? item.payChannel,
       ORDER_STATUS_LABELS[item.status] ?? item.status,
-      item.remark || '',
       item.paidAt ?? '',
-      item.createdAt
+      item.createdAt,
+      CHANNEL_LABELS[item.payChannel] ?? item.payChannel,
+      item.remark || ''
     ].map(value => {
       const text = String(value)
       return `"${(/^[=+@\-\t\r]/.test(text) ? "'" + text : text).replace(/"/g, '""')}"`

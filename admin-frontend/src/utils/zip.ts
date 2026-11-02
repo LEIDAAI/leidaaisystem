@@ -112,7 +112,20 @@ export function zipFiles(entries: Array<{ name: string; content: string }>): Blo
   return new Blob([...localParts, ...centralParts, new Uint8Array(end)], { type: 'application/zip' })
 }
 
-/** 解析上传的 ZIP（仅支持 store-only）：返回 文件名 → 文本内容 的映射（其他压缩方式抛错） */
+interface InflateStreamLike { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> }
+
+/** DEFLATE（method 8）解压：浏览器原生 DecompressionStream（Chrome 103+/Firefox 113+/Safari 16.4+），无第三方依赖 */
+async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+  const Ctor = (globalThis as unknown as { DecompressionStream?: new (format: string) => InflateStreamLike }).DecompressionStream
+  if (!Ctor) throw new Error('当前浏览器不支持 DecompressionStream，无法解压 deflate 压缩的 ZIP（请使用 Chrome 103+ 或重新导出无压缩 ZIP）')
+  const stream = new Blob([data]).stream().pipeThrough(new Ctor('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+/**
+ * 解析上传的 ZIP：返回 文件名 → 文本内容 的映射。
+ * 支持 store（无压缩）与 deflate（常见压缩工具默认）两种存储方式；加密条目与其它压缩方式抛错。
+ */
 export async function unzipTextFiles(file: File): Promise<Record<string, string>> {
   const buf = new Uint8Array(await file.arrayBuffer())
   const dv = new DataView(buf.buffer)
@@ -128,20 +141,28 @@ export async function unzipTextFiles(file: File): Promise<Record<string, string>
   let p = dv.getUint32(endOffset + 16, true)
   for (let i = 0; i < count; i++) {
     if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('ZIP 中央目录解析失败')
+    const flags = dv.getUint16(p + 8, true)
     const method = dv.getUint16(p + 10, true)
+    const compSize = dv.getUint32(p + 20, true)
     const size = dv.getUint32(p + 24, true)
     const nameLen = dv.getUint16(p + 28, true)
     const extraLen = dv.getUint16(p + 30, true)
     const commentLen = dv.getUint16(p + 32, true)
     const localOffset = dv.getUint32(p + 42, true)
     const name = decoder.decode(buf.subarray(p + 46, p + 46 + nameLen))
-    if (method !== 0) throw new Error(`文件 ${name} 使用了压缩存储，仅支持无压缩（store）ZIP；请重新导出`)
-    // 读取本地头后的数据
+    p += 46 + nameLen + extraLen + commentLen
+    if (name.endsWith('/')) continue // 目录条目
+    if (flags & 0x1) throw new Error(`文件 ${name} 已加密，不支持导入`)
+    // 数据起点由本地头决定；条目大小以中央目录为准（兼容 bit-3 数据描述符：本地头大小字段为 0）
     const lNameLen = dv.getUint16(localOffset + 26, true)
     const lExtraLen = dv.getUint16(localOffset + 28, true)
     const dataStart = localOffset + 30 + lNameLen + lExtraLen
-    out[name] = decoder.decode(buf.subarray(dataStart, dataStart + size))
-    p += 46 + nameLen + extraLen + commentLen
+    const raw = buf.subarray(dataStart, dataStart + (method === 0 ? size : compSize))
+    let bytes: Uint8Array
+    if (method === 0) bytes = raw
+    else if (method === 8) bytes = await inflateRaw(raw)
+    else throw new Error(`文件 ${name} 使用了不支持的压缩方式（method=${method}），仅支持 store/deflate`)
+    out[name] = decoder.decode(bytes)
   }
   return out
 }

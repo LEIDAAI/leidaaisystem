@@ -35,7 +35,9 @@ watch(visible, async (value) => {
   }
 })
 
-const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝' }
+const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
+/** v11 订单来源中文标签 */
+const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
 
 const TYPE_LABELS: Record<string, string> = { PAY: '支付', REFUND: '退款' }
 </script>
@@ -49,13 +51,19 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付', REFUND: '退款' }
           <el-descriptions-item label="状态">
             <StatusTag kind="order" :value="detail.status" />
           </el-descriptions-item>
-          <el-descriptions-item label="用户">{{ detail.userNickname }}（ID: {{ detail.userId }}）</el-descriptions-item>
+          <el-descriptions-item label="微信昵称">{{ detail.wechatNickname }}（ID: {{ detail.userId }}）</el-descriptions-item>
           <el-descriptions-item label="套餐">{{ detail.planName }}</el-descriptions-item>
-          <el-descriptions-item label="金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
-          <el-descriptions-item label="支付渠道">{{ CHANNEL_LABELS[detail.payChannel] ?? detail.payChannel }}</el-descriptions-item>
+          <el-descriptions-item label="订单来源">{{ ORDER_SOURCE_LABELS[detail.source] ?? detail.source }}</el-descriptions-item>
+          <el-descriptions-item label="剩余积分">{{ detail.remainingCredits }}</el-descriptions-item>
+          <el-descriptions-item label="套餐时长">{{ detail.durationMonths === 0 ? '长期有效' : `${detail.durationMonths}个月` }}</el-descriptions-item>
+          <el-descriptions-item label="近7日消耗">{{ detail.last7DaysUsage }}</el-descriptions-item>
+          <el-descriptions-item label="商品金额">{{ formatAmount(detail.goodsAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="优惠金额">{{ formatAmount(detail.discountAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="实付金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
           <el-descriptions-item label="支付时间">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
           <el-descriptions-item label="退款时间">{{ formatDateTime(detail.refundedAt) }}</el-descriptions-item>
           <el-descriptions-item label="下单时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+          <el-descriptions-item label="支付渠道">{{ CHANNEL_LABELS[detail.payChannel] ?? detail.payChannel }}</el-descriptions-item>
           <el-descriptions-item label="备注">{{ orDash(detail.remark) }}</el-descriptions-item>
         </el-descriptions>
 

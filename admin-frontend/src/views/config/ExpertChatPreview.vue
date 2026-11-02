@@ -40,7 +40,15 @@ const temperature = computed<number | null>(() => {
   return typeof dt === 'number' ? dt : null
 })
 const skillCount = computed(() => (props.draft.skillIds || []).length)
-const toolCount = computed(() => tools.value.filter((t) => t.enabled && (props.draft.mcpServerIds || []).includes(t.serverId)).length)
+// v9：工具数按绑定级裁剪取交集（mcpToolSelection 缺省/空 = 全部已启用工具）
+const toolCount = computed(() => {
+  const sel = (props.draft.mcpToolSelection && typeof props.draft.mcpToolSelection === 'object' && !Array.isArray(props.draft.mcpToolSelection)) ? props.draft.mcpToolSelection : {}
+  return tools.value.filter((t) => {
+    if (!t.enabled || !(props.draft.mcpServerIds || []).includes(t.serverId)) return false
+    const allowed = sel[String(t.serverId)]
+    return !allowed?.length || allowed.includes(t.id)
+  }).length
+})
 const capabilityCount = computed(() => Object.values(props.draft.capabilities || {}).filter(Boolean).length)
 const capabilityTitle = computed(() => Object.entries(props.draft.capabilities || {}).filter(([, v]) => v).map(([k]) => CAPABILITY_LABELS[k] || k).join('、') || '均未开启')
 const suggestions = computed(() => (props.draft.suggestedQuestions || []).map((q) => String(q).trim()).filter(Boolean))
@@ -106,7 +114,8 @@ async function sendReal(message: string): Promise<void> {
   ]
   const started = performance.now()
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 20000)
+  // 推理模型（如 glm-5.3）思考链耗时长且波动大，前端上限放宽到 60s
+  const timer = setTimeout(() => ctrl.abort(), 60000)
   const base = model.endpoint.replace(/\/+$/, '')
   const payload = JSON.stringify({ model: model.code, messages: msgs, temperature })
   const init = (extraHeaders: Record<string, string>): RequestInit => ({
@@ -126,7 +135,7 @@ async function sendReal(message: string): Promise<void> {
   } catch (e) {
     clearTimeout(timer)
     if ((e as Error)?.name === 'AbortError' || /abort/i.test(String(e))) {
-      pushError('真实调用超时（20s）：端点不可达或响应过慢；请检查接入地址，或改用后端代理模式（关闭「真实调用」开关）。')
+      pushError('真实调用超时（60s）：端点不可达或响应过慢；请检查接入地址，或改用后端代理模式（关闭「真实调用」开关）。')
     } else {
       pushError('浏览器直连失败：多为 CORS 拦截或网络不可达（供应商端点未允许跨域）。可改用后端代理模式（关闭「真实调用」开关，走 /experts/preview-chat 由 Java 后端代理），或检查接入地址。')
     }
@@ -210,7 +219,7 @@ function clearSession(): void {
         </el-collapse>
       </div>
       <div v-if="pending" class="ecp-msg assistant">
-        <div class="ecp-bubble muted">生成中…{{ realMode ? '（真实调用，最长 20s）' : '（演示引擎模拟延迟 400–900ms）' }}</div>
+        <div class="ecp-bubble muted">生成中…{{ realMode ? '（真实调用，最长 60s）' : '（演示引擎模拟延迟 400–900ms）' }}</div>
       </div>
     </div>
     <div class="ecp-input">

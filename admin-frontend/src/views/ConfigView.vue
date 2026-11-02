@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -7,11 +7,13 @@ import { get, post } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool,
   exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
-  testModelConnection, listModels, PLATFORMS, PLATFORM_META, platformMeta,
-  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType
+  testModelConnection, listModels, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
+  FRONTEND_PERM_GROUPS, normalizeFrontendPerms,
+  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType, type FrontendPerms
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { formatDateTime } from '@/utils/format'
+import { createSeqGuard } from '@/utils/race'
 import { USE_MOCK } from '@/utils/constants'
 import PlanFormDrawer from './config/PlanFormDrawer.vue'
 import ExpertOrchestrator from './config/ExpertOrchestrator.vue'
@@ -26,6 +28,16 @@ const auth = useAuthStore()
 const kind = computed(() => (route.path === '/mcp' ? 'mcp/servers' : route.path.slice(1)) as ConfigKind)
 const module = computed(() => (kind.value === 'mcp/servers' ? 'mcp' : kind.value.slice(0, -1)))
 const canEdit = computed(() => auth.hasPerm(`${module.value}:edit`))
+
+/** 套餐前台权限概览：关闭项数量与标签（缺失按全开处理） */
+function permsRestrictedCount(perms: FrontendPerms | undefined): number {
+  const p = normalizeFrontendPerms(perms)
+  return Object.values(p).filter((v) => !v).length
+}
+function restrictedPermLabels(perms: FrontendPerms | undefined): string[] {
+  const p = normalizeFrontendPerms(perms)
+  return FRONTEND_PERM_GROUPS.flatMap((g) => g.items).filter((it) => !p[it.key]).map((it) => it.label)
+}
 
 const items = ref<ConfigItem[]>([])
 const tools = ref<Tool[]>([])
@@ -50,29 +62,32 @@ const filtered = computed(() => {
   return items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
 })
 
-/** 模型模块服务端查询序号：丢弃乱序响应，防止旧结果覆盖新结果 */
-let modelReqSeq = 0
+/** 列表查询竞态守卫：kind 切换 / 连续搜索时丢弃乱序返回的旧响应，防止旧结果覆盖新结果 */
+const listGuard = createSeqGuard()
 
 async function load(): Promise<void> {
+  const seq = listGuard.next()
   loading.value = true
   try {
     if (kind.value === 'models') {
-      const seq = ++modelReqSeq
       const p = await listModels({ keyword: keyword.value, status: status.value, domain: modelDomain.value, page: modelPage.value, pageSize: modelPageSize.value })
-      if (seq !== modelReqSeq) return // 乱序响应：已有更新的查询在途，丢弃本次结果
+      if (!listGuard.isCurrent(seq)) return // 乱序响应：已有更新的查询在途，丢弃本次结果
       // 删除/筛选后末页可能变空页：回退一页重查
       if (!p.list.length && modelPage.value > 1) { modelPage.value -= 1; void load(); return }
       items.value = p.list as unknown as ConfigItem[]
       modelTotal.value = p.total
       modelDomains.value = p.domains || []
     } else {
-      items.value = await listConfig(kind.value)
+      const list = await listConfig(kind.value)
+      if (!listGuard.isCurrent(seq)) return
+      items.value = list
     }
+    if (!listGuard.isCurrent(seq)) return
     if (kind.value === 'mcp/servers') tools.value = await listTools()
     // 专家表单/列表的基础模型下拉数据源：取模型管理全量（pageSize 上限内）
     if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 200 })).list
   } finally {
-    loading.value = false
+    if (listGuard.isCurrent(seq)) loading.value = false
   }
 }
 watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; void load() }, { immediate: true })
@@ -85,15 +100,15 @@ watch(keyword, () => {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => { modelPage.value = 1; void load() }, 300)
 })
+// 卸载时清理防抖定时器，避免组件销毁后仍触发 load
+onUnmounted(() => { if (searchTimer) clearTimeout(searchTimer) })
+
+/** 生效状态中文标签（未知枚举值兜底原样显示） */
+const REFRESH_STATUS_LABELS: Record<string, string> = { APPLIED: '已生效', PENDING: '待刷新', FAILED: '刷新失败' }
 
 /** 平台徽章元数据（历史未知值兜底显示） */
 function platMeta(p: string): { label: string; color: string; bg: string; border: string } {
   return platformMeta(p)
-}
-/** v6：接入地址取 host（域名区分；无协议等非法地址原样显示） */
-function hostOf(endpoint?: string): string {
-  if (!endpoint) return ''
-  try { return new URL(endpoint).host } catch { return endpoint }
 }
 /** v6：域名→彩色标签（按域名在 domains 清单中的序号取色：同域名恒同色，相邻域名必不同色，不同渠道一眼区分） */
 const DOMAIN_TAG_TYPES = ['primary', 'success', 'warning', 'danger', 'info'] as const
@@ -121,9 +136,9 @@ function blankDraft(): Partial<ConfigItem> {
   if (module.value === 'expert') {
     return { code: '', name: '', description: '', avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'], systemPrompt: '', skillIds: [], mcpServerIds: [], suggestedQuestions: [], tags: [], status: 1, isDefault: false, visibility: { type: 'PUBLIC', planIds: [] } }
   }
-  if (module.value === 'mcp') return { code: '', name: '', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], status: 1 }
+  if (module.value === 'mcp') return { code: '', name: '', connType: 'MCP', transport: 'STREAMABLE_HTTP', endpoint: '', path: '', authConfig: { type: 'NONE' }, toolFilter: [], platforms: ['1688'], status: 1, visibility: { type: 'PUBLIC', planIds: [] } }
   if (module.value === 'model') return { code: '', name: '', provider: '智谱', endpoint: '', remark: '', status: 1 }
-  return { code: '', name: '', status: 1, price: 0, durationDays: 30, entitlements: [] }
+  return { code: '', name: '', status: 1, price: 0, durationDays: 30, entitlements: [], planType: 'NORMAL' }
 }
 
 async function edit(item?: ConfigItem): Promise<void> {
@@ -168,9 +183,15 @@ async function refresh(item: ConfigItem, simulateFailure = false): Promise<void>
 async function toggleStatus(item: ConfigItem): Promise<void> {
   const next = item.status === 1 ? 0 : 1
   if (module.value === 'expert' || module.value === 'mcp') {
-    editItem.value = { ...item, status: next }
-    if (module.value === 'expert') expertDrawer.value = true
-    else mcpDrawer.value = true
+    // 默认专家必须保持启用（mock 端 422 同规则），前置拦截给出可操作提示
+    if (module.value === 'expert' && item.status === 1 && item.isDefault) {
+      ElMessage.warning('默认专家必须保持启用，请先将其他专家设为默认')
+      return
+    }
+    // 全量字段 + skipVersion：启停不属于配置内容变更，不产生版本记录
+    await saveConfig(kind.value, { ...item, status: next, skipVersion: true })
+    ElMessage.success(next === 1 ? '已启用' : '已停用')
+    await load()
     return
   }
   await saveConfig(kind.value, { id: item.id, code: item.code, name: item.name, status: next })
@@ -365,29 +386,46 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert'" label="标签" min-width="140">
+      <el-table-column v-if="module === 'expert'" label="场景" min-width="140">
         <template #default="{ row }"><el-tag v-for="t in row.tags || []" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag></template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert'" label="可见性" width="110">
+      <el-table-column v-if="module === 'expert' || module === 'mcp'" label="可见性" width="110">
         <template #default="{ row }">{{ VISIBILITY_LABELS[row.visibility?.type] || '-' }}<small v-if="row.visibility?.type === 'PLAN'">（{{ (row.visibility?.planIds || []).length }}套餐）</small></template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert'" label="绑定技能/MCP" width="115"><template #default="{ row }">{{ (row.skillIds || []).length }} / {{ (row.mcpServerIds || []).length }}</template></el-table-column>
+      <el-table-column v-if="module === 'expert'" label="绑定技能 / MCP" width="115"><template #default="{ row }">{{ (row.skillIds || []).length }} / {{ (row.mcpServerIds || []).length }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="类型" width="95"><template #default="{ row }"><el-tag size="small" :type="row.connType === 'MCP' ? 'success' : 'warning'">{{ row.connType || 'MCP' }}</el-tag></template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="传输方式" width="165"><template #default="{ row }"><el-tag v-if="row.connType === 'MCP'" size="small" type="info">{{ row.transport || '-' }}</el-tag><span v-else class="muted">schema 解析</span></template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="工具数" width="75"><template #default="{ row }">{{ tools.filter((t) => t.serverId === row.id).length }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="地址 / 端点" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.endpoint || row.command }}{{ row.path || '' }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="健康" min-width="150"><template #default="{ row }">{{ row.healthStatus || 'UNKNOWN' }}<br /><small class="muted">{{ row.lastHealthAt }}</small></template></el-table-column>
-      <el-table-column v-if="module === 'plan'" label="价格 / 天数" width="130"><template #default="{ row }">¥{{ row.price }} / {{ row.durationDays }}天<br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
-      <el-table-column label="状态" width="95">
+      <el-table-column v-if="module === 'plan'" label="类型 / 价格 / 时长" width="160"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag><br /><template v-if="row.planType === 'GIFT'"><span v-if="row.durationDays === 0">长期有效</span><span v-else>{{ row.durationDays }}天</span></template><span v-else>¥{{ row.price }} / {{ row.durationDays }}天</span><br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="前台权限" width="150">
         <template #default="{ row }">
-          <el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' ? '上架' : '启用') : '停用' }}</el-tag>
+          <template v-if="permsRestrictedCount(row.frontendPerms) === 0"><small class="muted">全部开放</small></template>
+          <template v-else>
+            <el-tag v-for="t in restrictedPermLabels(row.frontendPerms)" :key="t" size="small" type="danger" effect="plain" style="margin:0 4px 4px 0">{{ t }}已关</el-tag>
+          </template>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="105">
+        <template #default="{ row }">
+          <!-- 专家/MCP：行内直接启停（默认专家保持启用，停用会前置拦截提示） -->
+          <el-switch
+            v-if="canEdit && (module === 'expert' || module === 'mcp')"
+            :model-value="row.status === 1"
+            inline-prompt
+            active-text="启"
+            inactive-text="停"
+            @change="() => toggleStatus(row)"
+          />
+          <el-tag v-else :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' ? '上架' : '启用') : '停用' }}</el-tag>
           <small v-if="row.isDefault"> 默认</small>
         </template>
       </el-table-column>
       <el-table-column v-if="module === 'expert' || module === 'model'" label="更新时间" width="160"><template #default="{ row }"><small class="muted">{{ formatDateTime(row.updatedAt) }}</small></template></el-table-column>
       <el-table-column v-if="module !== 'model'" label="配置 / 生效版本" width="145">
         <template #default="{ row }">v{{ row.version }} / v{{ row.appliedVersion }}<br />
-          <el-tag size="small" :type="row.refreshStatus === 'FAILED' ? 'danger' : row.refreshStatus === 'PENDING' ? 'warning' : 'success'">{{ row.refreshStatus }}</el-tag>
+          <el-tag size="small" :type="row.refreshStatus === 'FAILED' ? 'danger' : row.refreshStatus === 'PENDING' ? 'warning' : 'success'">{{ REFRESH_STATUS_LABELS[row.refreshStatus] || row.refreshStatus }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" min-width="185" fixed="right">
@@ -402,13 +440,13 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item v-if="module === 'expert' || module === 'mcp'" command="history">版本历史</el-dropdown-item>
+                  <el-dropdown-item v-if="module === 'expert' && auth.hasPerm('expert:export')" command="export">导出 JSON</el-dropdown-item>
                   <template v-if="canEdit">
                     <el-dropdown-item v-if="module === 'expert'" command="toggle" :disabled="row.status === 1 && row.isDefault">{{ row.status === 1 ? '下架' : '上架' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'model'" command="toggleModel">{{ row.status === 1 ? '停用' : '启用' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module !== 'model'" command="refresh">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module !== 'model' && USE_MOCK" command="refreshFail">模拟失败</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'expert' && !row.isDefault" command="setDefault">设为默认</el-dropdown-item>
-                    <el-dropdown-item v-if="module === 'expert'" command="export">导出 JSON</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'mcp'" command="discover">发现工具</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'mcp'" command="health">健康检查</el-dropdown-item>
                     <el-dropdown-item command="remove" divided>删除</el-dropdown-item>

@@ -58,6 +58,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'MCP管理', perm: 'mcp:view' }
       },
       {
+        path: 'knowledge',
+        name: 'knowledge',
+        component: () => import('@/views/KnowledgeView.vue'),
+        meta: { title: '知识库管理', perm: 'knowledge:view' }
+      },
+      {
         path: 'models',
         name: 'models',
         component: () => import('@/views/ConfigView.vue'),
@@ -79,7 +85,7 @@ const routes: RouteRecordRaw[] = [
         path: 'roles',
         name: 'roles',
         component: () => import('@/views/roles/RolesView.vue'),
-        meta: { title: '角色权限', perm: 'admin:manage' }
+        meta: { title: '角色权限', perm: 'role:manage' }
       },
       {
         path: 'audit-logs',
@@ -92,10 +98,16 @@ const routes: RouteRecordRaw[] = [
         name: 'forbidden',
         component: () => import('@/views/ForbiddenView.vue'),
         meta: { title: '无权限' }
+      },
+      {
+        path: '404',
+        name: 'not-found',
+        component: () => import('@/views/NotFoundView.vue'),
+        meta: { title: '页面不存在' }
       }
     ]
   },
-  { path: '/:pathMatch(.*)*', redirect: '/' }
+  { path: '/:pathMatch(.*)*', redirect: '/404' }
 ]
 
 const router = createRouter({
@@ -107,10 +119,8 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   document.title = to.meta.title ? `${to.meta.title} - 雷达AI管理后台` : '雷达AI管理后台'
   const auth = useAuthStore()
-  await auth.restore()
-  if (auth.token && !to.meta.public) {
-    try { await auth.refreshSession() } catch { auth.clearSession() }
-  }
+  // 会话恢复仅在首次（restore 内部已去重）；不再每次导航刷 /me，避免网络抖动被误踢下线
+  if (!to.meta.public) await auth.restore()
   if (to.meta.public) {
     if (auth.token && to.path === '/login') return { path: '/' }
     return true
@@ -119,7 +129,7 @@ router.beforeEach(async (to) => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.path === '/dashboard' && !auth.hasPerm('dashboard:view')) {
-    const first = [{ path: '/users', perm: 'user:view' }, { path: '/orders', perm: 'order:view' }, { path: '/admins', perm: 'admin:manage' }, { path: '/chats', perm: 'chat:view' }, { path:'/plans',perm:'plan:view' }, { path:'/experts',perm:'expert:view' }, {path:'/skills',perm:'skill:view'}, {path:'/mcp',perm:'mcp:view'}, {path:'/models',perm:'model:view'}, {path:'/audit-logs',perm:'audit:view'}].find(item => auth.hasPerm(item.perm))
+    const first = [{ path: '/users', perm: 'user:view' }, { path: '/orders', perm: 'order:view' }, { path: '/admins', perm: 'admin:manage' }, { path: '/chats', perm: 'chat:view' }, { path:'/plans',perm:'plan:view' }, { path:'/experts',perm:'expert:view' }, {path:'/skills',perm:'skill:view'}, {path:'/mcp',perm:'mcp:view'}, {path:'/knowledge',perm:'knowledge:view'}, {path:'/models',perm:'model:view'}, {path:'/audit-logs',perm:'audit:view'}].find(item => auth.hasPerm(item.perm))
     return { path: first?.path || '/403' }
   }
   const perm = to.meta.perm

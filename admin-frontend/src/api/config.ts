@@ -1,5 +1,6 @@
 import { get, post, put, del } from './request'
 import type { PageData } from './types'
+import type { IntroFileMeta } from './files'
 
 export interface Entitlement {
   resourceType: 'EXPERT' | 'SKILL' | 'MCP_TOOL'
@@ -9,6 +10,33 @@ export interface Entitlement {
   quotaLimit: number
   quotaPeriod: 'DAY' | 'MONTH' | 'LIFETIME'
   used?: number
+}
+/** 套餐前台权限开关集（套餐/技能/MCP × 查看/创建，作用于前台工作台用户侧能力） */
+export interface FrontendPerms {
+  planView: boolean; planCreate: boolean
+  skillView: boolean; skillCreate: boolean
+  mcpView: boolean; mcpCreate: boolean
+}
+/** 未配置时的缺省值：全部允许 */
+export const FRONTEND_PERM_DEFAULTS: FrontendPerms = {
+  planView: true, planCreate: true,
+  skillView: true, skillCreate: true,
+  mcpView: true, mcpCreate: true
+}
+/** 前台权限开关展示元数据（分组 × 开关） */
+export const FRONTEND_PERM_GROUPS: Array<{ label: string; items: Array<{ key: keyof FrontendPerms; label: string }> }> = [
+  { label: '套餐', items: [{ key: 'planView', label: '查看套餐' }, { key: 'planCreate', label: '创建套餐' }] },
+  { label: '技能', items: [{ key: 'skillView', label: '查看技能' }, { key: 'skillCreate', label: '创建技能' }] },
+  { label: 'MCP', items: [{ key: 'mcpView', label: '查看 MCP' }, { key: 'mcpCreate', label: '创建 MCP' }] }
+]
+/** 归一化：未知/缺失键按缺省允许处理，非布尔值强制转布尔 */
+export function normalizeFrontendPerms(input: unknown): FrontendPerms {
+  const src = (input && typeof input === 'object' ? input : {}) as Partial<Record<keyof FrontendPerms, unknown>>
+  const out = { ...FRONTEND_PERM_DEFAULTS }
+  for (const k of Object.keys(FRONTEND_PERM_DEFAULTS) as Array<keyof FrontendPerms>) {
+    if (typeof src[k] === 'boolean') out[k] = src[k] as boolean
+  }
+  return out
 }
 /** 专家可见性（附录 12.1：PUBLIC 全员 / PLAN 指定套餐 / PRIVATE 私有） */
 export interface VisibilityConfig { type: 'PUBLIC' | 'PLAN' | 'PRIVATE'; planIds: number[] }
@@ -35,6 +63,11 @@ export const PLATFORM_META: Record<PlatformType, { label: string; color: string;
 export function platformMeta(p: string): { label: string; color: string; bg: string; border: string } {
   return PLATFORM_META[p as PlatformType] || { label: p, color: '#616161', bg: '#fafafa', border: '#d9d9d9' }
 }
+/** URL 提取 host（模型接入地址按域名分组/展示共用；无协议等非法地址原样返回） */
+export function hostOf(endpoint?: string): string {
+  if (!endpoint) return ''
+  try { return new URL(endpoint).host } catch { return endpoint }
+}
 /**
  * 基础 LLM 模型注册（模型管理，v5；专家 base_model 由此选择）。
  * api_key 保存后永不回显明文：接口只返回掩码 apiKeyMasked（如 ****abcd）；编辑留空=不修改。
@@ -60,10 +93,18 @@ export interface ConfigItem {
   id: number; code: string; name: string; status: number; version: number; updatedAt: string
   refreshStatus: 'PENDING' | 'APPLIED' | 'FAILED'; appliedVersion: number; refreshMessage: string
   price?: number; durationDays?: number; entitlements?: Entitlement[]; salesCount?: number
+  /** 套餐类型（v11）：NORMAL 常规 / GIFT 赠送（赠送订单只能选 GIFT 套餐；GIFT 价格必须为 0、时长支持长期有效 durationDays=0） */
+  planType?: 'NORMAL' | 'GIFT'
+  /** 套餐前台权限（v8）：控制该套餐用户在前台工作台能否创建/查看 套餐、技能、MCP；未配置视为全部允许 */
+  frontendPerms?: FrontendPerms
   // ---- 专家（助手预设）字段（附录 12.1）----
   description?: string; avatarUrl?: string; baseModel?: string; systemPrompt?: string
-  skillIds?: number[]; mcpServerIds?: number[]; suggestedQuestions?: string[]
-  capabilities?: Record<string, boolean>; tags?: string[]; visibility?: VisibilityConfig; isDefault?: boolean
+  skillIds?: number[]; mcpServerIds?: number[]; knowledgeBaseIds?: number[]; suggestedQuestions?: string[]
+  capabilities?: Record<string, boolean>; tags?: string[]; isDefault?: boolean
+  /** 前台可见性（v8 专家 / v9 MCP 共用）：仅控制 C 端工作台展示（PUBLIC 全员 / PLAN 指定套餐 / PRIVATE 内部隐藏）；专家绑定 MCP 调用不受此限制 */
+  visibility?: VisibilityConfig
+  /** 绑定级 MCP 工具裁剪（v9）：serverId → 允许调用的工具 id 列表；缺省/空 = 该服务全部已启用工具（调用取交集） */
+  mcpToolSelection?: Record<string, number[]>
   // ---- 专家编排扩展（Coze 式编排页，v6）----
   /** 专家标题（富文本 HTML，前台专家卡片大标题） */
   titleHtml?: string
@@ -71,6 +112,8 @@ export interface ConfigItem {
   introduction?: string
   /** 开场白（富文本 HTML，会话首条消息） */
   greeting?: string
+  /** 专家介绍附件（图片/PDF/文档）元数据；文件实体 mock 存 IndexedDB、真实模式存后端 */
+  introductionFiles?: IntroFileMeta[]
   /** 核心能力（多条短文本，前台蓝色链接列表） */
   coreAbilities?: string[]
   /** 参考提示词（多条，前台紫色高亮框，可一键填入输入框） */
@@ -79,6 +122,10 @@ export interface ConfigItem {
   nextQuestionConfig?: { enabled: boolean; model?: string; mode: 'default' | 'custom'; customPrompt?: string }
   // ---- 技能（SKILL.md 内容模型，附录 12.2）----
   content?: string; files?: SkillFile[]
+  /** 技能分组（列表归类展示，Open WebUI 式；空=未分组） */
+  group?: string
+  /** 技能场景分组（v7）：关联场景 ID，用于按场景维度分组 */
+  scenarioId?: number | null
   // ---- MCP（双类型连接模型，附录 12.3）----
   connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[]
   transport?: 'STREAMABLE_HTTP' | 'SSE' | 'STDIO'; endpoint?: string; command?: string; args?: string[]
@@ -95,7 +142,43 @@ export interface ConfigItem {
   paramSchema?: Record<string, unknown>; execConfig?: Record<string, unknown>
 }
 export interface Tool { id: number; serverId: number; name: string; enabled: boolean }
-export type ConfigKind = 'plans' | 'experts' | 'skills' | 'mcp/servers' | 'models'
+/** 场景（技能分组维度之一，平台下的细分场景） */
+export interface Scenario {
+  id: number
+  name: string
+  platformId: PlatformType
+  description?: string
+  createdAt: string
+  updatedAt: string
+}
+/** 知识库（专家可绑定的知识资源；v8 对齐 Open WebUI：access 权限 + 文档管理） */
+export interface KnowledgeBase {
+  id: number
+  name: string
+  description?: string
+  platform?: PlatformType
+  /** 访问权限：私有=只有拥有权限的用户和组可以使用；公开=全员可用（缺省公开） */
+  access?: 'PRIVATE' | 'PUBLIC'
+  /** 场景标签（v10）：与场景库联动，对齐前台「平台 → 场景」两级筛选 */
+  tags?: string[]
+  /** 文档数量（按知识库文档表实时统计） */
+  fileCount: number
+  status: number
+  createdAt: string
+  updatedAt: string
+}
+/** 知识库文档（v8）：mock 存纯文本（.md/.txt），size 为 UTF-8 字节数 */
+export interface KnowledgeFile {
+  id: number
+  kbId: number
+  /** 文件名（含扩展名，如 realfbs-物流线路摘要.md） */
+  name: string
+  content: string
+  size: number
+  createdAt: string
+  updatedAt: string
+}
+export type ConfigKind = 'plans' | 'experts' | 'skills' | 'mcp/servers' | 'models' | 'scenarios' | 'knowledge-bases'
 /** 保存载荷：业务字段 + 版本名称/变更说明（进版本历史）+ 引用确认；capabilities 在专家为布尔开关对象、在模型为标签数组 */
 export type ConfigSavePayload = Partial<Omit<ConfigItem, 'capabilities'>> & { capabilities?: Record<string, boolean> | string[]; versionName?: string; note?: string; confirmReferences?: boolean; /** v6：自动保存跳过版本记录（touch 仍 version+1 但不生成快照） */ skipVersion?: boolean }
 export const listConfig = (kind: ConfigKind) => get<ConfigItem[]>(`/${kind}`)
@@ -105,6 +188,22 @@ export const configAction = (kind: ConfigKind, id: number, action: string, body?
 export const listResources = () => get<Entitlement[]>('/entitlement-resources')
 export const listTools = () => get<Tool[]>('/mcp/tools')
 export const toggleTool = (id: number, enabled: boolean, version?: { versionName: string; note: string }) => put(`/mcp/tools/${id}/enabled`, { enabled, ...version })
+
+// ---------------------------------------------------------------- 场景管理（v7）
+export const listScenarios = () => get<Scenario[]>('/scenarios')
+export const saveScenario = (item: Partial<Scenario> & { id?: number }) => item.id ? put<Scenario>(`/scenarios/${item.id}`, item) : post<Scenario>('/scenarios', item)
+export const deleteScenario = (id: number) => del(`/scenarios/${id}`)
+
+// ---------------------------------------------------------------- 知识库管理（v7）
+export const listKnowledgeBases = () => get<KnowledgeBase[]>('/knowledge-bases')
+export const saveKnowledgeBase = (item: Partial<KnowledgeBase> & { id?: number }) => item.id ? put<KnowledgeBase>(`/knowledge-bases/${item.id}`, item) : post<KnowledgeBase>('/knowledge-bases', item)
+export const setKnowledgeBaseStatus = (id: number, status: number) => put<KnowledgeBase>(`/knowledge-bases/${id}/status`, { status })
+export const deleteKnowledgeBase = (id: number, body?: unknown) => del(`/knowledge-bases/${id}`, body)
+// v8：知识库文档管理（上传/新建/编辑/删除，Open WebUI 式）
+export const listKnowledgeFiles = (kbId: number) => get<KnowledgeFile[]>(`/knowledge-bases/${kbId}/files`)
+export const saveKnowledgeFile = (kbId: number, file: Partial<KnowledgeFile> & { id?: number }) =>
+  file.id ? put<KnowledgeFile>(`/knowledge-bases/${kbId}/files/${file.id}`, file) : post<KnowledgeFile>(`/knowledge-bases/${kbId}/files`, file)
+export const deleteKnowledgeFile = (kbId: number, fileId: number) => del(`/knowledge-bases/${kbId}/files/${fileId}`)
 /** 旧版提示词版本（保留兼容）；新版请使用 configVersions */
 export const promptVersions = (id: number) => get<Array<{ version: number; systemPrompt: string; createdAt: string }>>(`/experts/${id}/prompt-versions`)
 export const skillStats = (id: number) => get<{ calls7: number; calls30: number; successRate: number; source: string }>(`/skills/${id}/stats`)

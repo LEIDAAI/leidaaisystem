@@ -55,7 +55,24 @@ export default defineConfig(({ command }) => ({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  // @tiptap 依赖只在路由级动态 import 的知识库页才被加载，dev server 运行中触发增量
+  // 预构建会产生混批 chunk（?v= hash 不一致）→ @tiptap/core 双实例 →
+  // "Schema is missing its top node type ('doc')"。全部列入 include 首启即预构建，避免二次 optimize。
+  optimizeDeps: {
+    include: [
+      '@tiptap/vue-3', '@tiptap/core',
+      '@tiptap/starter-kit',
+      '@tiptap/extension-color', '@tiptap/extension-highlight', '@tiptap/extension-image',
+      '@tiptap/extension-link', '@tiptap/extension-placeholder',
+      '@tiptap/extension-table', '@tiptap/extension-table-cell',
+      '@tiptap/extension-table-header', '@tiptap/extension-table-row',
+      '@tiptap/extension-task-item', '@tiptap/extension-task-list',
+      '@tiptap/extension-text-align', '@tiptap/extension-text-style',
+      '@tiptap/extension-underline'
+    ]
+  },
   server: {
+    host: true,
     port: 5174,
     proxy: {
       '/admin/api': {
