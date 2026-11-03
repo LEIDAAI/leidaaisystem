@@ -355,13 +355,14 @@ async function tryClose(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- 三栏拖拽调整列宽
-/** 默认列宽（中间更宽，两侧收窄；窄屏初始化更小的默认值，拖拽后以内联样式为准） */
-const DEFAULT_LEFT = window.innerWidth <= 1280 ? 220 : window.innerWidth <= 1440 ? 240 : 260
-const DEFAULT_RIGHT = window.innerWidth <= 1280 ? 260 : window.innerWidth <= 1440 ? 280 : 300
+/** 默认列宽：两边宽、中间窄（按视口比例分配，1280 视口≈左 512 / 右 384），拖拽后以内联样式为准 */
+const VW = window.innerWidth
+const DEFAULT_LEFT = Math.round(VW * 0.4)
+const DEFAULT_RIGHT = Math.round(VW * 0.3)
 const MIN_LEFT = 200
-const MAX_LEFT = 480
+const MAX_LEFT = Math.round(VW * 0.62)
 const MIN_RIGHT = 240
-const MAX_RIGHT = 520
+const MAX_RIGHT = Math.round(VW * 0.5)
 
 const leftWidth = ref(DEFAULT_LEFT)
 const rightWidth = ref(DEFAULT_RIGHT)
@@ -460,15 +461,21 @@ onBeforeUnmount(() => {
               <el-form-item label="头像 URL"><el-input v-model="draft.avatarUrl" placeholder="https://..." /></el-form-item>
               <el-form-item label="上架状态"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" active-text="启用（上架到前台）" inactive-text="停用（前台不可见）" /></el-form-item>
               <el-form-item label="默认专家"><el-switch v-model="draft.isDefault" /></el-form-item>
-              <el-form-item label="可见性">
+              <el-form-item label="前台可见性">
                 <el-radio-group v-model="draft.visibility!.type">
-                  <el-radio-button value="PUBLIC">全员</el-radio-button>
+                  <el-radio-button value="PUBLIC">全员可见</el-radio-button>
                   <el-radio-button value="PLAN">指定套餐</el-radio-button>
-                  <el-radio-button value="PRIVATE">私有</el-radio-button>
+                  <el-radio-button value="PRIVATE">内部隐藏</el-radio-button>
                 </el-radio-group>
-              </el-form-item>
-              <el-form-item v-if="draft.visibility!.type === 'PLAN'" label="可见套餐">
-                <el-select v-model="draft.visibility!.planIds" multiple filterable style="width:100%"><el-option v-for="p in plans" :key="p.id" :value="p.id" :label="p.name" /></el-select>
+                <el-select
+                  v-if="draft.visibility!.type === 'PLAN'"
+                  v-model="draft.visibility!.planIds" multiple filterable
+                  style="width:100%;margin-top:8px"
+                  placeholder="选择对哪些套餐用户可见（不选则不可见）"
+                >
+                  <el-option v-for="p in plans" :key="p.id" :value="p.id" :label="`${p.name}（${p.code}）`" />
+                </el-select>
+                <p class="muted">仅控制 C 端工作台「专家清单」中的展示；已获授权用户的对话调用不受影响（隐藏 ≠ 不可用）。</p>
               </el-form-item>
             </el-form>
           </el-collapse-item>
@@ -696,12 +703,16 @@ onBeforeUnmount(() => {
 .autosave.error { color: var(--el-color-danger); }
 .orch-header-right { display: flex; gap: 8px; }
 .orch-layout { display: flex; gap: 0; height: 100%; }
-.col-left { flex: 0 0 260px; display: flex; flex-direction: column; min-height: 0; }
+/* min-width:0 + overflow:hidden 关键：flex 项默认 min-width:auto 会被编辑器内容的 min-content（工具栏≈991px）撑破列宽，导致拖拽调宽失效 */
+.col-left { flex: 0 0 260px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 .col-left .el-textarea { flex: 1; }
 .col-left :deep(.el-textarea__inner) { height: 100%; }
+/* 左栏编辑器：工具栏允许换行、正文横向滚动，配合列宽收缩 */
+.col-left :deep(.yuw-toolbar) { flex-wrap: wrap; height: auto; min-height: 42px; }
+.col-left :deep(.yu-content-scroll) { overflow-x: auto; }
 .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 .col-mid { flex: 1 1 0; min-width: 0; overflow-y: auto; }
-.col-right { flex: 0 0 300px; min-height: 0; display: flex; border-left: 1px solid var(--el-border-color-light); padding-left: 14px; }
+.col-right { flex: 0 0 300px; min-width: 0; min-height: 0; display: flex; border-left: 1px solid var(--el-border-color-light); padding-left: 14px; }
 /* 拖动手柄 */
 .resize-handle { flex: 0 0 12px; display: flex; align-items: center; justify-content: center; cursor: col-resize; position: relative; z-index: 2; transition: background 0.15s; }
 .resize-handle:hover, .resize-handle.active { background: var(--el-color-primary-light-9); }

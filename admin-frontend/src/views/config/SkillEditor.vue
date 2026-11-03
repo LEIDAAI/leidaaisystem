@@ -713,7 +713,7 @@ async function tryClose(): Promise<void> {
                 <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="s.label" />
               </el-select>
             </el-form-item>
-            <el-form-item label="前端可见性">
+            <el-form-item label="前台可见性">
               <el-radio-group v-model="draft.visibility!.type">
                 <el-radio-button value="PUBLIC">全员可见</el-radio-button>
                 <el-radio-button value="PLAN">指定套餐</el-radio-button>
@@ -725,8 +725,9 @@ async function tryClose(): Promise<void> {
                 style="width:100%;margin-top:8px"
                 placeholder="选择对哪些套餐用户可见（不选则不可见）"
               >
-                <el-option v-for="p in plans" :key="p.id" :value="p.id" :label="p.name" />
+                <el-option v-for="p in plans" :key="p.id" :value="p.id" :label="`${p.name}（${p.code}）`" />
               </el-select>
+              <p class="muted">仅控制 C 端工作台「技能清单」中的展示；已绑定该技能的专家调用不受影响（隐藏 ≠ 不可调用）。</p>
             </el-form-item>
           </el-form>
         </div>
@@ -837,6 +838,7 @@ async function tryClose(): Promise<void> {
 .plat-group { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .plat-group :deep(.el-checkbox) { margin-right: 0; height: auto; padding: 5px 10px; border-radius: 6px; width: 100%; }
 .plat-badge { font-size: 12px; padding: 0 8px; border-radius: 4px; border: 1px solid; line-height: 20px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
 
 /* ---------------- 编辑区顶栏 ---------------- */
 .editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--el-fill-color-lighter); border-radius: 8px; }

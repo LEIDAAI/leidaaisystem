@@ -73,13 +73,6 @@ const form = ref<Partial<KnowledgeBase>>({})
 /** 可见性「指定套餐」下拉数据源（无 plan:view 权限时静默为空） */
 const planOptions = ref<ConfigItem[]>([])
 void listConfig('plans').then((l) => { planOptions.value = l }).catch(() => {})
-/** 可见性说明文案 */
-const visTip = computed(() => {
-  const t = form.value.visibility?.type
-  if (t === 'PLAN') return '指定套餐：仅所选套餐用户可见（不选则均不可见）。'
-  if (t === 'PRIVATE') return '内部隐藏：仅管理后台可用，前台用户不可见。'
-  return '全员可见：拥有访问权限的所有用户均可使用。'
-})
 const formRef = ref<FormInstance>()
 const rules: FormRules = {
   name: [{ required: true, whitespace: true, message: '请输入知识库名称', trigger: 'blur' }]
@@ -510,7 +503,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
         <div class="muted" style="font-size:12px;line-height:1.6">对齐前台「平台 → 场景」两级筛选；输入新名称回车自动创建并归入所选平台。</div>
       </el-form-item>
       <el-form-item label="描述"><el-input v-model="form.description" type="textarea" :rows="3" placeholder="知识库用途说明（可选）" /></el-form-item>
-      <el-form-item label="前端可见性">
+      <el-form-item label="前台可见性">
         <div class="access-group">
           <el-radio-group v-model="form.visibility!.type">
             <el-radio-button value="PUBLIC">全员可见</el-radio-button>
@@ -523,9 +516,9 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
             style="width:100%;margin-top:8px"
             placeholder="选择对哪些套餐用户可见（不选则不可见）"
           >
-            <el-option v-for="p in planOptions" :key="p.id" :value="p.id" :label="p.name" />
+            <el-option v-for="p in planOptions" :key="p.id" :value="p.id" :label="`${p.name}（${p.code}）`" />
           </el-select>
-          <div class="muted access-tip">{{ visTip }}</div>
+          <div class="muted access-tip">仅控制 C 端工作台「知识库清单」中的展示；已被专家引用的知识库检索不受影响（隐藏 ≠ 不可检索）。</div>
         </div>
       </el-form-item>
     </el-form>
