@@ -15,4 +15,6 @@
 /* —— v0.3.2 表格横向滚动条与分页悬浮：表格限高内滚（横向条固定表格底部），分页吸底悬浮 —— */
 .page-card:has(> .pro-table){overflow:visible}
 .pro-table__footer{position:sticky;bottom:0;z-index:20;background:#fff;border-radius:0 0 10px 10px}
+/* 分页吸底悬浮时会覆盖表格底部约 11px，横向滚动条（EP 默认 z-index:3）会被白底分页条遮住：抬高到分页之上 */
+.el-table .el-scrollbar__bar.is-horizontal{z-index:25}
 .el-main .el-pagination{position:sticky;bottom:0;z-index:20;background:#fff;padding:10px 0 2px}
