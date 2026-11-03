@@ -1,6 +1,6 @@
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { migrateLegacyConfig, seedExtensions, redact, type Extensions } from './extension-data'
+import { migrateLegacyConfig, seedExtensions, redact, appendAskRounds, type Extensions } from './extension-data'
 
 // =====================================================================
 // Mock 演示数据库：通过 localStorage 保存业务数据与会话。
@@ -516,7 +516,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(saved.version) && saved.data && typeof saved.data === 'object') {
+    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(saved.version) && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -640,6 +640,27 @@ if (storedVersion < 11) {
   // 4) 新权限点 order:create：授予所有已持有 order:refund(id 9) 的角色（能力不回退；超管由上方全量覆盖自动获得）
   db.roles.filter((r) => r.permissionIds.includes(9)).forEach((r) => { r.permissionIds = [...new Set([...r.permissionIds, ...V11_PERMISSION_IDS])] })
 }
+if (storedVersion < 12) {
+  // v12 知识库前端可见性（v14 与专家/MCP 同款三段设置）：存量按 access 幂等回填 visibility（PRIVATE→内部隐藏，其余→全员可见）
+  ;(db.knowledgeBases || []).forEach((kb) => {
+    if (!kb.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(kb.visibility.type)) {
+      kb.visibility = kb.access === 'PRIVATE' ? { type: 'PRIVATE', planIds: [] } : { type: 'PUBLIC', planIds: [] }
+    }
+  })
+}
+if (storedVersion < 13) {
+  // v13 会话多轮问话：存量会话幂等追加第 2 轮用户追问（种子已含 2 轮则自动跳过），支撑展开区按问话查看分析
+  db.chats.forEach(c => appendAskRounds(c))
+}
+if (storedVersion < 14) {
+  // v14 专家场景分组：存量未分组专家按种子 id 幂等回填演示场景（不覆盖用户已设分组）
+  const ext14 = seedExtensions()
+  db.experts.forEach((e) => {
+    if (e.scenarioId !== undefined) return
+    const seeded = ext14.experts.find((x) => x.id === e.id)
+    if (seeded?.scenarioId !== undefined) e.scenarioId = seeded.scenarioId
+  })
+}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
@@ -672,7 +693,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 11,
+        version: 14,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],

@@ -17,7 +17,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowLeft, CaretRight, CircleCheck, Close, Document, Folder, FolderOpened, Plus } from '@element-plus/icons-vue'
 import YuqueEditor from '@/components/yuque/YuqueEditor.vue'
 import { get } from '@/api/request'
-import { saveConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
+import { listConfig, saveConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
 import { ensureScenario, ensureScenarios, orderedScenarioOptions } from '@/utils/scenarios'
 import { downloadTextFile, downloadBlobFile } from '@/utils/download'
 import { zipFiles } from '@/utils/zip'
@@ -62,6 +62,8 @@ const isBlankRootContent = (): boolean => {
 }
 
 const draft = ref<FormDraft>({})
+/** 前端可见性「指定套餐」下拉数据源（打开时懒加载，权限不足静默降级为空） */
+const plans = ref<ConfigItem[]>([])
 /** 编码是否被手动修改过（手改后不再随名称自动生成） */
 const codeTouched = ref(false)
 const saving = ref(false)
@@ -88,6 +90,7 @@ watch(
     autosaveState.value = 'idle'
     codeTouched.value = Boolean(props.item?.id) // 新建允许名称自动生成编码；编辑存量视为已定
     void ensureScenarios().catch(() => {}) // 场景下拉数据源（共享缓存，失败不阻塞打开）
+    if (!plans.value.length) listConfig('plans').then((ps) => { plans.value = ps }).catch(() => {}) // 可见性「指定套餐」数据源
     applyDraft(normalize(JSON.parse(JSON.stringify(props.item || {}))))
   },
   { immediate: true }
@@ -100,6 +103,9 @@ function normalize(copy: FormDraft): FormDraft {
   d.platforms = d.platforms.filter((p) => PLATFORMS.includes(p as PlatformType))
   if (!Array.isArray(d.files)) d.files = []
   d.files = d.files.map((f) => ({ name: String(f?.name || ''), content: String(f?.content || '') }))
+  // v14：前端可见性归一化（缺省=全员可见，与 MCP 保存归一化一致；PLAN 之外的类型清空 planIds）
+  if (!d.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(d.visibility.type)) d.visibility = { type: 'PUBLIC', planIds: [] }
+  else if (d.visibility.type !== 'PLAN') d.visibility = { type: d.visibility.type, planIds: [] }
   // 空内容：新建预填标准模板（快速起步）；编辑存量保持旧占位提示
   if (!String(d.content || '').trim() || d.content === LEGACY_PLACEHOLDER) {
     d.content = isNew ? SKILL_TEMPLATE : LEGACY_PLACEHOLDER
@@ -180,7 +186,7 @@ function buildPayload(): FormDraft {
     id: currentId.value ?? d.id,
     code: d.code, name: d.name, status: d.status,
     platforms: (d.platforms || []).filter((p) => PLATFORMS.includes(p as PlatformType)),
-    description: d.description, content: d.content, scenarioId: d.scenarioId ?? null,
+    description: d.description, content: d.content, scenarioId: d.scenarioId ?? null, visibility: d.visibility,
     files: (d.files || []).map((f) => ({ name: String(f.name || '').trim(), content: String(f.content || '') }))
   }
 }
@@ -705,6 +711,21 @@ async function tryClose(): Promise<void> {
                 @change="onScenarioChange"
               >
                 <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="s.label" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="前端可见性">
+              <el-radio-group v-model="draft.visibility!.type">
+                <el-radio-button value="PUBLIC">全员可见</el-radio-button>
+                <el-radio-button value="PLAN">指定套餐</el-radio-button>
+                <el-radio-button value="PRIVATE">内部隐藏</el-radio-button>
+              </el-radio-group>
+              <el-select
+                v-if="draft.visibility!.type === 'PLAN'"
+                v-model="draft.visibility!.planIds" multiple filterable
+                style="width:100%;margin-top:8px"
+                placeholder="选择对哪些套餐用户可见（不选则不可见）"
+              >
+                <el-option v-for="p in plans" :key="p.id" :value="p.id" :label="p.name" />
               </el-select>
             </el-form-item>
           </el-form>

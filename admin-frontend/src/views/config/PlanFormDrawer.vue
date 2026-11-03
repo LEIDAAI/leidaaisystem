@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { saveConfig, type ConfigItem, type Entitlement, type FrontendPerms, FRONTEND_PERM_GROUPS, normalizeFrontendPerms } from '@/api/config'
-import EntitlementEditor from '@/components/EntitlementEditor.vue'
+import { listConfig, listKnowledgeBases, saveConfig, type ConfigItem, type FrontendPerms, type KnowledgeBase, type VisibilityConfig, FRONTEND_PERM_GROUPS, normalizeFrontendPerms } from '@/api/config'
 
 /** 表单草稿：ConfigItem 业务字段 + 版本名称/变更说明 / 引用确认（服务层审计字段） */
 export type FormDraft = Partial<ConfigItem> & { versionName?: string; note?: string; confirmReferences?: boolean; frontendPerms?: FrontendPerms }
@@ -26,10 +25,14 @@ watch(
   ([visible]) => {
     if (visible) {
       draft.value = JSON.parse(JSON.stringify(props.item || {}))
-      if (!Array.isArray(draft.value.entitlements)) draft.value.entitlements = [] as Entitlement[]
       draft.value.frontendPerms = normalizeFrontendPerms(draft.value.frontendPerms)
       if (!draft.value.planType) draft.value.planType = 'NORMAL'
+      // v12：AI 积分初始化（仅常规套餐配置，创建手工订单时默认带出；赠送套餐固定 0）
+      if (draft.value.planType === 'GIFT') draft.value.credits = 0
+      else if (draft.value.credits === undefined) draft.value.credits = 10000
       giftDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
+      entOpen.value = []
+      void loadEntitlementRefs()
       nextTick(() => formRef.value?.clearValidate())
     }
   },
@@ -45,12 +48,14 @@ watch(
   (type) => {
     if (type === 'GIFT') {
       draft.value.price = 0
+      draft.value.credits = 0
       if (Number(draft.value.durationDays) !== 0 && giftDurationMode.value === 'lifetime') {
         giftDurationMode.value = 'custom'
         draft.value.durationDays = 30
       }
-    } else if (giftDurationMode.value === 'lifetime') {
-      draft.value.durationDays = 30
+    } else {
+      if (draft.value.credits === undefined) draft.value.credits = 10000
+      if (giftDurationMode.value === 'lifetime') draft.value.durationDays = 30
     }
   }
 )
@@ -60,6 +65,56 @@ watch(giftDurationMode, (mode) => {
   if (draft.value.planType !== 'GIFT') return
   if (mode === 'lifetime') draft.value.durationDays = 0
   else if (Number(draft.value.durationDays) === 0) draft.value.durationDays = 30
+})
+
+// -------------------------------------------------- 权益绑定只读展示（v13）
+/** 权益只读行：资源名 + 依据该资源管理页可见性设置的展示标签 */
+interface EntRow { name: string; tag: string; tagType: 'success' | 'primary' | 'info' }
+const entLoading = ref(false)
+/** v13 折叠面板：默认全部收起（抽屉重开时复位），避免资源多时整块铺开过乱 */
+const entOpen = ref<string[]>([])
+const experts = ref<ConfigItem[]>([])
+const skills = ref<ConfigItem[]>([])
+const servers = ref<ConfigItem[]>([])
+const kbs = ref<KnowledgeBase[]>([])
+/** 打开抽屉时并行拉取专家/技能/MCP/知识库，按各资源侧已设置的可见性计算展示标签 */
+async function loadEntitlementRefs() {
+  entLoading.value = true
+  try {
+    const [e, s, m, k] = await Promise.all([listConfig('experts'), listConfig('skills'), listConfig('mcp/servers'), listKnowledgeBases()])
+    experts.value = e; skills.value = s; servers.value = m; kbs.value = k
+  } finally {
+    entLoading.value = false
+  }
+}
+/** 可见性 → 标签：PUBLIC 全员可见 / PLAN 命中本套餐 / 其余不可见（新建套餐视为未命中任何 PLAN） */
+function visTag(v: VisibilityConfig | undefined, planId: number | undefined): { tag: string; tagType: EntRow['tagType'] } {
+  if (!v || v.type === 'PUBLIC') return { tag: '全员可见', tagType: 'success' }
+  if (v.type === 'PLAN') {
+    if (planId !== undefined && (v.planIds || []).includes(planId)) return { tag: '本套餐可见', tagType: 'primary' }
+    return { tag: planId === undefined ? '指定套餐可见' : '指定套餐可见（不含本套餐）', tagType: 'info' }
+  }
+  return { tag: '私有（不可见）', tagType: 'info' }
+}
+/** 四个只读分组：专家 / 技能 / 知识库 / MCP 服务（仅启用资源；知识库按前端可见性展示，旧数据按 access 回退） */
+const entGroups = computed(() => {
+  const planId = draft.value.id
+  const visRows = (items: ConfigItem[]) =>
+    items.filter((i) => i.status === 1).map((i) => ({ name: i.name, ...visTag(i.visibility, planId) }))
+  const kbRows: EntRow[] = kbs.value
+    .filter((k) => k.status === 1)
+    .map((k) => {
+      const v = k.visibility || (k.access === 'PRIVATE' ? { type: 'PRIVATE' as const, planIds: [] } : { type: 'PUBLIC' as const, planIds: [] })
+      return { name: k.name, ...visTag(v, planId) }
+    })
+  /** 分组摘要：on = 对本套餐可见的项数（全员可见 / 本套餐可见 / 知识库公开），info 类标签均不计入 */
+  const group = (label: string, rows: EntRow[]) => ({ label, rows, total: rows.length, on: rows.filter((r) => r.tagType !== 'info').length })
+  return [
+    group('专家', visRows(experts.value)),
+    group('技能', visRows(skills.value)),
+    group('知识库', kbRows),
+    group('MCP 服务', visRows(servers.value))
+  ]
 })
 
 function toggleGroup(groupLabel: string, value: boolean): void {
@@ -99,6 +154,10 @@ async function save(): Promise<void> {
         <el-input-number v-model="draft.price" :min="0" :precision="2" :disabled="draft.planType === 'GIFT'" />
         <p v-if="draft.planType === 'GIFT'" class="perm-hint">赠送套餐价格固定为 0 元</p>
       </el-form-item>
+      <el-form-item v-if="draft.planType !== 'GIFT'" label="AI 积分">
+        <el-input-number v-model="draft.credits" :min="0" :step="1000" :precision="0" />
+        <p class="perm-hint">创建手工订单时默认带出该积分数量</p>
+      </el-form-item>
       <el-form-item v-if="draft.planType === 'GIFT'" label="赠送时长">
         <el-radio-group v-model="giftDurationMode">
           <el-radio value="lifetime">长期有效</el-radio>
@@ -107,7 +166,28 @@ async function save(): Promise<void> {
         <el-input-number v-if="giftDurationMode === 'custom'" v-model="draft.durationDays" :min="1" :precision="0" style="margin-top: 8px" />
       </el-form-item>
       <el-form-item v-else label="有效天数"><el-input-number v-model="draft.durationDays" :min="1" :precision="0" /></el-form-item>
-      <el-form-item label="权益绑定"><EntitlementEditor v-model="draft.entitlements!" :disabled="!canEdit" /></el-form-item>
+      <el-form-item label="权益绑定">
+        <div v-loading="entLoading" class="ent-groups">
+          <el-collapse v-model="entOpen" class="ent-collapse">
+            <el-collapse-item v-for="g in entGroups" :key="g.label" :name="g.label">
+              <template #title>
+                <span class="ent-label">{{ g.label }}</span>
+                <el-tag size="small" :type="g.on ? 'success' : 'info'" effect="plain" round class="ent-count">{{ g.on }}/{{ g.total }} 项对本套餐可见</el-tag>
+              </template>
+              <div class="ent-rows">
+                <template v-if="g.rows.length">
+                  <div v-for="r in g.rows" :key="r.name" class="ent-row">
+                    <span class="ent-name">{{ r.name }}</span>
+                    <el-tag :type="r.tagType" size="small" effect="light">{{ r.tag }}</el-tag>
+                  </div>
+                </template>
+                <span v-else class="ent-empty">暂无</span>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+          <p class="perm-hint">权益由各资源管理页设置的可见性自动决定（专家 / 技能 / MCP 按可见范围，知识库按公开 / 私有），此处仅查看、不可编辑；点击分组展开明细。</p>
+        </div>
+      </el-form-item>
       <el-form-item label="前台权限">
         <div class="perm-editor">
           <div v-for="group in FRONTEND_PERM_GROUPS" :key="group.label" class="perm-row">
@@ -139,6 +219,55 @@ async function save(): Promise<void> {
 <style scoped>
 .perm-editor {
   width: 100%;
+}
+
+.ent-groups {
+  width: 100%;
+}
+
+.ent-collapse {
+  width: 100%;
+}
+
+.ent-collapse :deep(.el-collapse-item__header) {
+  height: 36px;
+  line-height: 36px;
+}
+
+.ent-label {
+  font-weight: 600;
+  color: #606266;
+  margin-right: 8px;
+}
+
+.ent-count {
+  margin-left: 8px;
+}
+
+.ent-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 2px 0 6px;
+}
+
+.ent-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.ent-name {
+  color: #303133;
+}
+
+.ent-empty {
+  color: #c0c4cc;
+  font-size: 12px;
 }
 
 .perm-row {

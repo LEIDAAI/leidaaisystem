@@ -12,3 +12,7 @@
 .el-dropdown-menu{padding:6px}
 .el-dropdown-menu .el-dropdown-menu__item{border-radius:6px;margin:1px 0}
 .el-dropdown-menu .el-dropdown-menu__item:not(.is-disabled):hover{background:#ebf7f3}
+/* —— v0.3.2 表格横向滚动条与分页悬浮：表格限高内滚（横向条固定表格底部），分页吸底悬浮 —— */
+.page-card:has(> .pro-table){overflow:visible}
+.pro-table__footer{position:sticky;bottom:0;z-index:20;background:#fff;border-radius:0 0 10px 10px}
+.el-main .el-pagination{position:sticky;bottom:0;z-index:20;background:#fff;padding:10px 0 2px}

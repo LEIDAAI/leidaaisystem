@@ -3,13 +3,13 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { get, post } from '@/api/request'
+import { get, post, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool,
   exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
-  testModelConnection, listModels, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
+  testModelConnection, listModels, listScenarios, saveScenario, deleteScenario, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
   FRONTEND_PERM_GROUPS, normalizeFrontendPerms,
-  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType, type FrontendPerms
+  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType, type FrontendPerms, type Scenario
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { formatDateTime } from '@/utils/format'
@@ -22,6 +22,10 @@ import ModelFormDrawer from './config/ModelFormDrawer.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
 import WorkspacePreviewDrawer from './config/WorkspacePreviewDrawer.vue'
 import VersionConfirmDialog from './config/VersionConfirmDialog.vue'
+import { useTableMaxHeight } from '@/composables/useTableMax'
+
+/** 表格限高内滚：横向滚动条固定在表格底部，分页吸底悬浮 */
+const { max: tableMax, bind: bindTable } = useTableMaxHeight(96)
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -62,6 +66,126 @@ const filtered = computed(() => {
   return items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
 })
 
+// -------------------------------------------------------------- v14 专家场景分组（同技能页 v7）：平台 → 场景 两级 Tab 导航，仅专家模块显示
+const scenarios = ref<Scenario[]>([])
+/** 一级 Tab：all=全部 / ungrouped=未分组 / 平台值；选中平台后出现二级场景 Tab */
+const activeTab = ref<string>('all')
+const activeScenario = ref<number | 'all' | 'unassigned'>('all')
+
+const scenariosOf = (p: PlatformType): Scenario[] => scenarios.value.filter((s) => s.platformId === p)
+const scenarioById = (id?: number | null): Scenario | undefined => scenarios.value.find((s) => s.id === id)
+
+function switchTab(tab: string): void {
+  activeTab.value = tab
+  activeScenario.value = 'all'
+}
+
+/** 表格数据源：专家叠加两级 Tab 过滤、MCP 叠加一级平台 Tab 过滤，其余模块沿用筛选结果 */
+const viewRows = computed(() => {
+  if (module.value !== 'expert' && module.value !== 'mcp') return filtered.value
+  if (activeTab.value === 'all') return filtered.value
+  if (module.value === 'mcp') return filtered.value.filter((r) => (r.platforms || []).includes(activeTab.value as PlatformType))
+  if (activeTab.value === 'ungrouped') return filtered.value.filter((r) => !r.scenarioId)
+  const inPlat = filtered.value.filter((r) => (r.platforms || []).includes(activeTab.value as PlatformType))
+  if (activeScenario.value === 'all') return inPlat
+  if (activeScenario.value === 'unassigned') return inPlat.filter((r) => { const s = scenarioById(r.scenarioId); return !s || s.platformId !== activeTab.value })
+  return inPlat.filter((r) => r.scenarioId === activeScenario.value)
+})
+
+/** 一级 Tab 计数徽标（统计全集，与技能页一致） */
+const countOf = (tab: string): number => {
+  if (tab === 'all') return items.value.length
+  if (tab === 'ungrouped') return items.value.filter((r) => !r.scenarioId).length
+  return items.value.filter((r) => (r.platforms || []).includes(tab as PlatformType)).length
+}
+/** 二级场景 Tab 计数（相对当前平台的专家全集） */
+const subCountOf = (sid: number | 'all' | 'unassigned'): number => {
+  const inPlat = items.value.filter((r) => (r.platforms || []).includes(activeTab.value as PlatformType))
+  if (sid === 'all') return inPlat.length
+  if (sid === 'unassigned') return inPlat.filter((r) => { const s = scenarioById(r.scenarioId); return !s || s.platformId !== activeTab.value }).length
+  return inPlat.filter((r) => r.scenarioId === sid).length
+}
+const expertCountOf = (sid: number): number => items.value.filter((r) => r.scenarioId === sid).length
+
+// 加入场景分组：左右面板选择（左平台 → 右场景）
+const groupDialog = ref(false)
+const groupTarget = ref<ConfigItem | null>(null)
+const groupPick = ref<number | null>(null)
+const groupPlatform = ref<PlatformType | ''>('')
+
+function openGroupDialog(row: ConfigItem): void {
+  groupTarget.value = row
+  groupPick.value = row.scenarioId ?? null
+  // 根据当前场景反选平台（未分组则留空，右侧提示先选平台）
+  const cur = scenarioById(row.scenarioId)
+  groupPlatform.value = cur ? cur.platformId : ''
+  groupDialog.value = true
+}
+/** 切换左侧平台：原选中的场景不属于新平台时清空选择 */
+function pickGroupPlatform(p: PlatformType | ''): void {
+  groupPlatform.value = p
+  if (groupPick.value !== null) {
+    const s = scenarioById(groupPick.value)
+    if (!p || s?.platformId !== p) groupPick.value = null
+  }
+}
+
+async function applyGroup(): Promise<void> {
+  const row = groupTarget.value
+  if (!row) return
+  const next = groupPick.value === null ? undefined : groupPick.value
+  if ((row.scenarioId ?? undefined) === next) { groupDialog.value = false; return }
+  try {
+    await saveConfig(kind.value, { id: row.id, code: row.code, name: row.name, scenarioId: next ?? null })
+  } catch (e) {
+    if (e instanceof ApiError) { ElMessage.error(e.message); return }
+    throw e
+  }
+  groupDialog.value = false
+  ElMessage.success(next ? `已加入场景「${scenarioById(next)?.name || next}」` : '已移出场景（未分组）')
+  await load()
+}
+
+// 场景管理：场景按平台创建 / 删除（与技能页共用场景库）
+const sceneDlg = ref(false)
+const sceneTab = ref<PlatformType>('1688')
+const sceneName = ref('')
+const sceneDesc = ref('')
+
+async function loadScenarios(): Promise<void> {
+  scenarios.value = await listScenarios()
+}
+
+async function addScenario(): Promise<void> {
+  const name = sceneName.value.trim()
+  if (!name) { ElMessage.warning('请输入场景名称'); return }
+  try {
+    await saveScenario({ name, platformId: sceneTab.value, description: sceneDesc.value.trim() })
+  } catch (e) {
+    if (e instanceof ApiError) { ElMessage.error(e.message); return }
+    throw e
+  }
+  sceneName.value = ''
+  sceneDesc.value = ''
+  ElMessage.success(`场景「${name}」已创建`)
+  await loadScenarios()
+}
+
+async function removeScenario(s: Scenario): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除场景「${s.name}」？其下专家将变为未分组。`, '确认删除')
+  } catch { return }
+  try {
+    await deleteScenario(s.id)
+  } catch (e) {
+    if (e instanceof ApiError) { ElMessage.error(e.message); return }
+    throw e
+  }
+  ElMessage.success('场景已删除')
+  await loadScenarios()
+  await load()
+}
+
 /** 列表查询竞态守卫：kind 切换 / 连续搜索时丢弃乱序返回的旧响应，防止旧结果覆盖新结果 */
 const listGuard = createSeqGuard()
 
@@ -86,11 +210,16 @@ async function load(): Promise<void> {
     if (kind.value === 'mcp/servers') tools.value = await listTools()
     // 专家表单/列表的基础模型下拉数据源：取模型管理全量（pageSize 上限内）
     if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 200 })).list
+    // 专家场景分组：加载场景库；已删除场景的二级 Tab 回退到「全部场景」
+    if (kind.value === 'experts') {
+      scenarios.value = await listScenarios()
+      if (typeof activeScenario.value === 'number' && !scenarioById(activeScenario.value)) activeScenario.value = 'all'
+    }
   } finally {
     if (listGuard.isCurrent(seq)) loading.value = false
   }
 }
-watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; void load() }, { immediate: true })
+watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; switchTab('all'); void load() }, { immediate: true })
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 // 模型模块：status/domain 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
 watch(status, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
@@ -226,6 +355,7 @@ function onRowCommand(cmd: string, row: ConfigItem): void {
   else if (cmd === 'export') void exportJson(row)
   else if (cmd === 'discover') void action(row, 'discover')
   else if (cmd === 'health') void action(row, 'health-check')
+  else if (cmd === 'group') openGroupDialog(row)
   else if (cmd === 'remove') void remove(row)
 }
 
@@ -339,7 +469,23 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-button v-if="canEdit" type="primary" @click="edit()">{{ module === 'model' ? '新建 / 接入渠道' : '新建' }}</el-button>
       <el-button v-if="canEdit && module === 'expert'" @click="importJson()">导入预设 JSON</el-button>
     </div>
-    <el-table v-loading="loading" :data="filtered">
+    <!-- v14 专家场景分组：一级 Tab（全部 / 未分组 / 各平台）+ 选中平台后的二级场景 Tab；v15 MCP 复用一级平台 Tab（无场景层级） -->
+    <div v-if="module === 'expert' || module === 'mcp'" class="group-tabs">
+      <div class="tab-row">
+        <button class="tab-pill" :class="{ active: activeTab === 'all' }" @click="switchTab('all')">全部<span class="tab-count">{{ countOf('all') }}</span></button>
+        <button v-if="module === 'expert'" class="tab-pill" :class="{ active: activeTab === 'ungrouped' }" @click="switchTab('ungrouped')">未分组<span class="tab-count">{{ countOf('ungrouped') }}</span></button>
+        <button v-for="p in PLATFORMS" :key="p" class="tab-pill" :class="{ active: activeTab === p }" @click="switchTab(p)">
+          <span class="tab-dot" :style="{ background: platMeta(p).color }" />{{ platMeta(p).label }}<span class="tab-count">{{ countOf(p) }}</span>
+        </button>
+        <el-button v-if="canEdit && module === 'expert'" class="tab-manage" link type="primary" size="small" @click="sceneDlg = true">场景管理</el-button>
+      </div>
+      <div v-if="module === 'expert' && activeTab !== 'all' && activeTab !== 'ungrouped'" class="tab-row sub">
+        <button class="tab-pill small" :class="{ active: activeScenario === 'all' }" @click="activeScenario = 'all'">全部场景<span class="tab-count">{{ subCountOf('all') }}</span></button>
+        <button class="tab-pill small" :class="{ active: activeScenario === 'unassigned' }" @click="activeScenario = 'unassigned'">未分配场景<span class="tab-count">{{ subCountOf('unassigned') }}</span></button>
+        <button v-for="s in scenariosOf(activeTab as PlatformType)" :key="s.id" class="tab-pill small" :class="{ active: activeScenario === s.id }" @click="activeScenario = s.id">{{ s.name }}<span class="tab-count">{{ subCountOf(s.id) }}</span></button>
+      </div>
+    </div>
+    <el-table v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <el-table-column prop="name" label="名称" min-width="170">
         <template #default="{ row }">
           <template v-if="module === 'expert'">
@@ -386,10 +532,14 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert'" label="场景" min-width="140">
-        <template #default="{ row }"><el-tag v-for="t in row.tags || []" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag></template>
+      <el-table-column v-if="module === 'expert'" label="场景 / 标签" min-width="160">
+        <template #default="{ row }">
+          <el-tag v-if="scenarioById(row.scenarioId)" size="small" type="info" effect="plain" style="margin-right:4px">{{ scenarioById(row.scenarioId)?.name }}</el-tag>
+          <el-tag v-for="t in row.tags || []" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag>
+          <span v-if="!scenarioById(row.scenarioId) && !(row.tags || []).length" class="muted">—</span>
+        </template>
       </el-table-column>
-      <el-table-column v-if="module === 'expert' || module === 'mcp'" label="可见性" width="110">
+      <el-table-column v-if="['expert', 'mcp', 'skill'].includes(module)" label="可见性" width="110">
         <template #default="{ row }">{{ VISIBILITY_LABELS[row.visibility?.type] || '-' }}<small v-if="row.visibility?.type === 'PLAN'">（{{ (row.visibility?.planIds || []).length }}套餐）</small></template>
       </el-table-column>
       <el-table-column v-if="module === 'expert'" label="绑定技能 / MCP" width="115"><template #default="{ row }">{{ (row.skillIds || []).length }} / {{ (row.mcpServerIds || []).length }}</template></el-table-column>
@@ -398,7 +548,10 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'mcp'" label="工具数" width="75"><template #default="{ row }">{{ tools.filter((t) => t.serverId === row.id).length }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="地址 / 端点" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.endpoint || row.command }}{{ row.path || '' }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="健康" min-width="150"><template #default="{ row }">{{ row.healthStatus || 'UNKNOWN' }}<br /><small class="muted">{{ row.lastHealthAt }}</small></template></el-table-column>
-      <el-table-column v-if="module === 'plan'" label="类型 / 价格 / 时长" width="160"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag><br /><template v-if="row.planType === 'GIFT'"><span v-if="row.durationDays === 0">长期有效</span><span v-else>{{ row.durationDays }}天</span></template><span v-else>¥{{ row.price }} / {{ row.durationDays }}天</span><br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag></template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="价格" width="90"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">¥{{ row.price }}</span><span v-else class="muted">—</span></template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="时长" width="95"><template #default="{ row }">{{ row.planType === 'GIFT' && row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="积分" width="100"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">{{ row.credits ?? 0 }}</span><br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="前台权限" width="150">
         <template #default="{ row }">
           <template v-if="permsRestrictedCount(row.frontendPerms) === 0"><small class="muted">全部开放</small></template>
@@ -442,6 +595,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
                   <el-dropdown-item v-if="module === 'expert' || module === 'mcp'" command="history">版本历史</el-dropdown-item>
                   <el-dropdown-item v-if="module === 'expert' && auth.hasPerm('expert:export')" command="export">导出 JSON</el-dropdown-item>
                   <template v-if="canEdit">
+                    <el-dropdown-item v-if="module === 'expert'" command="group">加入场景分组</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'expert'" command="toggle" :disabled="row.status === 1 && row.isDefault">{{ row.status === 1 ? '下架' : '上架' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'model'" command="toggleModel">{{ row.status === 1 ? '停用' : '启用' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module !== 'model'" command="refresh">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-dropdown-item>
@@ -458,7 +612,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         </template>
       </el-table-column>
     </el-table>
-    <div v-if="module === 'model'" style="display:flex;justify-content:flex-end;margin-top:14px">
+    <div v-if="module === 'model'" style="display:flex;justify-content:flex-end;margin-top:14px;position:sticky;bottom:0;z-index:20;background:#fff">
       <el-pagination
         v-model:current-page="modelPage"
         v-model:page-size="modelPageSize"
@@ -495,7 +649,93 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
     :loading="toolChanging"
     @confirm="toolChange"
   />
+
+  <!-- v14 加入场景分组：左平台 → 右场景 左右面板选择（与技能页共用场景库） -->
+  <el-dialog v-model="groupDialog" title="加入场景分组" width="560px">
+    <div v-if="groupTarget" class="group-target">「{{ groupTarget.name }}」当前分组：{{ scenarioById(groupTarget.scenarioId)?.name || '未分组' }}</div>
+    <div class="group-panels">
+      <div class="group-panel group-panel-left">
+        <div class="group-panel-title">平台</div>
+        <div class="group-panel-list">
+          <div class="group-item" :class="{ active: groupPlatform === '' }" @click="pickGroupPlatform('')">未分组</div>
+          <div v-for="p in PLATFORMS" :key="p" class="group-item" :class="{ active: groupPlatform === p }" @click="pickGroupPlatform(p)">
+            <span class="group-dot" :style="{ background: platMeta(p).color }" />
+            {{ platMeta(p).label }}
+          </div>
+        </div>
+      </div>
+      <div class="group-panel group-panel-right">
+        <div class="group-panel-title">场景</div>
+        <div class="group-panel-list">
+          <template v-if="groupPlatform === ''">
+            <div class="group-item muted">请先在左侧选择平台</div>
+          </template>
+          <template v-else>
+            <div v-for="s in scenariosOf(groupPlatform)" :key="s.id" class="group-item" :class="{ active: groupPick === s.id }" @click="groupPick = s.id">
+              {{ s.name }}
+            </div>
+            <div v-if="!scenariosOf(groupPlatform).length" class="group-item muted">该平台暂无场景</div>
+          </template>
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="groupDialog = false">取消</el-button>
+      <el-button type="primary" @click="applyGroup">确定</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- v14 场景管理：场景按平台创建 / 删除，删除后其下专家变为未分组 -->
+  <el-dialog v-model="sceneDlg" title="场景管理" width="640px" @open="loadScenarios">
+    <div class="scene-add">
+      <el-select v-model="sceneTab" style="width:130px">
+        <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="platMeta(p).label" />
+      </el-select>
+      <el-input v-model="sceneName" placeholder="场景名称" style="width:170px" />
+      <el-input v-model="sceneDesc" placeholder="场景描述（可选）" style="flex:1" />
+      <el-button type="primary" @click="addScenario">添加场景</el-button>
+    </div>
+    <div class="scene-list">
+      <div v-for="s in scenariosOf(sceneTab)" :key="s.id" class="scene-row">
+        <span class="scene-name">{{ s.name }}</span>
+        <span class="scene-desc">{{ s.description || '—' }}</span>
+        <span class="scene-count">{{ expertCountOf(s.id) }} 个专家</span>
+        <el-button v-if="canEdit" link type="danger" size="small" @click="removeScenario(s)">删除</el-button>
+      </div>
+      <el-empty v-if="!scenariosOf(sceneTab).length" description="该平台暂无场景" :image-size="60" />
+    </div>
+  </el-dialog>
 </template>
 <style scoped>
 .row-actions { display: flex; align-items: center; white-space: nowrap; }
+/* v14 分组导航：一级平台 Tab + 二级场景 Tab（胶囊样式，同技能页） */
+.group-tabs { margin: 4px 0 12px; }
+.tab-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tab-row.sub { margin-top: 8px; padding-left: 4px; }
+.tab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border: 1px solid var(--el-border-color); border-radius: 999px; background: var(--el-bg-color); color: var(--el-text-color-regular); font-size: 13px; line-height: 1.2; cursor: pointer; transition: all 0.15s; }
+.tab-pill:hover { color: var(--el-color-primary); border-color: var(--el-color-primary-light-5); }
+.tab-pill.active { background: var(--el-color-primary); border-color: var(--el-color-primary); color: #fff; font-weight: 600; }
+.tab-pill.small { padding: 3px 10px; font-size: 12px; background: var(--el-fill-color-lighter); border-color: transparent; }
+.tab-pill.small.active { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
+.tab-count { font-size: 11px; opacity: 0.75; }
+.tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.tab-manage { margin-left: auto; }
+.group-target { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 10px; }
+.group-panels { display: flex; gap: 0; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; overflow: hidden; min-height: 280px; max-height: 360px; }
+.group-panel { display: flex; flex-direction: column; }
+.group-panel-left { width: 160px; border-right: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-lighter); }
+.group-panel-right { flex: 1; min-width: 0; }
+.group-panel-title { padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--el-text-color-secondary); border-bottom: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color); }
+.group-panel-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+.group-item { padding: 7px 12px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.12s; }
+.group-item:hover { background: var(--el-fill-color-light); }
+.group-item.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
+.group-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+/* 场景管理对话框 */
+.scene-add { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.scene-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+.scene-row { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--el-border-color-extra-light); font-size: 13px; }
+.scene-name { font-weight: 600; flex: 0 0 140px; }
+.scene-desc { flex: 1; color: var(--el-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-count { flex: 0 0 auto; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>

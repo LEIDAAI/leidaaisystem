@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="T">
 import { onMounted, shallowRef, ref } from 'vue'
 import type { PageData, ProTableHandle } from '@/api/types'
+import { useTableMaxHeight } from '@/composables/useTableMax'
 
 interface Props {
   /** 数据加载函数：入参为分页与筛选参数，返回契约分页结构 */
@@ -60,6 +61,9 @@ function onSizeChange(): void {
 
 defineExpose<ProTableHandle>({ search, refresh })
 
+/** 表格限高内滚：横向滚动条固定在表格底部始终可见可拖 */
+const { max: tableMax, bind: bindTable } = useTableMaxHeight()
+
 onMounted(() => {
   if (props.immediate) void load()
 })
@@ -70,7 +74,7 @@ onMounted(() => {
     <div v-if="$slots.filter" class="pro-table__filter">
       <slot name="filter" />
     </div>
-    <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的数据">
+    <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的数据" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <slot />
     </el-table>
     <div class="pro-table__footer">

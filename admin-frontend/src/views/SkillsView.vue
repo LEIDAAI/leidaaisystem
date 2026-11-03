@@ -14,7 +14,7 @@ import { get, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, skillStats, exportConfigJson, cloneSkill,
   listScenarios, saveScenario, deleteScenario, PLATFORMS, platformMeta,
-  type ConfigItem, type PlatformType, type Scenario
+  type ConfigItem, type PlatformType, type Scenario, type VisibilityConfig
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
@@ -78,6 +78,14 @@ const activeScenario = ref<number | 'all' | 'unassigned'>('all')
 
 const scenariosOf = (p: PlatformType): Scenario[] => scenarios.value.filter((s) => s.platformId === p)
 const scenarioById = (id?: number | null): Scenario | undefined => scenarios.value.find((s) => s.id === id)
+
+/** v14：行内可见性标签（缺省视为全员可见，与保存归一化一致） */
+function visTagOf(v: VisibilityConfig | undefined): { label: string; type: 'success' | 'primary' | 'warning' } {
+  const eff = v || { type: 'PUBLIC' as const, planIds: [] }
+  if (eff.type === 'PUBLIC') return { label: '全员可见', type: 'success' }
+  if (eff.type === 'PLAN') return { label: `指定套餐（${eff.planIds?.length || 0} 个）`, type: 'primary' }
+  return { label: '内部隐藏', type: 'warning' }
+}
 
 function switchTab(tab: string): void {
   activeTab.value = tab
@@ -431,6 +439,7 @@ function boundExpertCount(row: ConfigItem): number {
               :style="{ color: platMetaOf(p).color, background: platMetaOf(p).bg, borderColor: platMetaOf(p).border }"
             >{{ platMetaOf(p).label }}</el-tag>
             <el-tag v-if="scenarioById(row.scenarioId)" size="small" type="info" effect="plain">{{ scenarioById(row.scenarioId)?.name }}</el-tag>
+            <el-tag size="small" :type="visTagOf(row.visibility).type">{{ visTagOf(row.visibility).label }}</el-tag>
           </div>
           <div class="row-desc">{{ row.description || '—' }}</div>
         </div>

@@ -116,7 +116,7 @@ export function seedExtensions(): Extensions {
     {
       ...base, id: 1, code: 'product-selection-assistant', name: '1688分销选品',
       description: '面向 1688 分销场景的选品助手：关键词分析、竞品监控、类目趋势与利润测算，一键生成选品报告。',
-      avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'],
+      avatarUrl: '', baseModel: 'glm-5.3', platforms: ['1688'], scenarioId: 1,
       systemPrompt: '你是1688分销选品助手，请基于可验证的数据回答。先理解选品意图，再路由到合适技能；调用工具前先确认参数契约；输出结论必须附带数据来源与校验结果。',
       skillIds: [11, 12, 13, 14, 15, 16, 17], mcpServerIds: [1], mcpToolIds: [21],
       suggestedQuestions: ['帮我分析"收纳盒"关键词的竞争度', '对比近30天竞品价格并测算分销毛利', '生成一份厨房收纳类目的选品报告'],
@@ -132,7 +132,7 @@ export function seedExtensions(): Extensions {
     {
       ...base, id: 2, code: 'cross-border-selection', name: '跨境电商选品',
       description: '面向跨境电商（亚马逊/TikTok）场景的选品助手，结合平台榜单与趋势数据。',
-      avatarUrl: '', baseModel: 'deepseek-v3', platforms: ['AMAZON', 'TEMU'],
+      avatarUrl: '', baseModel: 'deepseek-v3', platforms: ['AMAZON', 'TEMU'], scenarioId: 4,
       systemPrompt: '你是跨境电商选品助手，请基于可验证的数据回答，注意不同站点的价格与合规差异。',
       skillIds: [12, 14, 16], mcpServerIds: [1, 3, 4],
       suggestedQuestions: ['美国站家居类目最近什么品好卖？'],
@@ -526,7 +526,7 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
   ]
   return {
     models: seedLlmModels(),
-    plans: [...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, entitlements:[], planType:'NORMAL' as const })), { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }],
+    plans: [...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, credits:[0,10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const })), { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }],
     experts,
     skills,
     servers,
@@ -541,7 +541,19 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
       { id: 25, serverId: 4, name: 'amazon_sales_estimate', enabled: true },
       { id: 26, serverId: 5, name: 'echotik_video_search', enabled: true }
     ],
-    chats: Array.from({ length:16 },(_,i) => { const createdAt = new Date(Date.now()-i*86400000).toISOString(); return { id:i+1,userId:i%8+1,expertId:i%3+1,createdAt,deletedAt:null,deleteReason:'',messages:[{ role:'user',content:`演示选品咨询 ${i+1}，联系 demo${i}@example.com 手机13800138000`,createdAt },{ role:'assistant',content:'这是 Mock 演示回复，请核实商品数据。',createdAt }] } }),
+    chats: Array.from({ length:24 },(_,i) => {
+      const base = Date.now()-(i*37+(i%4)*5)*3600000
+      const t=(min:number)=>new Date(base+min*60000).toISOString()
+      const topic=CHAT_TOPICS[i%CHAT_TOPICS.length]
+      const chat: Chat = { id:i+1,userId:i%8+1,expertId:i%3+1,createdAt:t(0),deletedAt:i===7?new Date(Date.now()-86400000).toISOString():null,deleteReason:i===7?'用户申请删除，消息含个人联系方式':'',messages:[
+        { role:'user',content:`${topic}，预算 50-200 元，帮我分析下竞争和利润，联系 demo${i}@example.com 手机13800138000`,createdAt:t(0) },
+        { role:'assistant',content:`收到，开始分析「${topic}」：先按平台检索候选商品，再做价格带与竞争度评估。`,createdAt:t(1) },
+        { role:'assistant',content:'候选商品已检索完成，正在进行销量趋势与毛利率测算…',createdAt:t(2) },
+        { role:'assistant',content:'分析完成：候选对比表格与选品分析报告已生成，可在会话详情中查看。',createdAt:t(4) }
+      ] }
+      appendAskRounds(chat) // v13：每个种子会话含 2 轮问话（第 2 轮为用户追问）
+      return chat
+    }),
     promptHistory:Object.fromEntries(experts.map(e => [e.id,[{ version:1, systemPrompt:e.systemPrompt!,createdAt:e.updatedAt }]])),
     skillCalls:Array.from({ length:24 },(_,i) => ({ skillId:i%2+11, success:i%5!==0,createdAt:new Date(Date.now()-i*86400000).toISOString() })),
     expertVersions: Object.fromEntries(experts.map(e => [e.id, [{ version: e.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: e.updatedAt, snapshot: structuredClone(e) }]])),
@@ -693,4 +705,75 @@ export function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact)
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !/token|password|secret|credential|authorization|authConfig|execConfig|systemPrompt|messages/i.test(k)).map(([k,v])=>[k,redact(v)]))
   return value
+}
+
+// -------------------------------------------------------------- 对话分析产物（对话管理演示）
+/** 对话话题种子（每次会话 = 用户发起的一次选品咨询） */
+const CHAT_TOPICS = ['亚马逊厨房硅胶厨具套装选品','Ozon 冬季车载防雪挡风罩选品','TikTok 宠物自动喂食器选品','1688 家用迷你缝纫机选品','Temu 折叠衣物收纳箱选品','虾皮直播补光灯手机支架选品','亚马逊露营折叠桌椅选品','Ozon 车载无线吸尘器选品']
+
+export interface ChatAnalysisStep { title:string;detail:string;tools:string[];durationSec:number;at:string }
+export interface ChatAnalysisTable { title:string;columns:string[];rows:string[][] }
+export interface ChatAnalysis { steps:ChatAnalysisStep[];table:ChatAnalysisTable;reportHtml:string }
+
+// v13：追问文案模板（按会话 ID 轮换，确定性生成；种子与存量迁移共用）
+const FOLLOW_ASKS: Array<(topic: string) => string> = [
+  topic => `再帮我看下 ${topic} 里 100 元以内的款，把销量前 3 的利润对比一下`,
+  topic => `${topic} 这种品换到 Ozon 平台还卖得动吗？帮我按新平台再评估一轮`,
+  topic => `${topic} 这批款如果统一做促销价，毛利率还能保住多少？帮我重算一版对比`
+]
+
+/** 追加一轮用户追问（1 条 user + 2 条 assistant）到会话末尾；幂等：已有 ≥2 条用户消息则跳过 */
+export function appendAskRounds(c: Chat): void {
+  if (c.messages.filter(m => m.role === 'user').length >= 2) return
+  const topic = (c.messages.find(m => m.role === 'user')?.content || '选品咨询').split('，')[0].split('。')[0]
+  const ask = FOLLOW_ASKS[c.id % FOLLOW_ASKS.length](topic)
+  const lastAt = c.messages[c.messages.length - 1]?.createdAt || c.createdAt
+  const at = (min: number) => new Date(new Date(lastAt).getTime() + min * 60000).toISOString()
+  c.messages.push(
+    { role: 'user', content: ask, createdAt: at(6) },
+    { role: 'assistant', content: `收到追问，针对「${topic}」补充条件重新检索并测算中…`, createdAt: at(7) },
+    { role: 'assistant', content: '补充分析完成：新一轮候选对比与结论已生成，可在会话详情中查看。', createdAt: at(9) }
+  )
+}
+
+/** 分析产物公共生成（mock：模拟 Agent 选品分析产物，不落库）；seedBase 决定随机序列，topic 决定需求描述 */
+function genChatAnalysis(c: Chat, topic: string, seedBase: number, expertName?: string): ChatAnalysis {
+  const rand=(n:number)=>{ const x=Math.abs(Math.sin(seedBase+n*13))*10000; return x-Math.floor(x) }
+  const hitCount=12+Math.floor(rand(1)*29)
+  const stepAt=(min:number)=>new Date(new Date(c.createdAt).getTime()+min*60000).toISOString()
+  const steps:ChatAnalysisStep[]=[
+    { title:'解析需求', detail:`提取品类「${topic}」的关键词与筛选条件：预算区间、目标平台、最低毛利率 ≥ 18%。`, tools:['意图解析'], durationSec:3+Math.floor(rand(2)*5), at:stepAt(0) },
+    { title:'检索候选商品', detail:`并行调用商品搜索与趋势接口，命中 ${hitCount} 个候选，去重与黑名单过滤后保留 8 个进入分析。`, tools:['ali_product_search','keyword_trend'], durationSec:8+Math.floor(rand(3)*22), at:stepAt(1) },
+    { title:'数据分析', detail:'对候选商品计算价格带分布、月销量趋势、竞品集中度与预估毛利，输出推荐排序。', tools:['sales_estimate','bsr_ranking'], durationSec:15+Math.floor(rand(4)*30), at:stepAt(2) },
+    { title:'生成报告', detail:'汇总分析结论，生成候选对比表格与 HTML 选品分析报告。', tools:['report_generator'], durationSec:4+Math.floor(rand(5)*6), at:stepAt(3) }
+  ]
+  const names=['硅胶厨具三件套','折叠收纳箱（3 件装）','车载防雪挡风罩','宠物自动喂食器','迷你缝纫机家用款']
+  const platforms=['1688','OZON','AMAZON','TEMU','TIKTOK']
+  const rows=names.map((n,idx)=>{
+    const price=(28+rand(10+idx)*170).toFixed(2)
+    const sales=(300+Math.floor(rand(20+idx)*8700)).toLocaleString()
+    const comp=['低','中','高'][Math.floor(rand(30+idx)*3)]
+    const margin=(18+rand(40+idx)*33).toFixed(1)
+    const score=(6.5+rand(50+idx)*3.4).toFixed(1)
+    return [n,platforms[Math.floor(rand(60+idx)*5)],`¥${price}`,`${sales} 件`,comp,`${margin}%`,score]
+  }).sort((a,b)=>Number(b[6])-Number(a[6])).map((r,i)=>[String(i+1),...r])
+  const table:ChatAnalysisTable={ title:'候选商品对比', columns:['排名','商品','平台','参考价','月销量','竞争度','预估毛利率','推荐指数'], rows }
+  const best=rows[0]
+  const tr=rows.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')
+  const li=rows.slice(0,3).map((r,i)=>`<li><b>TOP${i+1} ${r[1]}</b>（${r[2]}）：参考价 ${r[3]}，月销 ${r[4]}，竞争度${r[5]}，预估毛利率 ${r[6]}，推荐指数 ${r[7]}。</li>`).join('')
+  const reportHtml=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>选品分析报告 · ${topic}</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:860px;margin:32px auto;color:#262626;line-height:1.7;padding:0 20px}h1{font-size:22px;border-bottom:3px solid #2563eb;padding-bottom:12px}.meta{color:#8c8c8c;font-size:13px}h2{font-size:17px;margin-top:28px;color:#1d4ed8}table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}th{background:#eff6ff;color:#1e40af}th,td{border:1px solid #d9d9d9;padding:8px 10px;text-align:center}.tag{display:inline-block;background:#eff6ff;color:#1d4ed8;border-radius:4px;padding:2px 8px;font-size:12px;margin-right:8px}ul{padding-left:20px}footer{margin-top:32px;color:#8c8c8c;font-size:12px;border-top:1px dashed #d9d9d9;padding-top:12px}</style></head><body><h1>选品分析报告</h1><p class="meta">会话 #${c.id} · 专家 ${expertName||'—'} · ${c.createdAt.slice(0,16).replace('T',' ')} · <span class="tag">Mock 演示数据</span></p><h2>一、需求概述</h2><p>用户发起「${topic}」选品咨询：要求在预算区间内筛选竞争度适中、毛利率不低于 18% 的候选商品，并给出推荐排序。</p><h2>二、候选商品对比</h2><table><thead><tr>${table.columns.map(col=>`<th>${col}</th>`).join('')}</tr></thead><tbody>${tr}</tbody></table><h2>三、分析结论</h2><ul>${li}</ul><p>综合推荐：<b>${best[1]}</b>（推荐指数 ${best[7]}），建议先小批量测款，根据转化数据决定是否放量。</p><footer>店雷达 AI 生成 · 数据为 Mock 演示，实盘决策请以真实数据核实</footer></body></html>`
+  return { steps, table, reportHtml }
+}
+
+/** 会话级分析（行右侧「查看分析」/ 三级页 = 该会话所有问话的分析结果）：话题 = 全部问话拼接 */
+export function buildChatAnalysis(c: Chat, expertName?: string): ChatAnalysis {
+  const topics = c.messages.filter(m => m.role === 'user').map(m => m.content.split('，')[0].split('。')[0])
+  return genChatAnalysis(c, topics.join('；') || '选品咨询', c.id * 97, expertName)
+}
+
+/** 单问话分析（展开区每轮问话的「查看分析」）：话题 = 第 askIdx 条用户消息 */
+export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): ChatAnalysis {
+  const ask = c.messages.filter(m => m.role === 'user')[askIdx]
+  const topic = (ask?.content || '选品咨询').split('，')[0].split('。')[0]
+  return genChatAnalysis(c, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
 }

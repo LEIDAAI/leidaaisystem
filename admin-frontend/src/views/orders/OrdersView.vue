@@ -134,7 +134,17 @@ const giftPlans = computed(() => plans.value.filter((p) => p.planType === 'GIFT'
 
 const manualVisible = ref(false)
 const manualSubmitting = ref(false)
-const manualForm = reactive({ phone: '', planId: null as number | null, credits: 10000, amount: 0 })
+const manualForm = reactive({ phone: '', planId: null as number | null, credits: 0, amount: 0 })
+const manualPlanSelected = computed(() => normalPlans.value.find((p) => p.id === manualForm.planId) || null)
+/** v12 手工订单积分联动：选择套餐后默认带出该套餐配置的 AI 积分（可微调） */
+watch(
+  () => manualForm.planId,
+  () => {
+    const plan = manualPlanSelected.value
+    if (!plan) return
+    manualForm.credits = Number(plan.credits ?? 0)
+  }
+)
 
 async function openManual() {
   await loadPlans()
@@ -144,7 +154,7 @@ async function openManual() {
   }
   manualForm.phone = ''
   manualForm.planId = null
-  manualForm.credits = 10000
+  manualForm.credits = 0
   manualForm.amount = 0
   manualVisible.value = true
 }

@@ -4,6 +4,7 @@
  * 左栏「人设与回复逻辑」；中栏手风琴分组（基础信息/平台/场景/模型/技能/MCP/知识库/标题/简介/介绍/开场白/核心能力/参考提示词/问题建议/能力开关）；
  * v10：标签选择升级为「场景选择」——下拉选历史场景 / 输入新名称自动注册进场景库（归属首个所选平台），对齐前台平台→场景两级。
  * v11：中栏富文本字段（专家标题/专家介绍/开场白）收起为一行摘要预览 +「编辑/删除」按钮，编辑在弹窗内唤起富文本编辑器（RichTextRow），排版更紧凑。
+ * v12：专家参考提示词（Markdown 契约列表字段）同样收起为一行摘要 + 弹窗编辑（RichTextRow markdown/removable 模式），删除=移除该项。
  * 右栏对话预览（ExpertChatPreview 复用）。
  * 交互约定：全屏弹窗禁止点空白关闭；关闭按钮先询问；支持「边编辑边自动保存」（skipVersion 不进版本历史，首次发布后启用）。
  */
@@ -354,9 +355,9 @@ async function tryClose(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- 三栏拖拽调整列宽
-/** 默认列宽（中间更宽，两侧收窄） */
-const DEFAULT_LEFT = 260
-const DEFAULT_RIGHT = 300
+/** 默认列宽（中间更宽，两侧收窄；窄屏初始化更小的默认值，拖拽后以内联样式为准） */
+const DEFAULT_LEFT = window.innerWidth <= 1280 ? 220 : window.innerWidth <= 1440 ? 240 : 260
+const DEFAULT_RIGHT = window.innerWidth <= 1280 ? 260 : window.innerWidth <= 1440 ? 280 : 300
 const MIN_LEFT = 200
 const MAX_LEFT = 480
 const MIN_RIGHT = 240
@@ -600,8 +601,7 @@ onBeforeUnmount(() => {
           <el-collapse-item name="refprompts">
             <template #title><span class="sec-title">专家参考提示词 <small class="muted">（前台紫色高亮框，可一键填入输入框）</small></span></template>
             <div v-for="(p, i) in draft.referencePrompts" :key="i" class="row-list">
-              <YuqueEditor :model-value="p" :can-edit="canEdit" :min-height="96" placeholder="如：帮我分析最近 7 天 1688 家居类目的热销趋势" @update:model-value="draft.referencePrompts![i] = $event" />
-              <el-button :disabled="!canEdit" link type="danger" @click="draft.referencePrompts!.splice(i, 1)">删除</el-button>
+              <RichTextRow :model-value="p" markdown removable title="参考提示词" placeholder="如：帮我分析最近 7 天 1688 家居类目的热销趋势" :can-edit="canEdit" @update:model-value="draft.referencePrompts![i] = $event" @remove="draft.referencePrompts!.splice(i, 1)" />
             </div>
             <el-button size="small" :disabled="!canEdit" @click="draft.referencePrompts!.push('')">添加参考提示词</el-button>
           </el-collapse-item>
@@ -707,9 +707,6 @@ onBeforeUnmount(() => {
 .resize-handle:hover, .resize-handle.active { background: var(--el-color-primary-light-9); }
 .resize-handle-line { width: 2px; height: 32px; border-radius: 1px; background: var(--el-border-color); transition: background 0.15s, height 0.15s; }
 .resize-handle:hover .resize-handle-line, .resize-handle.active .resize-handle-line { background: var(--el-color-primary); height: 48px; }
-/* 窄屏压缩左右栏宽度，避免中栏（提示词编辑区）被挤成一条竖线 */
-@media (max-width: 1440px) { .col-left { flex-basis: 240px !important; } .col-right { flex-basis: 280px !important; } }
-@media (max-width: 1280px) { .col-left { flex-basis: 220px !important; } .col-right { flex-basis: 260px !important; } }
 .sec-title { font-size: 14px; font-weight: 600; }
 .plat-badge { font-size: 12px; padding: 0 8px; border-radius: 4px; border: 1px solid; line-height: 20px; }
 .chip-box { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

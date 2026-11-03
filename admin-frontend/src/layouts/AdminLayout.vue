@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, MagicStick, Document, Reading } from '@element-plus/icons-vue'
+import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, Collection, Cpu, MagicStick, Reading } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -20,8 +20,7 @@ const menus = [
   { path: '/admins', title: '管理员账号', perm: 'admin:manage', icon: Avatar },
   { path: '/roles', title: '角色与权限', perm: 'role:manage', icon: Lock },
   { path: '/plans', title: '套餐管理', perm: 'plan:view', icon: Collection },
-  { path: '/chats', title: '对话管理', perm: 'chat:view', icon: ChatDotRound },
-  { path: '/audit-logs', title: '审计日志', perm: 'audit:view', icon: Document }
+  { path: '/chats', title: '对话管理', perm: 'chat:view', icon: ChatDotRound }
 ]
 const visibleMenus = computed(() => menus.filter((m) => auth.hasPerm(m.perm)))
 const displayName = computed(() => auth.admin?.displayName || auth.admin?.username || '')

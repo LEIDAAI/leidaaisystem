@@ -7,6 +7,7 @@
  *   （语雀式表格右键菜单、列宽拖拽、图片、任务列表）；旧 Markdown 文档自动转 HTML 兼容
  * 删除知识库遇 409 专家引用确认后携带 confirmReferences 重试。
  * v10：新建/编辑支持「场景」多选——下拉选历史场景 / 输入新名称自动注册进场景库（归属所选平台），对齐前台平台→场景两级；列表行展示场景标签。
+ * v15：详情文档行新增显式「编辑」入口，点击直接进入富文本编辑（原先须先点行进预览再切换，入口不可见）。
  */
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -14,9 +15,9 @@ import { Document as DocumentIcon } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/api/request'
 import {
-  listKnowledgeBases, saveKnowledgeBase, deleteKnowledgeBase, setKnowledgeBaseStatus,
+  listConfig, listKnowledgeBases, saveKnowledgeBase, deleteKnowledgeBase, setKnowledgeBaseStatus,
   listKnowledgeFiles, saveKnowledgeFile, deleteKnowledgeFile,
-  PLATFORMS, platformMeta, type KnowledgeBase, type KnowledgeFile, type PlatformType
+  PLATFORMS, platformMeta, type ConfigItem, type KnowledgeBase, type KnowledgeFile, type PlatformType, type VisibilityConfig
 } from '@/api/config'
 import { formatSize } from '@/api/files'
 import { ensureScenario, ensureScenarios, orderedScenarioOptions, scenarioList } from '@/utils/scenarios'
@@ -36,8 +37,12 @@ const current = ref<KnowledgeBase | null>(null)
 function platMetaOf(p?: string): { label: string; color: string; bg: string; border: string } {
   return p ? platformMeta(p) : { label: '通用', color: '#909399', bg: '#f4f4f5', border: '#e9e9eb' }
 }
-function accessLabel(a?: string): string {
-  return a === 'PRIVATE' ? '私有' : '公开'
+/** 前端可见性标签（v14 三段设置，与专家/MCP 同款；旧数据缺省 visibility 时按 access 回退） */
+function visTagOf(v: VisibilityConfig | undefined, access?: string): { label: string; type: 'success' | 'primary' | 'warning' } {
+  const eff = v || (access === 'PRIVATE' ? { type: 'PRIVATE' as const, planIds: [] } : { type: 'PUBLIC' as const, planIds: [] })
+  if (eff.type === 'PUBLIC') return { label: '全员可见', type: 'success' }
+  if (eff.type === 'PLAN') return { label: `指定套餐（${eff.planIds?.length || 0} 个）`, type: 'primary' }
+  return { label: '内部隐藏', type: 'warning' }
 }
 
 // -------------------------------------------------------------- 列表视图
@@ -65,6 +70,16 @@ void load()
 // -------------------------------------------------------------- 新建 / 编辑
 const dlg = ref(false)
 const form = ref<Partial<KnowledgeBase>>({})
+/** 可见性「指定套餐」下拉数据源（无 plan:view 权限时静默为空） */
+const planOptions = ref<ConfigItem[]>([])
+void listConfig('plans').then((l) => { planOptions.value = l }).catch(() => {})
+/** 可见性说明文案 */
+const visTip = computed(() => {
+  const t = form.value.visibility?.type
+  if (t === 'PLAN') return '指定套餐：仅所选套餐用户可见（不选则均不可见）。'
+  if (t === 'PRIVATE') return '内部隐藏：仅管理后台可用，前台用户不可见。'
+  return '全员可见：拥有访问权限的所有用户均可使用。'
+})
 const formRef = ref<FormInstance>()
 const rules: FormRules = {
   name: [{ required: true, whitespace: true, message: '请输入知识库名称', trigger: 'blur' }]
@@ -72,8 +87,8 @@ const rules: FormRules = {
 
 function edit(item?: KnowledgeBase): void {
   form.value = item
-    ? { ...item, tags: [...(item.tags || [])] }
-    : { name: '', description: '', platform: undefined, access: 'PUBLIC', status: 1, tags: [] }
+    ? { ...item, tags: [...(item.tags || [])], visibility: item.visibility || (item.access === 'PRIVATE' ? { type: 'PRIVATE', planIds: [] } : { type: 'PUBLIC', planIds: [] }) }
+    : { name: '', description: '', platform: undefined, access: 'PUBLIC', status: 1, tags: [], visibility: { type: 'PUBLIC', planIds: [] } }
   void ensureScenarios().catch(() => {}) // 场景下拉数据源（共享缓存）
   dlg.value = true
 }
@@ -82,7 +97,8 @@ async function submit(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
   try {
-    await saveKnowledgeBase({ ...form.value, access: form.value.access === 'PRIVATE' ? 'PRIVATE' : 'PUBLIC' })
+    const vis = form.value.visibility || { type: 'PUBLIC', planIds: [] }
+    await saveKnowledgeBase({ ...form.value, visibility: { ...vis, planIds: vis.type === 'PLAN' ? (vis.planIds || []) : [] }, access: vis.type === 'PRIVATE' ? 'PRIVATE' : 'PUBLIC' })
   } catch (e) {
     if (e instanceof ApiError) { ElMessage.error(e.message); return }
     throw e
@@ -281,6 +297,12 @@ function switchFile(f: KnowledgeFile): void {
   fileMode.value = 'preview'
 }
 
+/** 文档行「编辑」快捷入口：直接进入富文本编辑，无需先进预览再切换（v15） */
+function editFile(f: KnowledgeFile): void {
+  openFile(f)
+  startEdit()
+}
+
 function startEdit(): void {
   if (!currentFile.value) return
   editName.value = currentFile.value.name
@@ -356,7 +378,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
               :style="{ color: platMetaOf(row.platform).color, background: platMetaOf(row.platform).bg, borderColor: platMetaOf(row.platform).border }"
             >{{ platMetaOf(row.platform).label }}</el-tag>
             <el-tag v-for="t in row.tags || []" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
-            <el-tag size="small" :type="row.access === 'PRIVATE' ? 'warning' : 'success'" effect="plain">{{ accessLabel(row.access) }}</el-tag>
+            <el-tag size="small" :type="visTagOf(row.visibility, row.access).type" effect="plain">{{ visTagOf(row.visibility, row.access).label }}</el-tag>
           </div>
           <div class="row-desc">{{ row.description || '—' }}</div>
         </div>
@@ -387,7 +409,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
             effect="plain"
             :style="{ color: platMetaOf(current?.platform).color, background: platMetaOf(current?.platform).bg, borderColor: platMetaOf(current?.platform).border }"
           >{{ platMetaOf(current?.platform).label }}</el-tag>
-          <el-tag size="small" :type="current?.access === 'PRIVATE' ? 'warning' : 'success'" effect="plain">{{ accessLabel(current?.access) }}</el-tag>
+          <el-tag size="small" :type="visTagOf(current?.visibility, current?.access).type" effect="plain">{{ visTagOf(current?.visibility, current?.access).label }}</el-tag>
         </div>
         <div class="kb-desc">{{ current?.description || '—' }}</div>
       </div>
@@ -413,6 +435,9 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
         <span class="doc-name">{{ f.name }}</span>
         <span class="muted doc-date">{{ formatDateTime(f.updatedAt) }}</span>
         <span class="muted doc-size">{{ formatSize(f.size) }}</span>
+        <div class="doc-actions" @click.stop>
+          <el-button v-if="canEdit" link type="primary" @click="editFile(f)">编辑</el-button>
+        </div>
       </div>
       <el-empty
         v-if="!filteredFiles.length && !loadingFiles"
@@ -485,13 +510,22 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
         <div class="muted" style="font-size:12px;line-height:1.6">对齐前台「平台 → 场景」两级筛选；输入新名称回车自动创建并归入所选平台。</div>
       </el-form-item>
       <el-form-item label="描述"><el-input v-model="form.description" type="textarea" :rows="3" placeholder="知识库用途说明（可选）" /></el-form-item>
-      <el-form-item label="访问权限">
+      <el-form-item label="前端可见性">
         <div class="access-group">
-          <el-radio-group v-model="form.access">
-            <el-radio value="PUBLIC">公开</el-radio>
-            <el-radio value="PRIVATE">私有</el-radio>
+          <el-radio-group v-model="form.visibility!.type">
+            <el-radio-button value="PUBLIC">全员可见</el-radio-button>
+            <el-radio-button value="PLAN">指定套餐</el-radio-button>
+            <el-radio-button value="PRIVATE">内部隐藏</el-radio-button>
           </el-radio-group>
-          <div class="muted access-tip">{{ form.access === 'PRIVATE' ? '私有：只有拥有权限的用户和组可以使用。' : '公开：拥有访问权限的所有用户均可使用。' }}</div>
+          <el-select
+            v-if="form.visibility!.type === 'PLAN'"
+            v-model="form.visibility!.planIds" multiple filterable
+            style="width:100%;margin-top:8px"
+            placeholder="选择对哪些套餐用户可见（不选则不可见）"
+          >
+            <el-option v-for="p in planOptions" :key="p.id" :value="p.id" :label="p.name" />
+          </el-select>
+          <div class="muted access-tip">{{ visTip }}</div>
         </div>
       </el-form-item>
     </el-form>
@@ -542,6 +576,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
 .doc-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-date { flex: 0 0 150px; font-size: 12px; }
 .doc-size { flex: 0 0 80px; text-align: right; font-size: 12px; }
+.doc-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; white-space: nowrap; }
 
 /* 预览视图 */
 .preview-layout { display: flex; gap: 16px; min-height: 480px; }

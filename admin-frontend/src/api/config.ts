@@ -95,6 +95,8 @@ export interface ConfigItem {
   price?: number; durationDays?: number; entitlements?: Entitlement[]; salesCount?: number
   /** 套餐类型（v11）：NORMAL 常规 / GIFT 赠送（赠送订单只能选 GIFT 套餐；GIFT 价格必须为 0、时长支持长期有效 durationDays=0） */
   planType?: 'NORMAL' | 'GIFT'
+  /** 套餐 AI 积分数量（v12）：仅常规套餐配置，创建手工订单时默认带出；赠送套餐固定 0 */
+  credits?: number
   /** 套餐前台权限（v8）：控制该套餐用户在前台工作台能否创建/查看 套餐、技能、MCP；未配置视为全部允许 */
   frontendPerms?: FrontendPerms
   // ---- 专家（助手预设）字段（附录 12.1）----
@@ -157,8 +159,10 @@ export interface KnowledgeBase {
   name: string
   description?: string
   platform?: PlatformType
-  /** 访问权限：私有=只有拥有权限的用户和组可以使用；公开=全员可用（缺省公开） */
+  /** 访问权限（由 visibility 派生，兼容旧消费方）：PRIVATE=内部隐藏，其余公开 */
   access?: 'PRIVATE' | 'PUBLIC'
+  /** 前端可见性（v14，与专家/MCP 同款三段设置）：全员可见/指定套餐/内部隐藏；缺省视为全员可见 */
+  visibility?: VisibilityConfig
   /** 场景标签（v10）：与场景库联动，对齐前台「平台 → 场景」两级筛选 */
   tags?: string[]
   /** 文档数量（按知识库文档表实时统计） */

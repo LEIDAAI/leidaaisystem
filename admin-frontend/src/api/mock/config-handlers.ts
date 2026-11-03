@@ -25,6 +25,15 @@ export function validateEntitlements(value:unknown, ErrorType:Services['error'])
     return { ...resource, quotaLimit:v.quotaLimit,quotaPeriod:v.quotaPeriod,used:0 }
   })
 }
+/** v13：套餐权益不再表单编辑，保存时按各资源侧已设置的可见性派生覆盖写入（status=1 且 PUBLIC/缺省 或 PLAN 命中该套餐；MCP 按所属服务可见性取其全部工具；缺省视为全员可见，与 MCP 保存归一化一致） */
+function derivePlanEntitlements(planId:number): Entitlement[] {
+  const visible=(v?:{type?:string;planIds?:number[]})=>Boolean(!v || v.type==='PUBLIC' || (v.type==='PLAN' && (v.planIds||[]).includes(planId)))
+  const out:Entitlement[]=[]
+  db.experts.forEach(e=>{ if(e.status===1 && visible(e.visibility)) out.push({ resourceType:'EXPERT', resourceId:e.id, resourceName:e.name, quotaType:'CHAT_COUNT', quotaLimit:100, quotaPeriod:'MONTH', used:0 }) })
+  db.skills.forEach(s=>{ if(s.status===1 && visible(s.visibility)) out.push({ resourceType:'SKILL', resourceId:s.id, resourceName:s.name, quotaType:'SKILL_CALL', quotaLimit:100, quotaPeriod:'MONTH', used:0 }) })
+  db.tools.forEach(t=>{ const sv=db.servers.find(s=>s.id===t.serverId); if(sv && sv.status===1 && visible(sv.visibility)) out.push({ resourceType:'MCP_TOOL', resourceId:t.id, resourceName:t.name, quotaType:'SKILL_CALL', quotaLimit:100, quotaPeriod:'MONTH', used:0 }) })
+  return out
+}
 
 /** 引用了指定资源的套餐/个体权益来源清单（删除拦截用，报错指明来源便于解除） */
 function entitledBy(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): string[] {
@@ -64,7 +73,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','entitlements','frontendPerms','planType']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','frontendPerms','planType','credits']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
       for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
       item.name=String(item.name).trim();item.code=String(item.code).trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
@@ -86,11 +95,19 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         // v11：套餐类型归一化（GIFT 赠送 / NORMAL 常规；赠送订单只能选 GIFT 套餐）
         item.planType=item.planType==='GIFT'?'GIFT':'NORMAL'
         if(item.planType==='GIFT') {
-          // 赠送套餐：价格必须为 0 元；有效天数 0=长期有效，正整数=自定义时长
+          // 赠送套餐：价格必须为 0 元；有效天数 0=长期有效，正整数=自定义时长；不配置 AI 积分（固定 0）
           if(Number(item.price)!==0) fail('赠送套餐价格必须为 0 元')
           if(!Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('赠送套餐有效天数须为 0（长期有效）或正整数')
-        } else if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<1) fail('价格须非负，有效天数须正整数')
-        item.entitlements=validateEntitlements(item.entitlements || [],ErrorType)
+          item.credits=0
+        } else {
+          if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<1) fail('价格须非负，有效天数须正整数')
+          // v12：常规套餐 AI 积分（可选，非负整数，缺省 0；创建手工订单时默认带出）
+          const credits=Number(item.credits||0)
+          if(!Number.isInteger(credits) || credits<0) fail('AI 积分须为非负整数')
+          item.credits=credits
+        }
+        // v13：套餐权益改为按资源侧可见性派生（表单不再编辑，入参 entitlements 忽略）
+        item.entitlements=derivePlanEntitlements(item.id)
         // v8：套餐前台权限归一化（缺失键默认允许，仅接受布尔）
         item.frontendPerms=normalizeFrontendPerms(item.frontendPerms)
       }
@@ -120,6 +137,9 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!Array.isArray(item.knowledgeBaseIds) || item.knowledgeBaseIds.some(id=>!db.knowledgeBases.some(k=>k.id===id))) fail('绑定的知识库不存在')
         if(!Array.isArray(item.suggestedQuestions) || item.suggestedQuestions.some(q=>typeof q!=='string' || !q.trim())) fail('建议问题须为非空字符串数组')
         if(!Array.isArray(item.tags) || item.tags.some(t=>typeof t!=='string' || !t.trim())) fail('标签须为非空字符串数组')
+        // v14：场景分组校验（null 视为未分组；非空须为场景管理中的有效场景）
+        if(item.scenarioId===null) item.scenarioId=undefined
+        if(item.scenarioId!==undefined && !db.scenarios.some(s=>s.id===item.scenarioId)) fail('专家所属场景不存在')
         // v6：编排扩展字段宽松校验（标题/介绍/开场白 HTML 字符串；核心能力/参考提示词字符串数组；问题建议配置对象）
         if(item.titleHtml!==undefined && typeof item.titleHtml!=='string') fail('专家标题须为字符串')
         if(item.introduction!==undefined && typeof item.introduction!=='string') fail('专家介绍须为字符串')
@@ -581,9 +601,9 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   })
 
   // -------------------------------------------------- v7：技能场景（平台→场景 两级分组；技能通过 scenarioId 归入场景）
-  route('GET','/scenarios',ctx=>{perm(ctx,'skill:view');const order=(p:PlatformType)=>PLATFORMS.indexOf(p);return [...db.scenarios].sort((a,b)=>order(a.platformId)-order(b.platformId) || a.id-b.id)})
+  route('GET','/scenarios',ctx=>{if(!['skill:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);const order=(p:PlatformType)=>PLATFORMS.indexOf(p);return [...db.scenarios].sort((a,b)=>order(a.platformId)-order(b.platformId) || a.id-b.id)})
   const saveScenario=(ctx:Context)=>{
-    perm(ctx,'skill:edit')
+    if(!['skill:edit','expert:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403)
     const old=ctx.params.id?db.scenarios.find(s=>s.id===Number(ctx.params.id)):undefined
     const input=(ctx.body||{}) as Record<string,unknown>
     const name=String(input.name||'').trim()
@@ -597,9 +617,10 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   }
   route('POST','/scenarios',saveScenario);route('PUT','/scenarios/:id',saveScenario)
   route('DELETE','/scenarios/:id',ctx=>{
-    perm(ctx,'skill:edit');const item=db.scenarios.find(s=>s.id===Number(ctx.params.id)) || fail('场景不存在',404)
-    // 删除场景仅解除技能的分组归属（清空 scenarioId=未分组），不影响技能本身
+    if(!['skill:edit','expert:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);const item=db.scenarios.find(s=>s.id===Number(ctx.params.id)) || fail('场景不存在',404)
+    // 删除场景仅解除技能/专家的分组归属（清空 scenarioId=未分组），不影响资源本身
     db.skills.forEach(sk=>{ if(sk.scenarioId===item.id) sk.scenarioId=undefined })
+    db.experts.forEach(ex=>{ if(ex.scenarioId===item.id) ex.scenarioId=undefined })
     db.scenarios.splice(db.scenarios.indexOf(item),1)
     audit(ctx.adminId,'scenario.delete','scenario',item.id,item,null);return null
   })
@@ -618,9 +639,13 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     if(!name) fail('知识库名称必填')
     const platform=String(input.platform||'').trim()
     if(platform && !PLATFORMS.includes(platform as PlatformType)) fail('所属平台无效')
-    const access=input.access==='PRIVATE'?'PRIVATE':'PUBLIC'
+    // v14：前端可见性归一化（与专家/MCP 同款三段；旧调用方只传 access=PRIVATE 时兼容）→ access 由其派生（旧消费方兼容）
+    const visRaw=input.visibility as {type?:unknown;planIds?:unknown}|undefined
+    const visType=visRaw && ['PUBLIC','PLAN','PRIVATE'].includes(String(visRaw.type)) ? String(visRaw.type) as 'PUBLIC'|'PLAN'|'PRIVATE' : input.access==='PRIVATE' ? 'PRIVATE' : 'PUBLIC'
+    const visibility={ type:visType, planIds:visType==='PLAN' && Array.isArray(visRaw?.planIds) ? (visRaw!.planIds as unknown[]).map(n=>Number(n)).filter(n=>Number.isInteger(n)&&n>0) : [] }
+    const access=visibility.type==='PRIVATE'?'PRIVATE':'PUBLIC'
     const tags=Array.isArray(input.tags)?input.tags.map(t=>String(t).trim()).filter(Boolean):[]
-    const item:KnowledgeBase = old ? { ...old, name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, tags, updatedAt:nowStr() } : { id:nextMockId(), name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, tags, fileCount:0, status:1, createdAt:nowStr(), updatedAt:nowStr() }
+    const item:KnowledgeBase = old ? { ...old, name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, visibility, tags, updatedAt:nowStr() } : { id:nextMockId(), name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, visibility, tags, fileCount:0, status:1, createdAt:nowStr(), updatedAt:nowStr() }
     if(old) Object.assign(old,item); else db.knowledgeBases.push(item)
     audit(ctx.adminId,`knowledge.${old?'update':'create'}`,'knowledge',item.id,old||null,item);return item
   }
