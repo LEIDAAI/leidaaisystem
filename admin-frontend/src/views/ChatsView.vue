@@ -26,37 +26,6 @@ async function openUser(row:UserChatRow){view.value='user';curUser.value=row;use
 async function openChat(row:ChatItem){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';curChat.value=row;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;detailLoading.value=true;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id)]);messages.value=ms;analysis.value=an}finally{detailLoading.value=false}}
 function backToList(){view.value='list';load()}
 function backToUser(){if(chatFrom.value==='user'&&curUser.value)openUser(curUser.value);else backToList()}
-/** 二级列表行展开：懒加载会话消息（按会话 ID 缓存），随后自动并行预取每问分析——展开即见结果，免手动点击 */
-type ExpandData={loading:boolean;msgs:Message[]}
-const expandMap=reactive<Record<number,ExpandData>>({})
-async function onExpand(row:ChatItem,expanded:ChatItem[]){if(!expanded.includes(row)||expandMap[row.id])return;expandMap[row.id]={loading:true,msgs:[]};try{expandMap[row.id].msgs=await chatMessages(row.id);await Promise.all(askRounds(expandMap[row.id].msgs).map(a=>loadAsk(row,a.idx)))}finally{if(expandMap[row.id])expandMap[row.id].loading=false}}
-/** 会话内的问话列表：每条用户消息 = 一轮问话 */
-function askRounds(msgs:Message[]):{idx:number;question:string}[]{return msgs.filter(m=>m.role==='user').map((m,idx)=>({idx,question:m.content}))}
-/** 单问分析缓存（key = 会话ID-问话序号；行展开时自动预取，失败静默标记 err） */
-type AskData={loading:boolean;an?:ChatAnalysis;err?:boolean}
-const askMap=reactive<Record<string,AskData>>({})
-const askKey=(chatId:number,idx:number)=>`${chatId}-${idx}`
-async function loadAsk(row:ChatItem,idx:number){const k=askKey(row.id,idx);if(askMap[k])return;askMap[k]={loading:true};try{const an=await chatAnalysis(row.id,idx);if(askMap[k])askMap[k].an=an}catch{if(askMap[k])askMap[k].err=true}finally{if(askMap[k])askMap[k].loading=false}}
-/** 单问分析结果表格：全表按列映射 */
-function askTableRows(an?:ChatAnalysis){return an?an.table.rows.map(r=>Object.fromEntries(r.map((v,i)=>[`c${i}`,v]))):[]}
-/** 单问分析结果预览弹窗：数据复用 askMap 缓存，大表格 + HTML 报告双标签（展开区结果卡片分别以对应标签打开） */
-type AskPreview={chatId:number;idx:number;ord:number;an:ChatAnalysis}
-const askPreview=ref<AskPreview|null>(null)
-const askPreviewVisible=computed({get:()=>!!askPreview.value,set:v=>{if(!v)askPreview.value=null}})
-const askPvTab=ref<'table'|'report'>('table')
-const askPvRows=computed(()=>askPreview.value?askPreview.value.an.table.rows.map(r=>Object.fromEntries(r.map((v,i)=>[`c${i}`,v]))):[])
-function openAskPreview(row:ChatItem,idx:number,ord:number,tab:'table'|'report'='table'){const an=askMap[askKey(row.id,idx)]?.an;if(!an)return;askPreview.value={chatId:row.id,idx,ord,an};askPvTab.value=tab;askPvZoom.value=1}
-/* 弹窗内报告缩放 / 新窗口 / 下载（srcdoc 同源注入 zoom，与三级详情一致） */
-const askPvZoom=ref(1),askPvFrame=ref<HTMLIFrameElement|null>(null)
-const askPvZoomLabel=computed(()=>Math.round(askPvZoom.value*100)+'%')
-function askPvApplyZoom(){try{const b=askPvFrame.value?.contentDocument?.body;if(b)b.style.zoom=String(askPvZoom.value)}catch(e){}}
-function askPvZoomStep(d:number){askPvZoom.value=Math.min(2,Math.max(0.5,Math.round((askPvZoom.value+d*0.1)*10)/10));askPvApplyZoom()}
-function askPvZoomReset(){askPvZoom.value=1;askPvApplyZoom()}
-/** 单问 HTML 报告：新窗口 / 下载（展开区结果卡片与弹窗共用） */
-function askOpenReport(an:ChatAnalysis){const url=URL.createObjectURL(new Blob([an.reportHtml],{type:'text/html;charset=utf-8'}));window.open(url,'_blank');setTimeout(()=>URL.revokeObjectURL(url),60000)}
-function askDownloadReport(an:ChatAnalysis,name:string){downloadBlobFile(name,new Blob([an.reportHtml],{type:'text/html;charset=utf-8'}))}
-function askPvOpenReport(){if(askPreview.value)askOpenReport(askPreview.value.an)}
-function askPvDownload(){if(!askPreview.value)return;askDownloadReport(askPreview.value.an,`chat-report-${askPreview.value.chatId}-q${askPreview.value.ord+1}.html`)}
 async function restore(row:ChatItem){try{await ElMessageBox.confirm(`恢复会话 ${row.id}？恢复后用户可继续该会话`,'确认恢复')}catch{return}await restoreChat(row.id);if(curUser.value)await openUser(curUser.value);await load()}
 /** 三级详情页操作：软删除当前会话（操作后回到上一级并刷新），与二级列表行为一致 */
 async function removeCurrent(){const c=curChat.value;if(!c)return;try{const {value}=await ElMessageBox.prompt('请填写软删除理由，消息会保留以便恢复','软删除',{inputValidator:v=>!!v?.trim() || '必须填写理由'});await deleteChat(c.id,value);if(chatFrom.value==='user'&&curUser.value)await openUser(curUser.value);else backToList()}catch(e){if(e!=='cancel'&&e!=='close')console.error('软删除失败',e)}}
@@ -116,63 +85,7 @@ onMounted(load)
     <el-descriptions-item label="地区">{{curUser?.region || '—'}}</el-descriptions-item>
     <el-descriptions-item label="对话总数">{{curUser?.chatCount}}（正常 {{curUser?.activeCount}}）</el-descriptions-item>
   </el-descriptions>
-  <el-table v-loading="userLoading" :data="userChats" row-key="id" :max-height="chatsMax" scrollbar-always-on :ref="bindChats" @expand-change="onExpand">
-    <el-table-column type="expand">
-      <template #default="{row}">
-        <div v-if="!expandMap[row.id] || expandMap[row.id].loading" v-loading="true" style="min-height:70px"/>
-        <div v-else class="expand-body">
-          <div v-for="(a,ai) in askRounds(expandMap[row.id].msgs)" :key="a.idx" class="ask-round">
-            <div class="ask-head">
-              <el-tag size="small">问话 {{ai+1}}</el-tag>
-              <span class="ask-q" :title="a.question">{{a.question}}</span>
-            </div>
-            <div v-if="askMap[askKey(row.id,a.idx)]" v-loading="askMap[askKey(row.id,a.idx)].loading" class="ask-detail">
-              <div v-if="askMap[askKey(row.id,a.idx)]?.err && !askMap[askKey(row.id,a.idx)]?.an" class="ex-none">分析加载失败，请稍后重试</div>
-              <div v-else-if="askMap[askKey(row.id,a.idx)]?.an" class="ask-cols">
-                <div class="ask-left">
-                  <p class="ask-sec-title">分析过程</p>
-                  <el-timeline class="ask-timeline">
-                    <el-timeline-item v-for="(s,i) in askMap[askKey(row.id,a.idx)]!.an!.steps" :key="i" :timestamp="`${s.at.slice(0,16).replace('T',' ')} · 耗时 ${s.durationSec}s`" placement="top" :type="i===askMap[askKey(row.id,a.idx)]!.an!.steps.length-1?'success':'primary'">
-                      <b>{{i+1}}. {{s.title}}</b>
-                      <div class="ask-step-desc">{{s.detail}}</div>
-                      <el-tag v-for="t in s.tools" :key="t" size="small" type="success" style="margin-right:6px">{{t}}</el-tag>
-                    </el-timeline-item>
-                  </el-timeline>
-                  <p class="ask-sec-title">分析结果</p>
-                  <div class="result-cards ask-cards">
-                    <div class="result-card" @click="openAskPreview(row,a.idx,ai,'table')">
-                      <span class="rc-icon">📋</span>
-                      <span class="rc-body"><span class="rc-title">{{askMap[askKey(row.id,a.idx)]!.an!.table.title}}</span><span class="rc-meta">{{askMap[askKey(row.id,a.idx)]!.an!.table.columns.length}} 个字段 · {{askMap[askKey(row.id,a.idx)]!.an!.table.rows.length}} 条候选商品</span></span>
-                      <span class="rc-hint">点击预览 ›</span>
-                    </div>
-                    <div class="result-card" @click="openAskPreview(row,a.idx,ai,'report')">
-                      <span class="rc-icon">📄</span>
-                      <span class="rc-body"><span class="rc-title">HTML 选品报告</span><span class="rc-meta">chat-report-{{row.id}}-q{{ai+1}}.html</span></span>
-                      <span class="rc-acts"><el-button size="small" link type="primary" @click.stop="askOpenReport(askMap[askKey(row.id,a.idx)]!.an!)">新窗口打开</el-button><el-button size="small" link type="primary" @click.stop="askDownloadReport(askMap[askKey(row.id,a.idx)]!.an!, `chat-report-${row.id}-q${ai+1}.html`)">下载 HTML</el-button></span>
-                      <span class="rc-hint">点击预览 ›</span>
-                    </div>
-                  </div>
-                </div>
-                <aside class="ask-right">
-                  <p class="ask-sec-title">结果表格（{{askMap[askKey(row.id,a.idx)]!.an!.table.rows.length}} 条候选商品）</p>
-                  <div class="ask-table">
-                    <el-table :data="askTableRows(askMap[askKey(row.id,a.idx)]!.an)" size="small" border stripe max-height="420">
-                      <el-table-column v-for="(col,i) in askMap[askKey(row.id,a.idx)]!.an!.table.columns" :key="col" :prop="`c${i}`" :label="col" min-width="96"/>
-                    </el-table>
-                  </div>
-                </aside>
-              </div>
-            </div>
-          </div>
-          <span v-if="!askRounds(expandMap[row.id].msgs).length" class="ex-none">该会话无问话记录</span>
-          <el-collapse v-if="expandMap[row.id].msgs.length">
-            <el-collapse-item :title="`对话消息（已脱敏，共 ${expandMap[row.id].msgs.length} 条）`">
-              <article v-for="(m,i) in expandMap[row.id].msgs" :key="i" class="ask-msg"><strong>{{m.role==='user'?'用户':'助手'}}</strong><small> · {{m.createdAt}}</small><p>{{m.content}}</p></article>
-            </el-collapse-item>
-          </el-collapse>
-        </div>
-      </template>
-    </el-table-column>
+  <el-table v-loading="userLoading" :data="userChats" :max-height="chatsMax" scrollbar-always-on :ref="bindChats">
     <el-table-column prop="id" label="会话ID" width="80"/>
     <el-table-column prop="title" label="对话标题" min-width="180" show-overflow-tooltip/>
     <el-table-column prop="createdAt" label="发起时间" min-width="165"/>
@@ -273,54 +186,9 @@ onMounted(load)
     <el-empty v-else-if="!detailLoading" description="无分析数据"/>
   </div>
 </el-card>
-<!-- 单问分析结果预览弹窗：全宽表格 + HTML 报告（iframe 缩放/新窗口/下载），复用三级详情的面板样式 -->
-<el-dialog v-model="askPreviewVisible" :title="askPreview ? `分析结果预览 · 第 ${askPreview.ord+1} 问` : '分析结果预览'" width="980px" top="5vh" destroy-on-close>
-  <template v-if="askPreview">
-    <el-tabs v-model="askPvTab">
-      <el-tab-pane label="结果表格" name="table">
-        <div class="ask-pv-meta">{{askPreview.an.table.title}} · 共 <strong>{{askPreview.an.table.rows.length}}</strong> 条候选商品 · {{askPreview.an.table.columns.length}} 个字段</div>
-        <el-table :data="askPvRows" size="small" border max-height="480">
-          <el-table-column v-for="(col,i) in askPreview.an.table.columns" :key="col" :prop="`c${i}`" :label="col" min-width="110"/>
-        </el-table>
-      </el-tab-pane>
-      <el-tab-pane label="分析报告（HTML）" name="report">
-        <div class="ask-pv-report">
-          <div class="pv-frame-wrap ask-pv-frame">
-            <iframe ref="askPvFrame" :srcdoc="askPreview.an.reportHtml" sandbox="allow-scripts allow-same-origin allow-popups allow-modals allow-downloads" title="选品报告预览" @load="askPvApplyZoom"/>
-          </div>
-          <div class="pv-statusbar">
-            <button type="button" class="pv-btn" title="缩小" @click="askPvZoomStep(-1)">−</button>
-            <button type="button" class="pv-btn pv-num" title="重置为 100%" @click="askPvZoomReset">{{askPvZoomLabel}}</button>
-            <button type="button" class="pv-btn" title="放大" @click="askPvZoomStep(1)">＋</button>
-            <span class="pv-spacer"/>
-            <button type="button" class="pv-btn" title="新窗口打开" @click="askPvOpenReport">↗</button>
-            <button type="button" class="pv-btn" title="下载独立 HTML 文件" @click="askPvDownload">⤓</button>
-          </div>
-        </div>
-      </el-tab-pane>
-    </el-tabs>
-  </template>
-</el-dialog>
 </template>
 <style scoped>
 .ellipsis{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#666;font-size:13px;margin-top:4px}
-/* 二级列表行展开区：每问自动加载分析——左（过程时间轴+结果卡片） 右（结果表格面板，展开即见） */
-.expand-body{padding:8px 14px 12px 46px;display:flex;flex-direction:column;gap:12px}
-.ask-round{border:1px solid #ebeef5;border-radius:6px;padding:8px 12px}
-.ask-head{display:flex;align-items:center;gap:8px}
-.ask-q{flex:1;min-width:0;font-size:13px;color:#303133;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.ask-detail{margin-top:10px;border-top:1px dashed #ebeef5;padding-top:12px;min-height:60px}
-.ask-cols{display:flex;gap:14px;align-items:stretch}
-.ask-left{flex:1;min-width:0}
-.ask-right{flex:0 0 46%;min-width:340px;border:1px solid #e4e7ed;border-radius:8px;background:#fafafa;padding:10px 12px;display:flex;flex-direction:column}
-.ask-sec-title{font-size:13px;font-weight:600;color:#606266;margin:0 0 10px}
-.ask-timeline{padding-left:4px;margin:0 0 16px}
-.ask-step-desc{color:#666;font-size:13px;margin:4px 0}
-.ask-cards.result-cards{margin:0}
-.ask-table{flex:1;overflow:auto}
-.ask-msg{padding:10px 0;border-bottom:1px solid #eee}
-.ask-msg p{white-space:pre-wrap;margin:6px 0 0;font-size:13px;color:#606266}
-.ex-none{color:#c0c4cc;font-size:13px}
 /* 三级详情：左主区 + 右预览面板 */
 .chat-detail{display:flex;gap:18px;align-items:stretch}
 .detail-main{flex:1;min-width:0}
@@ -368,9 +236,4 @@ onMounted(load)
 .pv-num{min-width:46px}
 .pv-spacer{flex:1}
 .pv-meta-inline{color:#c0c4cc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 单问结果预览弹窗 */
-.ask-pv-meta{font-size:12px;color:#909399;margin-bottom:10px}
-.ask-pv-meta strong{color:#409eff}
-.ask-pv-report{display:flex;flex-direction:column;height:520px}
-.ask-pv-frame{flex:1;border:1px solid #ebeef5;border-radius:6px;overflow:hidden}
 </style>
