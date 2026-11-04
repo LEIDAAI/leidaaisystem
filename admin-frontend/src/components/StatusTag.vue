@@ -4,7 +4,7 @@ import { computed } from 'vue'
 type TagType = 'success' | 'warning' | 'danger' | 'info' | 'primary'
 
 interface Props {
-  kind: 'user' | 'admin' | 'role' | 'order'
+  kind: 'user' | 'admin' | 'role' | 'order' | 'feedback'
   value: string | number
 }
 
@@ -28,6 +28,11 @@ const PRESETS: Record<Props['kind'], Record<string | number, { label: string; ty
     PAID: { label: '已支付', type: 'success' },
     REFUNDED: { label: '已退款', type: 'info' },
     CLOSED: { label: '已关闭', type: 'danger' }
+  },
+  feedback: {
+    PENDING: { label: '待处理', type: 'warning' },
+    ADOPTED: { label: '已采纳', type: 'success' },
+    REJECTED: { label: '未采纳', type: 'info' }
   }
 }
 

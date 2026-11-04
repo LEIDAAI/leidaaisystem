@@ -16,6 +16,7 @@ import {
   persistMockDB,
   roleRefsOf,
   type MockAdmin,
+  type MockFeedback,
   type MockOrder,
   type MockUser
 } from './db'
@@ -702,6 +703,97 @@ route('GET', '/orders/export', (ctx) => {
     filename: `orders-${dayjs().format('YYYYMMDDHHmmss')}.csv`,
     content: [header, ...rows].join('\n')
   }
+})
+
+// ------------------------------------------------------------------ 反馈管理（v15）
+function toFeedbackItem(f: MockFeedback) {
+  const u = db.users.find((x) => x.id === f.userId)
+  return {
+    id: f.id,
+    fbNo: f.fbNo,
+    userId: f.userId,
+    nickname: u?.nickname || '',
+    wechatNickname: u?.wechatNickname || '',
+    userStatus: u?.status ?? 0,
+    content: f.content,
+    images: [...f.images],
+    chatRefs: f.chatRefs.map((c) => ({ ...c })),
+    status: f.status,
+    rewardPoints: f.rewardPoints,
+    handleRemark: f.handleRemark,
+    handledBy: f.handledBy,
+    handledAt: f.handledAt,
+    createdAt: f.createdAt
+  }
+}
+
+route('GET', '/feedbacks', (ctx) => {
+  assertPerm(ctx, 'feedback:view')
+  const keyword = qStr(ctx.query, 'keyword')
+  const status = qStr(ctx.query, 'status')
+  const start = qStr(ctx.query, 'start')
+  const end = qStr(ctx.query, 'end')
+  let list = [...db.feedbacks]
+  if (keyword) {
+    list = list.filter((f) => {
+      const u = db.users.find((x) => x.id === f.userId)
+      return (
+        f.fbNo.includes(keyword) ||
+        f.content.includes(keyword) ||
+        (u ? u.nickname.includes(keyword) || u.wechatNickname.includes(keyword) || u.phone.includes(keyword) : false)
+      )
+    })
+  }
+  if (status) list = list.filter((f) => f.status === status)
+  if (start) list = list.filter((f) => f.createdAt.slice(0, 10) >= start)
+  if (end) list = list.filter((f) => f.createdAt.slice(0, 10) <= end)
+  list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  const p = paginate(list, ctx.query)
+  return { total: p.total, list: p.list.map(toFeedbackItem) }
+})
+
+route('GET', '/feedbacks/:id', (ctx) => {
+  assertPerm(ctx, 'feedback:view')
+  const f = findOr404(db.feedbacks, ctx.params.id, '反馈')
+  return toFeedbackItem(f)
+})
+
+route('PUT', '/feedbacks/:id/status', (ctx) => {
+  assertPerm(ctx, 'feedback:manage')
+  const f = findOr404(db.feedbacks, ctx.params.id, '反馈')
+  const b = (ctx.body ?? {}) as Record<string, unknown>
+  const status = String(b.status ?? '')
+  const rewardPoints = Number(b.rewardPoints ?? 0)
+  const handleRemark = String(b.handleRemark ?? '').trim()
+  if (!['ADOPTED', 'REJECTED'].includes(status)) throw new MockApiError(422, '处理状态无效')
+  if (f.status !== 'PENDING') throw new MockApiError(409, '该反馈已处理，不能重复操作')
+  if (status === 'ADOPTED') {
+    if (!Number.isFinite(rewardPoints) || rewardPoints < 0) throw new MockApiError(422, '奖励积分无效')
+    if (!handleRemark) throw new MockApiError(422, '采纳反馈须填写处理说明')
+  }
+  const before = { status: f.status, rewardPoints: f.rewardPoints, handleRemark: f.handleRemark, handledBy: f.handledBy, handledAt: f.handledAt }
+  const admin = db.admins.find((a) => a.id === ctx.adminId)
+  f.status = status as MockFeedback['status']
+  f.rewardPoints = status === 'ADOPTED' ? Math.round(rewardPoints) : 0
+  f.handleRemark = handleRemark
+  f.handledBy = admin?.username || String(ctx.adminId)
+  f.handledAt = nowStr()
+  recordAudit(ctx.adminId, 'feedback.handle', 'feedback', f.fbNo, before, {
+    status: f.status,
+    rewardPoints: f.rewardPoints,
+    handleRemark: f.handleRemark,
+    handledBy: f.handledBy
+  })
+  return toFeedbackItem(f)
+})
+
+route('DELETE', '/feedbacks/:id', (ctx) => {
+  assertPerm(ctx, 'feedback:manage')
+  const idx = db.feedbacks.findIndex((x) => x.id === Number(ctx.params.id))
+  if (idx === -1) throw new MockApiError(404, '反馈不存在或已删除')
+  const [removed] = db.feedbacks.splice(idx, 1)
+  recordAudit(ctx.adminId, 'feedback.delete', 'feedback', removed.fbNo, toFeedbackItem(removed), null)
+  return null
 })
 
 // ------------------------------------------------------------------ 审计日志

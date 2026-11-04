@@ -40,3 +40,12 @@ export interface OrderItem {
 export interface PayTransaction { id: number; txnNo: string; type: string; payChannel: string; amount: number; status: string; createdAt: string }
 export interface OrderDetail extends OrderItem { transactions: PayTransaction[] }
 export interface OrderExportResult { filename: string; content: string }
+export interface FeedbackQuery { keyword?: string; status?: string; start?: string; end?: string; page?: number; pageSize?: number }
+export interface FeedbackChatRef { chatId: number; summary: string }
+export interface FeedbackItem {
+  id: number; fbNo: string; userId: number; nickname: string; wechatNickname: string; userStatus: number
+  content: string; images: string[]; chatRefs: FeedbackChatRef[]
+  status: string; rewardPoints: number; handleRemark: string; handledBy: string; handledAt: string | null; createdAt: string
+}
+export type FeedbackDetail = FeedbackItem
+export interface FeedbackHandlePayload { status: 'ADOPTED' | 'REJECTED'; rewardPoints?: number; handleRemark?: string }

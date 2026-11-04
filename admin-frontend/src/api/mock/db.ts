@@ -1,6 +1,6 @@
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { migrateLegacyConfig, seedExtensions, redact, appendAskRounds, type Extensions } from './extension-data'
+import { migrateLegacyConfig, seedExtensions, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
 
 // =====================================================================
 // Mock 演示数据库：通过 localStorage 保存业务数据与会话。
@@ -118,6 +118,33 @@ export interface MockAudit {
   createdAt: string
 }
 
+/** v15 反馈引用的对话快照（前台用户提交反馈时可挂载最多 4 条会话） */
+export interface FeedbackChatRef {
+  chatId: number
+  summary: string
+}
+
+export interface MockFeedback {
+  id: number
+  /** 反馈编号 FB2026xxxxxx */
+  fbNo: string
+  userId: number
+  /** 反馈内容（必填文本） */
+  content: string
+  /** 附图文件名列表（前台最多 4 张） */
+  images: string[]
+  /** 引用对话快照 */
+  chatRefs: FeedbackChatRef[]
+  status: 'PENDING' | 'ADOPTED' | 'REJECTED'
+  /** 采纳时的积分奖励 */
+  rewardPoints: number
+  /** 处理说明（采纳必填，驳回可留空） */
+  handleRemark: string
+  handledBy: string
+  handledAt: string | null
+  createdAt: string
+}
+
 export const PLANS = [
   { id: 1, name: '免费版', price: 0 },
   { id: 2, name: '标准版', price: 99 },
@@ -173,6 +200,8 @@ const PERMISSIONS: MockPermission[] = [
 ;([['knowledge:view','知识库查看','knowledge',80,1],['knowledge:edit','知识库编辑','knowledge',81,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 32+i, code, name, module, type, sort }))
 // v11 新增：手工/赠送订单创建权限点（授予所有已持有 order:refund 的角色）
 ;([['order:create','订单创建','order',45]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 34, code, name, module, type: 2, sort }))
+// v15 新增：反馈管理权限点（对话管理下的前台反馈处理页；授予 OPS/SUPPORT，见版本迁移）
+;([['feedback:view','反馈查看','feedback',83,1],['feedback:manage','反馈处理','feedback',84,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 35+i, code, name, module, type, sort }))
 const ALL_PERM_IDS = PERMISSIONS.map((p) => p.id)
 /** v4 新增权限点 id（运营角色增量授予） */
 export const V4_PERMISSION_IDS = [27, 28]
@@ -184,6 +213,8 @@ export const V6_PERMISSION_IDS = [31]
 export const V7_PERMISSION_IDS = [32, 33]
 /** v11 新增权限点 id（订单创建；授予所有已持有 order:refund 的角色） */
 export const V11_PERMISSION_IDS = [34]
+/** v15 新增权限点 id（反馈管理；授予 OPS/SUPPORT 角色） */
+export const V15_PERMISSION_IDS = [35, 36]
 
 // -------------------------------------------------------------- 角色
 const ROLES: MockRole[] = [
@@ -385,6 +416,80 @@ function buildOrders(users: MockUser[]): MockOrder[] {
   return orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 }
 
+// -------------------------------------------------------------- 反馈（v15：前台「提供反馈」入口）
+const FEEDBACK_CONTENTS = [
+  '网页版分析报告在手机浏览器打开后表格排版错位，横屏也显示不全，希望适配一下移动端。',
+  '1688选品搜索经常在 200 元预算档位漏掉部分候选商品，两个账号测试都复现了，麻烦排查下召回逻辑。',
+  '希望支持把多个专家的分析结果合并对比，现在要来回切换会话截图比对，比较麻烦。',
+  '技能「竞品价格监控」的告警邮件偶尔延迟两三个小时才收到，做亚马逊跟卖监控会错过调价时机。',
+  '免费版每天 5 次对话根本不够用，建议增加邀请好友得额外次数的活动。',
+  '分析的毛利率和实际普遍偏差在 5 个点以上，建议把头程运费计入成本估算。',
+  '网页加载到第三步「数据分析」时经常卡住，刷新后要重新问一遍，白白消耗积分。',
+  'MCP 工具 ali_product_search 返回的商品图片链接经常失效，能不能换成带时效签名的地址。',
+  '建议给报告增加一键导出 PPT 的功能，我们每周选品会要用。',
+  '支付成功后积分到账延迟了十分钟，客服响应很快已解决，建议优化到账速度。',
+  '抖音带货选品专家给出的达人匹配建议太泛了，希望支持按类目和佣金率筛选达人。',
+  '知识库上传 PDF 后解析不到表格内容，纯文本部分没问题，表格被整段丢掉了。',
+  '套餐升级后旧套餐的剩余积分没有折算，咨询客服说是规则如此，希望能折算或保留。',
+  '对话记录只能整段删除，希望能只删除其中某一次追问，保留前面的分析结果。',
+  '深色模式下左侧导航文字和背景几乎融为一体，看不清，切回浅色才正常。'
+]
+/** 与 FEEDBACK_CONTENTS 对齐的附图（0-4 张，存文件名演示） */
+const FEEDBACK_IMAGES: string[][] = [
+  ['fb-shot-01.png'],
+  ['fb-shot-02-1.png', 'fb-shot-02-2.png'],
+  [],
+  [],
+  [],
+  ['fb-shot-06-1.png', 'fb-shot-06-2.png', 'fb-shot-06-3.png'],
+  ['fb-shot-07-1.png', 'fb-shot-07-2.png'],
+  [],
+  [],
+  ['fb-shot-10.png'],
+  [],
+  ['fb-shot-12-1.png', 'fb-shot-12-2.png', 'fb-shot-12-3.png', 'fb-shot-12-4.png'],
+  [],
+  ['fb-shot-14.png'],
+  []
+]
+const FEEDBACK_STATUS: MockFeedback['status'][] = ['PENDING', 'ADOPTED', 'PENDING', 'REJECTED', 'PENDING', 'PENDING', 'ADOPTED', 'PENDING', 'REJECTED', 'PENDING', 'ADOPTED', 'PENDING', 'PENDING', 'REJECTED', 'PENDING']
+
+function buildFeedbacks(users: MockUser[], chats: Chat[]): MockFeedback[] {
+  const activeChats = chats.filter((c) => !c.deletedAt)
+  const list: MockFeedback[] = []
+  for (let i = 0; i < FEEDBACK_CONTENTS.length; i++) {
+    const status = FEEDBACK_STATUS[i]
+    const handled = status !== 'PENDING'
+    const user = users[(i * 3 + 2) % users.length]
+    // 引用对话：每 4 条中 1 条不引用、1 条引用 2 条会话，其余引用 1 条
+    const refCount = i % 4 === 1 ? 0 : i % 4 === 3 ? 2 : 1
+    const refs: FeedbackChatRef[] = Array.from({ length: refCount }, (_, k) => {
+      const chat = activeChats[(i * 2 + k) % activeChats.length]
+      return { chatId: chat.id, summary: String(redact(chat.messages[0]?.content.slice(0, 80) || '')) }
+    })
+    const createdAt = i === 0 ? minutesAgo(26) : daysAgo(1 + i * 2, 9 + (i % 12))
+    list.push({
+      id: 7000 + i,
+      fbNo: `FB2026${String(100001 + i)}`,
+      userId: user.id,
+      content: FEEDBACK_CONTENTS[i],
+      images: FEEDBACK_IMAGES[i],
+      chatRefs: refs,
+      status,
+      rewardPoints: status === 'ADOPTED' ? [200, 500, 300, 200][i % 4] : 0,
+      handleRemark: handled
+        ? status === 'ADOPTED'
+          ? ['问题已复现并纳入本周迭代，感谢反馈', '已修复上线，补偿积分已发放至账户', '需求已评估通过，预计下个版本支持'][i % 3]
+          : ['与现有功能重复，暂不单独迭代', '经核实为个别场景问题，暂不处理'][i % 2]
+        : '',
+      handledBy: handled ? ['admin', 'liwei', 'support'][i % 3] : '',
+      handledAt: handled ? fmt(dayjs(createdAt).add(1, 'day').hour(15).minute(30)) : null,
+      createdAt
+    })
+  }
+  return list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+}
+
 // -------------------------------------------------------------- 审计日志
 const AUDIT_SAMPLES: Array<{
   action: string
@@ -484,9 +589,11 @@ function buildAuditLogs(admins: MockAdmin[]): MockAudit[] {
 }
 
 // -------------------------------------------------------------- 汇总
+const BUILT_EXTENSIONS = seedExtensions()
 const BUILT_USERS = buildUsers()
 const BUILT_ORDERS = buildOrders(BUILT_USERS)
 const BUILT_AUDIT_LOGS = buildAuditLogs(ADMINS)
+const BUILT_FEEDBACKS = buildFeedbacks(BUILT_USERS, BUILT_EXTENSIONS.chats)
 
 export interface MockDB extends Extensions {
   admins: MockAdmin[]
@@ -495,18 +602,20 @@ export interface MockDB extends Extensions {
   users: MockUser[]
   orders: MockOrder[]
   auditLogs: MockAudit[]
+  feedbacks: MockFeedback[]
   /** token -> adminId */
   tokens: Map<string, number>
 }
 
 export const db: MockDB = {
-  ...seedExtensions(),
+  ...BUILT_EXTENSIONS,
   admins: ADMINS,
   roles: ROLES,
   permissions: PERMISSIONS,
   users: BUILT_USERS,
   orders: BUILT_ORDERS,
   auditLogs: BUILT_AUDIT_LOGS,
+  feedbacks: BUILT_FEEDBACKS,
   tokens: new Map()
 }
 
@@ -516,7 +625,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(saved.version) && saved.data && typeof saved.data === 'object') {
+    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(saved.version) && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -661,6 +770,12 @@ if (storedVersion < 14) {
     if (seeded?.scenarioId !== undefined) e.scenarioId = seeded.scenarioId
   })
 }
+if (storedVersion < 15) {
+  // v15 反馈管理（对话管理下的前台反馈处理页）：feedbacks 集合兜底（旧数据恢复时无此集合则取种子）；
+  // 反馈权限授予 OPS/SUPPORT（超管由上方全量覆盖自动获得）
+  if (!Array.isArray(db.feedbacks)) db.feedbacks = buildFeedbacks(db.users, db.chats)
+  db.roles.filter(r => r.code === 'OPS' || r.code === 'SUPPORT').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V15_PERMISSION_IDS])] })
+}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
@@ -693,7 +808,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 14,
+        version: 15,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],

@@ -76,6 +76,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '对话管理', perm: 'chat:view' }
       },
       {
+        path: 'feedback',
+        name: 'feedback',
+        component: () => import('@/views/feedback/FeedbackView.vue'),
+        meta: { title: '反馈管理', perm: 'feedback:view' }
+      },
+      {
         path: 'admins',
         name: 'admins',
         component: () => import('@/views/admins/AdminsView.vue'),
@@ -123,7 +129,7 @@ router.beforeEach(async (to) => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.path === '/dashboard' && !auth.hasPerm('dashboard:view')) {
-    const first = [{ path: '/users', perm: 'user:view' }, { path: '/orders', perm: 'order:view' }, { path: '/admins', perm: 'admin:manage' }, { path: '/chats', perm: 'chat:view' }, { path:'/plans',perm:'plan:view' }, { path:'/experts',perm:'expert:view' }, {path:'/skills',perm:'skill:view'}, {path:'/mcp',perm:'mcp:view'}, {path:'/knowledge',perm:'knowledge:view'}, {path:'/models',perm:'model:view'}].find(item => auth.hasPerm(item.perm))
+    const first = [{ path: '/users', perm: 'user:view' }, { path: '/orders', perm: 'order:view' }, { path: '/admins', perm: 'admin:manage' }, { path: '/chats', perm: 'chat:view' }, { path: '/feedback', perm: 'feedback:view' }, { path:'/plans',perm:'plan:view' }, { path:'/experts',perm:'expert:view' }, {path:'/skills',perm:'skill:view'}, {path:'/mcp',perm:'mcp:view'}, {path:'/knowledge',perm:'knowledge:view'}, {path:'/models',perm:'model:view'}].find(item => auth.hasPerm(item.perm))
     return { path: first?.path || '/403' }
   }
   const perm = to.meta.perm
