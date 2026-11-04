@@ -1,1 +1,0 @@
-import{J as a,O as e,ae as o,P as c}from"./index-BMH3fKGE.js";const r=s=>a("/chats",s),n=s=>a("/chats/users",s),d=s=>a(`/chats/${s}/messages`),l=(s,t)=>a(`/chats/${s}/analysis`,void 0),i=(s,t)=>o(`/chats/${s}`,{reason:t}),p=s=>e(`/chats/${s}/restore`),C=(s,t)=>c(`/chats/${s}/export`,{format:t}),x=()=>a("/dashboard");export{l as a,i as b,d as c,x as d,C as e,n as f,r as l,p as r};
