@@ -4,12 +4,12 @@ import { ElMessage } from 'element-plus'
 
 import ProTable from '@/components/ProTable.vue'
 import StatusTag from '@/components/StatusTag.vue'
-import { createGiftOrder, createManualOrder, exportOrders, listOrders, refundOrder, updateOrderRemark } from '@/api/order'
+import { createGiftOrder, createManualOrder, exportOrders, listOrders, updateOrderRemark } from '@/api/order'
 import { listConfig } from '@/api/config'
 import type { ConfigItem } from '@/api/config'
 import type { OrderItem, OrderQuery, ProTableHandle } from '@/api/types'
 import { formatAmount, formatDateTime } from '@/utils/format'
-import { confirmAction, promptText } from '@/utils/feedback'
+import { promptText } from '@/utils/feedback'
 import { useAuthStore } from '@/stores/auth'
 import OrderDetailDrawer from './OrderDetailDrawer.vue'
 
@@ -64,42 +64,6 @@ const detailOrderId = ref<number | null>(null)
 function openDetail(row: OrderItem) {
   detailOrderId.value = row.id
   detailVisible.value = true
-}
-
-// -------------------------------------------------- 退款
-const refundVisible = ref(false)
-const refundSubmitting = ref(false)
-const refundTarget = ref<OrderItem | null>(null)
-const refundForm = reactive({ reason: '', amount: 0 })
-
-function openRefund(row: OrderItem) {
-  refundTarget.value = row
-  refundForm.reason = ''
-  refundForm.amount = row.amount
-  refundVisible.value = true
-}
-
-async function submitRefund() {
-  const target = refundTarget.value
-  if (!target) return
-  if (!refundForm.reason.trim()) {
-    ElMessage.warning('请填写退款原因')
-    return
-  }
-  if (refundSubmitting.value) return
-  const confirmed = await confirmAction(`确认将订单 ${target.orderNo} 全额退款 ${formatAmount(target.amount)}？原因：${refundForm.reason.trim()}`, '最终退款确认')
-  if (!confirmed) return
-  refundSubmitting.value = true
-  try {
-    await refundOrder(target.id, refundForm.reason.trim(), refundForm.amount)
-    ElMessage.success('退款成功')
-    refundVisible.value = false
-    tableRef.value?.refresh()
-  } catch {
-    // 渠道失败等原因已由 request 拦截器透出
-  } finally {
-    refundSubmitting.value = false
-  }
 }
 
 // -------------------------------------------------- 备注
@@ -284,7 +248,6 @@ async function submitGift() {
                 <el-option label="全部" value="" />
                 <el-option label="待支付" value="PENDING" />
                 <el-option label="已支付" value="PAID" />
-                <el-option label="已退款" value="REFUNDED" />
                 <el-option label="已关闭" value="CLOSED" />
               </el-select>
             </el-form-item>
@@ -367,9 +330,6 @@ async function submitGift() {
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-              <el-button v-perm="'order:refund'" link type="danger" :disabled="row.status !== 'PAID'" @click="openRefund(row)">
-                退款
-              </el-button>
               <el-button v-perm="'order:remark'" link type="primary" @click="handleRemark(row)">备注</el-button>
             </div>
           </template>
@@ -378,28 +338,6 @@ async function submitGift() {
     </div>
 
     <OrderDetailDrawer v-model="detailVisible" :order-id="detailOrderId" />
-
-    <el-dialog v-model="refundVisible" title="订单退款" width="460px">
-      <el-form label-width="90px" @submit.prevent>
-        <el-form-item label="订单号">
-          <span>{{ refundTarget?.orderNo }}</span>
-        </el-form-item>
-        <el-form-item label="订单金额">
-          <span>{{ refundTarget ? formatAmount(refundTarget.amount) : '-' }}</span>
-        </el-form-item>
-        <el-form-item label="退款金额" required>
-          <strong>{{ formatAmount(refundForm.amount) }}</strong>
-          <span class="muted" style="margin-left: 12px">仅支持全额退款</span>
-        </el-form-item>
-        <el-form-item label="退款原因" required>
-          <el-input v-model="refundForm.reason" type="textarea" :rows="2" placeholder="请输入退款原因（必填）" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="refundVisible = false">取消</el-button>
-        <el-button type="danger" :loading="refundSubmitting" @click="submitRefund">确认退款</el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog v-model="manualVisible" title="创建手工订单" width="460px">
       <el-form label-width="100px" @submit.prevent>
@@ -457,7 +395,7 @@ async function submitGift() {
           />
         </el-form-item>
         <el-form-item label=" ">
-          <span class="muted">赠送订单金额为 0、不产生支付流水，且不支持退款</span>
+          <span class="muted">赠送订单金额为 0、不产生支付流水</span>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -26,7 +26,6 @@ const PRESETS: Record<Props['kind'], Record<string | number, { label: string; ty
   order: {
     PENDING: { label: '待支付', type: 'warning' },
     PAID: { label: '已支付', type: 'success' },
-    REFUNDED: { label: '已退款', type: 'info' },
     CLOSED: { label: '已关闭', type: 'danger' }
   },
   feedback: {

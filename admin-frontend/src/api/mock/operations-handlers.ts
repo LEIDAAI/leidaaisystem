@@ -41,7 +41,6 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
     /* 订单四态 */
     const orderPending=db.orders.filter(o=>o.status==='PENDING').length
     const orderPaid=paidOrders.length
-    const orderRefunded=db.orders.filter(o=>o.status==='REFUNDED').length
     const orderClosed=db.orders.filter(o=>o.status==='CLOSED').length
     const orderWechat=db.orders.filter(o=>o.payChannel==='WECHAT').length
     const orderAlipay=db.orders.filter(o=>o.payChannel==='ALIPAY').length
@@ -60,6 +59,6 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
     const recentUsers=[...db.users].sort((a,b)=>b.registeredAt.localeCompare(a.registeredAt)).slice(0,5).map(u=>({nickname:u.nickname,planName:u.planName,status:u.status,registeredAt:u.registeredAt}))
     /* 最近订单 */
     const recentOrders=[...db.orders].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5).map(o=>{const u=db.users.find(x=>x.id===o.userId);return {orderNo:o.orderNo,nickname:u?.nickname||'—',planName:o.planName,amount:o.amount,status:o.status,payChannel:o.payChannel,createdAt:o.createdAt}})
-    return {source:'Mock 本地实际记录汇总；非生产数据',userTotal:db.users.length,userToday:db.users.filter(u=>u.registeredAt.startsWith(today)).length,userActive,userBanned,orderTotal:db.orders.length,orderPending,orderPaid,orderRefunded,orderClosed,orderWechat,orderAlipay,revenueTotal:paidOrders.reduce((s,o)=>s+o.amount,0),chatTotal:activeChats.length,chatToday,chatMessages,expertTotal:db.experts.length,skillTotal:db.skills.length,serverTotal:db.servers.length,trend,planDist,chatsByExpert,recentUsers,recentOrders}
+    return {source:'Mock 本地实际记录汇总；非生产数据',userTotal:db.users.length,userToday:db.users.filter(u=>u.registeredAt.startsWith(today)).length,userActive,userBanned,orderTotal:db.orders.length,orderPending,orderPaid,orderClosed,orderWechat,orderAlipay,revenueTotal:paidOrders.reduce((s,o)=>s+o.amount,0),chatTotal:activeChats.length,chatToday,chatMessages,expertTotal:db.experts.length,skillTotal:db.skills.length,serverTotal:db.servers.length,trend,planDist,chatsByExpert,recentUsers,recentOrders}
   })
 }

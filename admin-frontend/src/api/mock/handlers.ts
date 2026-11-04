@@ -151,7 +151,6 @@ const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MA
 const ORDER_STATUS_LABELS: Record<string, string> = {
   PENDING: '待支付',
   PAID: '已支付',
-  REFUNDED: '已退款',
   CLOSED: '已关闭'
 }
 
@@ -574,7 +573,6 @@ route('POST', '/orders/manual', (ctx) => {
     status: 'PAID',
     remark: '线下对公转账，人工核实到账后录入',
     paidAt: at,
-    refundedAt: null,
     createdAt: at,
     transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + id)}`, type: 'PAY', payChannel: 'OFFLINE', amount, status: 'SUCCESS', createdAt: at }]
   }
@@ -625,39 +623,11 @@ route('POST', '/orders/gift', (ctx) => {
     status: 'PAID',
     remark: remark || '新客体验赠送',
     paidAt: at,
-    refundedAt: null,
     createdAt: at,
     transactions: []
   }
   db.orders.unshift(order)
   recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMonths: isLifetime ? 0 : durationMonths, credits, remark })
-  return null
-})
-
-route('POST', '/orders/:id/refund', (ctx) => {
-  assertPerm(ctx, 'order:refund')
-  const o = findOr404(db.orders, ctx.params.id, '订单')
-  if (o.source === 'GIFT') throw new MockApiError(422, '赠送订单不支持退款')
-  const b = (ctx.body ?? {}) as Record<string, unknown>
-  const reason = String(b.reason ?? '').trim()
-  const amount = Number(b.amount)
-  if (!reason) throw new MockApiError(422, '请填写退款原因')
-  if (!Number.isFinite(amount) || amount <= 0) throw new MockApiError(422, '退款金额无效')
-  if (o.status !== 'PAID') throw new MockApiError(422, '当前订单状态不支持退款')
-  if (amount !== o.amount) throw new MockApiError(422, '演示模式仅支持全额退款')
-  const before = { status: o.status }
-  o.status = 'REFUNDED'
-  o.refundedAt = nowStr()
-  o.transactions.push({
-    id: nextMockId(),
-    txnNo: `RFD2026${String(30000000 + nextMockId())}`,
-    type: 'REFUND',
-    payChannel: o.payChannel,
-    amount,
-    status: 'SUCCESS',
-    createdAt: nowStr()
-  })
-  recordAudit(ctx.adminId, 'order.refund', 'order', o.orderNo, before, { status: 'REFUNDED', amount, reason })
   return null
 })
 

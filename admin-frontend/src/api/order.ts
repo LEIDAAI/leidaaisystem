@@ -10,10 +10,6 @@ export function getOrderDetail(id: number): Promise<OrderDetail> {
   return get<OrderDetail>(`/orders/${id}`)
 }
 
-export function refundOrder(id: number, reason: string, amount: number): Promise<null> {
-  return post<null>(`/orders/${id}/refund`, { reason, amount })
-}
-
 export function updateOrderRemark(id: number, remark: string): Promise<null> {
   return put<null>(`/orders/${id}/remark`, { remark })
 }

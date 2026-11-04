@@ -39,7 +39,7 @@ const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY:
 /** v11 订单来源中文标签 */
 const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
 
-const TYPE_LABELS: Record<string, string> = { PAY: '支付', REFUND: '退款' }
+const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
 </script>
 
 <template>
@@ -61,7 +61,6 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付', REFUND: '退款' }
           <el-descriptions-item label="优惠金额">{{ formatAmount(detail.discountAmount) }}</el-descriptions-item>
           <el-descriptions-item label="实付金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
           <el-descriptions-item label="支付时间">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
-          <el-descriptions-item label="退款时间">{{ formatDateTime(detail.refundedAt) }}</el-descriptions-item>
           <el-descriptions-item label="下单时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="支付渠道">{{ CHANNEL_LABELS[detail.payChannel] ?? detail.payChannel }}</el-descriptions-item>
           <el-descriptions-item label="备注">{{ orDash(detail.remark) }}</el-descriptions-item>

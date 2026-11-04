@@ -38,7 +38,6 @@ const orderStatuses = computed(() => {
   return [
     { label: '待支付', value: d.orderPending, color: '#dba24c', pct: Math.round(d.orderPending / total * 100) },
     { label: '已支付', value: d.orderPaid, color: '#169b82', pct: Math.round(d.orderPaid / total * 100) },
-    { label: '已退款', value: d.orderRefunded, color: '#e06c75', pct: Math.round(d.orderRefunded / total * 100) },
     { label: '已关闭', value: d.orderClosed, color: '#95a49c', pct: Math.round(d.orderClosed / total * 100) },
   ]
 })
@@ -119,7 +118,7 @@ const expertMax = computed(() => Math.max(1, ...(data.value?.chatsByExpert.map(e
 
 /* ── 状态 helpers ── */
 const orderStatusTag = (s: string) => {
-  const map: Record<string, { type: string; text: string }> = { PENDING: { type: 'warning', text: '待支付' }, PAID: { type: 'success', text: '已支付' }, REFUNDED: { type: 'danger', text: '已退款' }, CLOSED: { type: 'info', text: '已关闭' } }
+  const map: Record<string, { type: string; text: string }> = { PENDING: { type: 'warning', text: '待支付' }, PAID: { type: 'success', text: '已支付' }, CLOSED: { type: 'info', text: '已关闭' } }
   return map[s] || { type: 'info', text: s }
 }
 const payChannelText = (c: string) => c === 'WECHAT' ? '微信' : c === 'ALIPAY' ? '支付宝' : c

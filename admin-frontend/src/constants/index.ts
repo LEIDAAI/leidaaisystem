@@ -12,7 +12,6 @@ export interface TagItem {
 export const ORDER_STATUS: Record<string, TagItem> = {
   PENDING: { label: '待支付', type: 'warning' },
   PAID: { label: '已支付', type: 'success' },
-  REFUNDED: { label: '已退款', type: 'danger' },
   CLOSED: { label: '已关闭', type: 'info' }
 }
 

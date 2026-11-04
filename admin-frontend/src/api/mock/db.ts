@@ -73,7 +73,7 @@ export interface MockUser {
 export interface MockTxn {
   id: number
   txnNo: string
-  type: 'PAY' | 'REFUND'
+  type: 'PAY'
   /** v11：手工订单使用 OFFLINE（线下录入）渠道 */
   payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
   amount: number
@@ -87,7 +87,7 @@ export interface MockOrder {
   userId: number
   planId: number
   planName: string
-  /** 实付金额（退款按此金额全额退） */
+  /** 实付金额 */
   amount: number
   goodsAmount: number
   discountAmount: number
@@ -97,10 +97,9 @@ export interface MockOrder {
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: 'ONLINE' | 'MANUAL' | 'GIFT'
   payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
-  status: 'PENDING' | 'PAID' | 'REFUNDED' | 'CLOSED'
+  status: 'PENDING' | 'PAID' | 'CLOSED'
   remark: string
   paidAt: string | null
-  refundedAt: string | null
   createdAt: string
   transactions: MockTxn[]
 }
@@ -176,7 +175,6 @@ const PERMISSIONS: MockPermission[] = [
   { id: 6, code: 'user:ban', name: '用户封禁', module: 'user', type: 2, sort: 21 },
   { id: 7, code: 'user:entitlement', name: '用户权益调整', module: 'user', type: 2, sort: 22 },
   { id: 8, code: 'order:view', name: '订单查看', module: 'order', type: 1, sort: 30 },
-  { id: 9, code: 'order:refund', name: '订单退款', module: 'order', type: 2, sort: 31 },
   { id: 10, code: 'order:export', name: '订单导出', module: 'order', type: 2, sort: 32 },
   { id: 19, code: 'order:remark', name: '订单备注', module: 'order', type: 2, sort: 33 },
   { id: 11, code: 'plan:manage', name: '套餐管理', module: 'plan', type: 1, sort: 40 },
@@ -198,7 +196,7 @@ const PERMISSIONS: MockPermission[] = [
 ;([['expert:export','专家导出','expert',52]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 31, code, name, module, type: 2, sort }))
 // v7 新增：知识库管理权限点
 ;([['knowledge:view','知识库查看','knowledge',80,1],['knowledge:edit','知识库编辑','knowledge',81,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 32+i, code, name, module, type, sort }))
-// v11 新增：手工/赠送订单创建权限点（授予所有已持有 order:refund 的角色）
+// v11 新增：手工/赠送订单创建权限点（授予 OPS 运营角色）
 ;([['order:create','订单创建','order',45]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 34, code, name, module, type: 2, sort }))
 // v15 新增：反馈管理权限点（对话管理下的前台反馈处理页；授予 OPS/SUPPORT，见版本迁移）
 ;([['feedback:view','反馈查看','feedback',83,1],['feedback:manage','反馈处理','feedback',84,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 35+i, code, name, module, type, sort }))
@@ -211,7 +209,7 @@ export const V5_PERMISSION_IDS = [29, 30]
 export const V6_PERMISSION_IDS = [31]
 /** v7 新增权限点 id（知识库管理；授予所有已持有 expert:edit 的角色） */
 export const V7_PERMISSION_IDS = [32, 33]
-/** v11 新增权限点 id（订单创建；授予所有已持有 order:refund 的角色） */
+/** v11 新增权限点 id（订单创建；授予 OPS 运营角色） */
 export const V11_PERMISSION_IDS = [34]
 /** v15 新增权限点 id（反馈管理；授予 OPS/SUPPORT 角色） */
 export const V15_PERMISSION_IDS = [35, 36]
@@ -225,7 +223,7 @@ const ROLES: MockRole[] = [
     name: '运营',
     remark: '套餐/用户/订单',
     status: 1,
-    permissionIds: [1, 5, 6, 7, 8, 9, 10, 11, 19],
+    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34],
     createdAt: daysAgo(280)
   },
   // v5：模型管理仅超管/运营持有；客服与只读均不授予（无模型菜单，见下方无条件回收）
@@ -364,10 +362,9 @@ function buildOrders(users: MockUser[]): MockOrder[] {
     const planId = user ? user.planId : 2
     const plan = PLANS[planId - 1]
     const payChannel: MockTxn['payChannel'] = i % 2 === 0 ? 'WECHAT' : 'ALIPAY'
-    const status: MockOrder['status'] = i % 10 === 0 ? 'PENDING' : i % 10 === 1 ? 'REFUNDED' : i % 10 === 2 ? 'CLOSED' : 'PAID'
+    const status: MockOrder['status'] = i % 10 === 0 ? 'PENDING' : i % 10 === 2 ? 'CLOSED' : 'PAID'
     const createdAt = daysAgo(60 - (i % 55), 8 + (i % 14))
     const paidAt = status === 'PENDING' || status === 'CLOSED' ? null : fmt(dayjs(createdAt).add(6, 'minute'))
-    const refundedAt = status === 'REFUNDED' && paidAt ? fmt(dayjs(paidAt).add(1, 'day')) : null
     const transactions: MockTxn[] = []
     if (paidAt) {
       transactions.push({
@@ -378,17 +375,6 @@ function buildOrders(users: MockUser[]): MockOrder[] {
         amount: plan.price,
         status: 'SUCCESS',
         createdAt: paidAt
-      })
-    }
-    if (refundedAt) {
-      transactions.push({
-        id: ++txnId,
-        txnNo: `RFD2026${String(30000000 + i)}`,
-        type: 'REFUND',
-        payChannel,
-        amount: plan.price,
-        status: 'SUCCESS',
-        createdAt: refundedAt
       })
     }
     orders.push({
@@ -408,7 +394,6 @@ function buildOrders(users: MockUser[]): MockOrder[] {
       status,
       remark: ORDER_REMARKS[i % ORDER_REMARKS.length],
       paidAt,
-      refundedAt,
       createdAt,
       transactions
     })
@@ -503,15 +488,6 @@ const AUDIT_SAMPLES: Array<{
       objectId: String(4 + (i % 30)),
       before: { status: 1 },
       after: { status: 0, reason: '违规使用批量注册，封禁处理' }
-    })
-  },
-  {
-    action: 'order.refund',
-    objectType: 'order',
-    build: (i) => ({
-      objectId: `ORD2026${String(10000000 + (i % 40) + 1)}`,
-      before: { status: 'PAID' },
-      after: { status: 'REFUNDED', amount: [99, 299, 2999][i % 3], reason: '用户重复支付' }
     })
   },
   {
@@ -730,7 +706,7 @@ if (storedVersion < 11) {
       planId: manualPlan.id, planName: manualPlan.name, amount: Number(manualPlan.price), goodsAmount: Number(manualPlan.price), discountAmount: 0,
       remainingCredits: 5000, durationMonths: Math.max(1, Math.round(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
       payChannel: 'OFFLINE', status: 'PAID', remark: '线下对公转账，人工核实到账后录入',
-      paidAt: mat, refundedAt: null, createdAt: mat,
+      paidAt: mat, createdAt: mat,
       transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + mid)}`, type: 'PAY', payChannel: 'OFFLINE', amount: Number(manualPlan.price), status: 'SUCCESS', createdAt: mat }]
     })
   }
@@ -743,11 +719,11 @@ if (storedVersion < 11) {
       planId: giftPlan.id, planName: giftPlan.name, amount: 0, goodsAmount: 0, discountAmount: 0,
       remainingCredits: 1000, durationMonths: Number(giftPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), last7DaysUsage: 0,
       payChannel: 'OFFLINE', status: 'PAID', remark: '新客体验赠送',
-      paidAt: gat, refundedAt: null, createdAt: gat, transactions: []
+      paidAt: gat, createdAt: gat, transactions: []
     })
   }
-  // 4) 新权限点 order:create：授予所有已持有 order:refund(id 9) 的角色（能力不回退；超管由上方全量覆盖自动获得）
-  db.roles.filter((r) => r.permissionIds.includes(9)).forEach((r) => { r.permissionIds = [...new Set([...r.permissionIds, ...V11_PERMISSION_IDS])] })
+  // 4) 新权限点 order:create：授予 OPS 运营角色（原基于已下线的 order:refund，能力不回退；超管由上方全量覆盖自动获得）
+  db.roles.filter((r) => r.code === 'OPS').forEach((r) => { r.permissionIds = [...new Set([...r.permissionIds, ...V11_PERMISSION_IDS])] })
 }
 if (storedVersion < 12) {
   // v12 知识库前端可见性（v14 与专家/MCP 同款三段设置）：存量按 access 幂等回填 visibility（PRIVATE→内部隐藏，其余→全员可见）

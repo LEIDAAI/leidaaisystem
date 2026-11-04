@@ -10,7 +10,7 @@ export interface ChatAnalysis { steps:ChatAnalysisStep[];table:ChatAnalysisTable
 export interface NameCount { name:string;count:number }
 export interface Dashboard {
   source:string;userTotal:number;userToday:number;userActive:number;userBanned:number
-  orderTotal:number;orderPending:number;orderPaid:number;orderRefunded:number;orderClosed:number;orderWechat:number;orderAlipay:number
+  orderTotal:number;orderPending:number;orderPaid:number;orderClosed:number;orderWechat:number;orderAlipay:number
   revenueTotal:number;chatTotal:number;chatToday:number;chatMessages:number
   expertTotal:number;skillTotal:number;serverTotal:number
   trend:Array<{date:string;users:number;orders:number;chats:number}>
