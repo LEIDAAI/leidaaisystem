@@ -5,6 +5,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import { getFeedbackDetail } from '@/api/feedback'
 import type { FeedbackDetail } from '@/api/types'
 import { formatDateTime, orDash } from '@/utils/format'
+import { feedbackImageSrc } from '@/utils/feedback'
 
 interface Props {
   modelValue: boolean
@@ -52,9 +53,21 @@ watch(visible, async (value) => {
           </el-descriptions-item>
           <el-descriptions-item label="附图" :span="2">
             <template v-if="detail.images.length">
-              <el-tag v-for="img in detail.images" :key="img" size="small" type="info" disable-transitions class="img-chip">
-                {{ img }}
-              </el-tag>
+              <div class="img-grid">
+                <div v-for="(img, i) in detail.images" :key="img" class="img-item">
+                  <el-image
+                    class="img-lg"
+                    :src="feedbackImageSrc(img)"
+                    :preview-src-list="detail.images.map(feedbackImageSrc)"
+                    :initial-index="i"
+                    :z-index="3000"
+                    fit="cover"
+                    preview-teleported
+                    hide-on-click-modal
+                  />
+                  <span class="img-name" :title="img">{{ img }}</span>
+                </div>
+              </div>
             </template>
             <span v-else>-</span>
           </el-descriptions-item>
@@ -94,8 +107,32 @@ watch(visible, async (value) => {
   word-break: break-all;
 }
 
-.img-chip {
-  margin: 0 8px 6px 0;
+.img-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.img-item {
+  width: 104px;
+}
+
+.img-lg {
+  width: 104px;
+  height: 76px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid #ebeef5;
+}
+
+.img-name {
+  display: block;
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-ref {

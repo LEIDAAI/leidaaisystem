@@ -7,7 +7,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import { deleteFeedback, handleFeedback, listFeedbacks } from '@/api/feedback'
 import type { FeedbackItem, FeedbackQuery, ProTableHandle } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
-import { confirmAction } from '@/utils/feedback'
+import { confirmAction, feedbackImageSrc } from '@/utils/feedback'
 import FeedbackDetailDrawer from './FeedbackDetailDrawer.vue'
 
 const tableRef = ref<ProTableHandle | null>(null)
@@ -163,9 +163,23 @@ async function handleDelete(row: FeedbackItem) {
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="附图" width="80" align="center">
+        <el-table-column label="附图" width="150">
           <template #default="{ row }">
-            <span v-if="row.images.length">{{ row.images.length }} 张</span>
+            <div v-if="row.images.length" class="img-thumbs">
+              <el-image
+                v-for="(img, i) in row.images.slice(0, 3)"
+                :key="img"
+                class="img-thumb"
+                :src="feedbackImageSrc(img)"
+                :preview-src-list="row.images.map(feedbackImageSrc)"
+                :initial-index="i"
+                :z-index="3000"
+                fit="cover"
+                preview-teleported
+                hide-on-click-modal
+              />
+              <span v-if="row.images.length > 3" class="muted">+{{ row.images.length - 3 }}</span>
+            </div>
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
@@ -229,3 +243,19 @@ async function handleDelete(row: FeedbackItem) {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.img-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.img-thumb {
+  width: 44px;
+  height: 32px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+</style>

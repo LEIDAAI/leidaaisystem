@@ -15,6 +15,8 @@ const query=reactive({phone:'',expertId:'',keyword:'',start:'',end:'',deleted:''
 const userRows=ref<UserChatRow[]>([]),total=ref(0),loading=ref(false)
 const curUser=ref<UserChatRow>(),userChats=ref<ChatItem[]>([]),userLoading=ref(false)
 const curChat=ref<ChatItem>(),messages=ref<Message[]>([]),analysis=ref<ChatAnalysis>(),detailLoading=ref(false)
+/** 提问级分析：askIdx = 该会话内第 N 次用户提问（0 基），null = 整个会话 */
+const askIdx=ref<number|null>(null)
 /** 进入详情前的来源视图，返回时按来源回跳 */
 const chatFrom=ref<'list'|'user'>('user')
 const tableRows=computed(()=>analysis.value ? analysis.value.table.rows.map(r=>Object.fromEntries(r.map((v,i)=>[`c${i}`,v]))) : [])
@@ -23,7 +25,14 @@ async function search(){query.page=1;await load()}
 /** 聚合行的最新对话 → ChatItem（供打开对话详情） */
 function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,title:row.latest.title,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason}}
 async function openUser(row:UserChatRow){view.value='user';curUser.value=row;userChats.value=[];userLoading.value=true;try{const data=await listChats({userId:row.userId,deleted:'all',page:1,pageSize:100});userChats.value=data.list}finally{userLoading.value=false}}
-async function openChat(row:ChatItem){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';curChat.value=row;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;detailLoading.value=true;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id)]);messages.value=ms;analysis.value=an}finally{detailLoading.value=false}}
+async function openChat(row:ChatItem,idx?:number){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';curChat.value=row;askIdx.value=idx??null;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;detailLoading.value=true;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id,idx===undefined?undefined:idx)]);messages.value=ms;analysis.value=an}finally{detailLoading.value=false}}
+/** 二级行展开：会话ID → 该会话每次用户提问（脱敏），首次展开懒加载 */
+const askCache=ref<Record<number,Message[]>>({}),askLoading=ref<Record<number,boolean>>({})
+async function onExpandChat(row:ChatItem,expanded:ChatItem[]){if(!expanded.includes(row)||askCache.value[row.id])return;askLoading.value={...askLoading.value,[row.id]:true};try{const ms=await chatMessages(row.id);askCache.value={...askCache.value,[row.id]:ms.filter(m=>m.role==='user')}}finally{askLoading.value={...askLoading.value,[row.id]:false}}}
+/** 提问模式下的对话范围：该条用户消息 → 下一条用户消息之前（即这次提问的完整问答过程） */
+const askBounds=computed(()=>{if(askIdx.value===null)return null;let n=0;for(let i=0;i<messages.value.length;i++){if(messages.value[i].role!=='user')continue;if(n===askIdx.value){let end=messages.value.length;for(let j=i+1;j<messages.value.length;j++)if(messages.value[j].role==='user'){end=j;break}return [i,end] as const}n++}return null})
+const visibleMessages=computed(()=>askBounds.value?messages.value.slice(askBounds.value[0],askBounds.value[1]):messages.value)
+const askContent=computed(()=>askBounds.value?messages.value[askBounds.value[0]]:null)
 function backToList(){view.value='list';load()}
 function backToUser(){if(chatFrom.value==='user'&&curUser.value)openUser(curUser.value);else backToList()}
 async function restore(row:ChatItem){try{await ElMessageBox.confirm(`恢复会话 ${row.id}？恢复后用户可继续该会话`,'确认恢复')}catch{return}await restoreChat(row.id);if(curUser.value)await openUser(curUser.value);await load()}
@@ -85,7 +94,22 @@ onMounted(load)
     <el-descriptions-item label="地区">{{curUser?.region || '—'}}</el-descriptions-item>
     <el-descriptions-item label="对话总数">{{curUser?.chatCount}}（正常 {{curUser?.activeCount}}）</el-descriptions-item>
   </el-descriptions>
-  <el-table v-loading="userLoading" :data="userChats" :max-height="chatsMax" scrollbar-always-on :ref="bindChats">
+  <el-table v-loading="userLoading" :data="userChats" :max-height="chatsMax" scrollbar-always-on :ref="bindChats" @expand-change="onExpandChat">
+    <el-table-column type="expand">
+      <template #default="{row}">
+        <div v-loading="!!askLoading[row.id]" class="ask-expansion">
+          <template v-if="askCache[row.id]?.length">
+            <div v-for="(m,i) in askCache[row.id]" :key="i" class="ask-row">
+              <el-tag size="small" effect="plain" class="ask-no">第 {{ i + 1 }} 问</el-tag>
+              <span class="ask-content" :title="m.content">{{ m.content }}</span>
+              <small class="ask-time">{{ m.createdAt }}</small>
+              <el-button link type="primary" @click="openChat(row, i)">查看分析</el-button>
+            </div>
+          </template>
+          <el-empty v-else-if="!askLoading[row.id]" description="该会话无用户提问记录" :image-size="48" />
+        </div>
+      </template>
+    </el-table-column>
     <el-table-column prop="id" label="会话ID" width="80"/>
     <el-table-column prop="title" label="对话标题" min-width="180" show-overflow-tooltip/>
     <el-table-column prop="createdAt" label="发起时间" min-width="165"/>
@@ -98,7 +122,7 @@ onMounted(load)
 </el-card>
 <!-- 视图三：对话详情 —— 左侧分析过程+结果卡片（可点击），右侧预览面板（表格/报告标签，对齐前台 AI 对话） -->
 <el-card v-else shadow="never">
-  <el-page-header @back="backToUser" content="会话详情" style="margin-bottom:8px">
+  <el-page-header @back="backToUser" :content="askIdx!==null?`会话详情 · 第 ${askIdx+1} 次提问分析`:'会话详情'" style="margin-bottom:8px">
     <template #extra>
       <el-button v-if="curChat && !curChat.deletedAt && canDelete" type="danger" plain size="small" @click="removeCurrent">软删除</el-button>
       <el-button v-else-if="curChat && curChat.deletedAt && canRestore" type="warning" size="small" @click="restoreCurrent">恢复会话</el-button>
@@ -114,6 +138,14 @@ onMounted(load)
   <div v-loading="detailLoading" class="chat-detail" style="min-height:160px">
     <template v-if="analysis">
       <div class="detail-main">
+        <!-- 提问模式：本次分析针对的用户问题横幅 -->
+        <div v-if="askContent" class="ask-banner">
+          <el-tag type="primary" effect="dark" size="small" class="ask-banner-no">第 {{ (askIdx ?? 0) + 1 }} 问</el-tag>
+          <div class="ask-banner-main">
+            <span class="ask-banner-text">{{ askContent.content }}</span>
+            <small class="ask-banner-time">{{ askContent.createdAt }} · 以下为这次提问的对话过程与结果</small>
+          </div>
+        </div>
         <h4>分析过程</h4>
         <el-timeline style="padding-left:6px;margin:14px 0 26px">
           <el-timeline-item v-for="(s,i) in analysis.steps" :key="i" :timestamp="`${s.at.slice(0,16).replace('T',' ')} · 耗时 ${s.durationSec}s`" placement="top" :type="i===analysis.steps.length-1?'success':'primary'">
@@ -137,9 +169,9 @@ onMounted(load)
           </div>
         </div>
         <el-collapse style="margin-top:26px">
-          <el-collapse-item title="对话消息（已脱敏）">
-            <article v-for="(m,i) in messages" :key="i" style="padding:10px 0;border-bottom:1px solid #eee"><strong>{{m.role==='user'?'用户':'助手'}}</strong><small> · {{m.createdAt}}</small><p style="white-space:pre-wrap;margin:6px 0 0">{{m.content}}</p></article>
-            <el-empty v-if="!messages.length" description="无消息记录" :image-size="60"/>
+          <el-collapse-item :title="askIdx!==null?'本次提问对话（已脱敏）':'对话消息（已脱敏）'">
+            <article v-for="(m,i) in visibleMessages" :key="i" style="padding:10px 0;border-bottom:1px solid #eee"><strong>{{m.role==='user'?'用户':'助手'}}</strong><small> · {{m.createdAt}}</small><p style="white-space:pre-wrap;margin:6px 0 0">{{m.content}}</p></article>
+            <el-empty v-if="!visibleMessages.length" description="无消息记录" :image-size="60"/>
           </el-collapse-item>
         </el-collapse>
       </div>
@@ -236,4 +268,17 @@ onMounted(load)
 .pv-num{min-width:46px}
 .pv-spacer{flex:1}
 .pv-meta-inline{color:#c0c4cc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 二级行展开：该会话每次用户提问 */
+.ask-expansion{padding:4px 16px 8px 40px}
+.ask-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed #ebeef5}
+.ask-row:last-child{border-bottom:none}
+.ask-no{flex-shrink:0}
+.ask-content{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#303133;font-size:13px}
+.ask-time{color:#909399;flex-shrink:0}
+/* 三级提问模式：问题横幅 */
+.ask-banner{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;margin-bottom:20px;background:#ecf5ff;border:1px solid #d9ecff;border-radius:8px}
+.ask-banner-no{flex-shrink:0;margin-top:1px}
+.ask-banner-main{flex:1;min-width:0}
+.ask-banner-text{display:block;color:#303133;font-size:14px;font-weight:600;white-space:pre-wrap;word-break:break-all}
+.ask-banner-time{display:block;color:#909399;font-size:12px;margin-top:4px}
 </style>
