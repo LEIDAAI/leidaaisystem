@@ -117,7 +117,7 @@ onMounted(load)
     <el-table-column prop="messageCount" label="消息数" width="80" align="center"/>
     <el-table-column prop="summary" label="脱敏摘要" min-width="240" show-overflow-tooltip/>
     <el-table-column label="状态" width="100"><template #default="{row}">{{row.deletedAt?'已删除':'正常'}}</template></el-table-column>
-    <el-table-column label="操作" min-width="215" fixed="right"><template #default="{row}"><el-button link type="primary" @click="openChat(row)">查看分析</el-button><el-button v-if="row.deletedAt && canRestore" link @click="restore(row)">恢复</el-button><el-dropdown v-if="canExport" @command="(cmd: string | number | object) => download(row, String(cmd))"><el-button link type="primary">导出 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="json">JSON</el-dropdown-item><el-dropdown-item command="csv">CSV</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
+    <el-table-column label="操作" min-width="215" fixed="right"><template #default="{row}"><div class="cell-ops"><el-button link type="primary" @click="openChat(row)">查看分析</el-button><el-button v-if="row.deletedAt && canRestore" link @click="restore(row)">恢复</el-button><el-dropdown v-if="canExport" @command="(cmd: string | number | object) => download(row, String(cmd))"><el-button link type="primary">导出 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="json">JSON</el-dropdown-item><el-dropdown-item command="csv">CSV</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
   </el-table>
 </el-card>
 <!-- 视图三：对话详情 —— 左侧分析过程+结果卡片（可点击），右侧预览面板（表格/报告标签，对齐前台 AI 对话） -->
@@ -221,6 +221,9 @@ onMounted(load)
 </template>
 <style scoped>
 .ellipsis{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#666;font-size:13px;margin-top:4px}
+/* 二级操作列：flex 容器统一基线（裸 link 按钮与 el-dropdown 内嵌按钮垂直对齐） */
+.cell-ops{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.cell-ops .el-button+.el-button{margin-left:0}
 /* 三级详情：左主区 + 右预览面板 */
 .chat-detail{display:flex;gap:18px;align-items:stretch}
 .detail-main{flex:1;min-width:0}
