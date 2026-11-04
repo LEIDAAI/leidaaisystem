@@ -2,7 +2,7 @@ import dayjs from 'dayjs'
 import type { ConfigItem, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
 import { PLATFORMS } from '../config'
 
-export interface Chat { id: number; userId: number; expertId: number; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
+export interface Chat { id: number; userId: number; expertId: number; /** 会话标题（用户发起时的主题短句，对齐前台会话名） */ title: string; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
 export interface ConfigVersion { version: number; versionName?: string; operator?: string; note: string; createdAt: string; snapshot: ConfigItem }
 export interface Extensions {
   models: LlmModelRow[]
@@ -545,7 +545,7 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
       const base = Date.now()-(i*37+(i%4)*5)*3600000
       const t=(min:number)=>new Date(base+min*60000).toISOString()
       const topic=CHAT_TOPICS[i%CHAT_TOPICS.length]
-      const chat: Chat = { id:i+1,userId:i%8+1,expertId:i%3+1,createdAt:t(0),deletedAt:i===7?new Date(Date.now()-86400000).toISOString():null,deleteReason:i===7?'用户申请删除，消息含个人联系方式':'',messages:[
+      const chat: Chat = { id:i+1,userId:i%8+1,expertId:i%3+1,title:topic,createdAt:t(0),deletedAt:i===7?new Date(Date.now()-86400000).toISOString():null,deleteReason:i===7?'用户申请删除，消息含个人联系方式':'',messages:[
         { role:'user',content:`${topic}，预算 50-200 元，帮我分析下竞争和利润，联系 demo${i}@example.com 手机13800138000`,createdAt:t(0) },
         { role:'assistant',content:`收到，开始分析「${topic}」：先按平台检索候选商品，再做价格带与竞争度评估。`,createdAt:t(1) },
         { role:'assistant',content:'候选商品已检索完成，正在进行销量趋势与毛利率测算…',createdAt:t(2) },

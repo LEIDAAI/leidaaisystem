@@ -776,6 +776,14 @@ if (storedVersion < 15) {
   if (!Array.isArray(db.feedbacks)) db.feedbacks = buildFeedbacks(db.users, db.chats)
   db.roles.filter(r => r.code === 'OPS' || r.code === 'SUPPORT').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, ...V15_PERMISSION_IDS])] })
 }
+if (storedVersion < 16) {
+  // v16 对话标题：存量会话按首条用户消息幂等回填（取首个标点前的主题短句、截断 24 字，避免带出「，预算…」尾巴）
+  db.chats.forEach(c => {
+    if (c.title) return
+    const first = c.messages.find(m => m.role === 'user')?.content || ''
+    c.title = first.split(/[，。！？；;,.!?：:、]/)[0].trim().slice(0, 24) || `会话 #${c.id}`
+  })
+}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
@@ -808,7 +816,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 15,
+        version: 16,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],

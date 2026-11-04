@@ -21,7 +21,7 @@ const tableRows=computed(()=>analysis.value ? analysis.value.table.rows.map(r=>O
 async function load(){loading.value=true;try{const data=await listChatUsers(query);if(!data.list.length&&query.page>1){query.page--;await load();return}userRows.value=data.list;total.value=data.total}finally{loading.value=false}}
 async function search(){query.page=1;await load()}
 /** 聚合行的最新对话 → ChatItem（供打开对话详情） */
-function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason}}
+function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,title:row.latest.title,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason}}
 async function openUser(row:UserChatRow){view.value='user';curUser.value=row;userChats.value=[];userLoading.value=true;try{const data=await listChats({userId:row.userId,deleted:'all',page:1,pageSize:100});userChats.value=data.list}finally{userLoading.value=false}}
 async function openChat(row:ChatItem){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';curChat.value=row;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;detailLoading.value=true;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id)]);messages.value=ms;analysis.value=an}finally{detailLoading.value=false}}
 function backToList(){view.value='list';load()}
@@ -99,6 +99,7 @@ onMounted(load)
     <el-table-column label="用户" min-width="140"><template #default="{row}"><b>{{row.nickname}}</b> <small style="color:#999">#{{row.userId}}</small><br/><small style="color:#999">{{row.region}}</small></template></el-table-column>
     <el-table-column prop="phone" label="手机号" width="125"/>
     <el-table-column label="对话数" width="85" align="center"><template #default="{row}">{{row.chatCount}}<small v-if="row.chatCount>row.activeCount" style="color:#f56c6c"><br/>删{{row.chatCount-row.activeCount}}</small></template></el-table-column>
+    <el-table-column label="对话标题" min-width="180"><template #default="{row}"><span class="ellipsis" :title="row.latest.title">{{row.latest.title || '—'}}</span></template></el-table-column>
     <el-table-column label="最新对话" min-width="270"><template #default="{row}"><el-tag size="small">{{row.latest.expertName || '—'}}</el-tag><div class="ellipsis">{{row.latest.summary}}</div></template></el-table-column>
     <el-table-column prop="latest.createdAt" label="最新对话时间" min-width="165"/>
     <el-table-column label="最新对话状态" width="115"><template #default="{row}">{{row.latest.deletedAt?'已删除':'正常'}}<small v-if="row.latest.deletedAt"><br/>{{row.latest.deleteReason}}</small></template></el-table-column>
@@ -173,6 +174,7 @@ onMounted(load)
       </template>
     </el-table-column>
     <el-table-column prop="id" label="会话ID" width="80"/>
+    <el-table-column prop="title" label="对话标题" min-width="180" show-overflow-tooltip/>
     <el-table-column prop="createdAt" label="发起时间" min-width="165"/>
     <el-table-column label="专家" min-width="130"><template #default="{row}">{{row.expertName || '—'}}</template></el-table-column>
     <el-table-column prop="messageCount" label="消息数" width="80" align="center"/>

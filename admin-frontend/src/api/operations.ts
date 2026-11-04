@@ -1,8 +1,8 @@
 import { get, post, del, exportCsv } from './request'
-export interface ChatItem { id:number;userId:number;expertId:number;expertName:string|null;summary:string;messageCount:number;createdAt:string;deletedAt:string|null;deleteReason:string;phone?:string;nickname?:string }
+export interface ChatItem { id:number;userId:number;expertId:number;title:string;expertName:string|null;summary:string;messageCount:number;createdAt:string;deletedAt:string|null;deleteReason:string;phone?:string;nickname?:string }
 export interface Message { role:string;content:string;createdAt:string }
 /** 对话管理（用户视角）：一行 = 一个用户 + 其最新一条对话 */
-export interface UserChatRow { userId:number;nickname:string;phone:string;region:string;chatCount:number;activeCount:number;latest:Pick<ChatItem,'id'|'expertId'|'expertName'|'summary'|'messageCount'|'createdAt'|'deletedAt'|'deleteReason'> }
+export interface UserChatRow { userId:number;nickname:string;phone:string;region:string;chatCount:number;activeCount:number;latest:Pick<ChatItem,'id'|'expertId'|'title'|'expertName'|'summary'|'messageCount'|'createdAt'|'deletedAt'|'deleteReason'> }
 /** 会话分析产物：分析过程步骤 + 候选对比表格 + HTML 报告 */
 export interface ChatAnalysisStep { title:string;detail:string;tools:string[];durationSec:number;at:string }
 export interface ChatAnalysisTable { title:string;columns:string[];rows:string[][] }
