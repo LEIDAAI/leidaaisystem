@@ -55,7 +55,6 @@ export interface MockLoginLog {
 
 export interface MockUser {
   id: number
-  nickname: string
   phone: string
   email: string
   wechatNickname: string
@@ -279,7 +278,7 @@ const REGIONS = [
   '四川成都', '湖北武汉', '陕西西安', '福建厦门', '山东青岛', '湖南长沙', '河南郑州', '重庆',
   '天津', '安徽合肥', '辽宁沈阳', '河北石家庄'
 ]
-/** 微信昵称与用户昵称取不同偏移，保证两者不同名（buildUsers 与 v9 存量迁移共用） */
+/** 微信昵称生成（buildUsers 与 v9 存量迁移共用） */
 export function userWechatNickname(i: number): string {
   return NICKNAMES[(i + 13) % NICKNAMES.length]
 }
@@ -317,7 +316,6 @@ function buildUsers(): MockUser[] {
     }))
     users.push({
       id: i,
-      nickname: NICKNAMES[i - 1],
       phone: maskedPhone(i),
       email: `${EMAIL_PREFIXES[i - 1]}${i}@${EMAIL_DOMAINS[i % EMAIL_DOMAINS.length]}`,
       wechatNickname: userWechatNickname(i),

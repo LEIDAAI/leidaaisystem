@@ -191,7 +191,6 @@ async function cancelEditEntitlements() {
         <el-tab-pane label="基本资料" name="profile">
           <el-descriptions :column="2" border>
             <el-descriptions-item label="用户ID">{{ detail.profile.id }}</el-descriptions-item>
-            <el-descriptions-item label="昵称">{{ detail.profile.nickname }}</el-descriptions-item>
             <el-descriptions-item label="手机号">{{ orDash(detail.profile.phone) }}</el-descriptions-item>
             <el-descriptions-item label="邮箱">{{ orDash(detail.profile.email) }}</el-descriptions-item>
             <el-descriptions-item label="状态">

@@ -39,7 +39,7 @@ function derivePlanEntitlements(planId:number): Entitlement[] {
 function entitledBy(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): string[] {
   const by: string[] = []
   db.plans.forEach(p=>(p.entitlements||[]).forEach(e=>{ if(e.resourceType===resourceType && ids.includes(e.resourceId)) by.push(`套餐「${p.name}」`) }))
-  db.users.forEach(u=>(u.entitlements||[]).forEach(e=>{ if(e.resourceType===resourceType && ids.includes(e.resourceId)) by.push(`用户「${u.nickname}#${u.id}」`) }))
+  db.users.forEach(u=>(u.entitlements||[]).forEach(e=>{ if(e.resourceType===resourceType && ids.includes(e.resourceId)) by.push(`用户「${u.wechatNickname}#${u.id}」`) }))
   return [...new Set(by)]
 }
 

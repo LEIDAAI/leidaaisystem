@@ -74,7 +74,7 @@ onMounted(load)
     <el-button type="primary" @click="search">查询</el-button>
   </el-form>
   <el-table v-loading="loading" :data="userRows" :max-height="listMax" scrollbar-always-on :ref="bindList">
-    <el-table-column label="用户" min-width="140"><template #default="{row}"><b>{{row.nickname}}</b> <small style="color:#999">#{{row.userId}}</small><br/><small style="color:#999">{{row.region}}</small></template></el-table-column>
+    <el-table-column label="用户" min-width="140"><template #default="{row}"><b>{{row.wechatNickname}}</b> <small style="color:#999">#{{row.userId}}</small><br/><small style="color:#999">{{row.region}}</small></template></el-table-column>
     <el-table-column prop="phone" label="手机号" width="125"/>
     <el-table-column label="对话数" width="85" align="center"><template #default="{row}">{{row.chatCount}}<small v-if="row.chatCount>row.activeCount" style="color:#f56c6c"><br/>删{{row.chatCount-row.activeCount}}</small></template></el-table-column>
     <el-table-column label="对话标题" min-width="180"><template #default="{row}"><span class="ellipsis" :title="row.latest.title">{{row.latest.title || '—'}}</span></template></el-table-column>
@@ -87,7 +87,7 @@ onMounted(load)
 </el-card>
 <!-- 视图二：用户详情 —— 该用户每次发起的对话列表 -->
 <el-card v-else-if="view==='user'" shadow="never">
-  <el-page-header @back="backToList" :content="`${curUser?.nickname}（${curUser?.phone}）的对话列表`" style="margin-bottom:8px"/>
+  <el-page-header @back="backToList" :content="`${curUser?.wechatNickname}（${curUser?.phone}）的对话列表`" style="margin-bottom:8px"/>
   <el-descriptions :column="4" size="small" style="margin:12px 0 16px">
     <el-descriptions-item label="用户ID">#{{curUser?.userId}}</el-descriptions-item>
     <el-descriptions-item label="手机号">{{curUser?.phone}}</el-descriptions-item>
@@ -130,7 +130,7 @@ onMounted(load)
   </el-page-header>
   <el-descriptions :column="5" size="small" border style="margin:12px 0 16px">
     <el-descriptions-item label="会话ID">#{{curChat?.id}}</el-descriptions-item>
-    <el-descriptions-item label="用户">{{curChat?.nickname}} #{{curChat?.userId}}（{{curChat?.phone}}）</el-descriptions-item>
+    <el-descriptions-item label="用户">{{curChat?.wechatNickname}} #{{curChat?.userId}}（{{curChat?.phone}}）</el-descriptions-item>
     <el-descriptions-item label="专家">{{curChat?.expertName || '—'}}</el-descriptions-item>
     <el-descriptions-item label="发起时间">{{curChat?.createdAt}}</el-descriptions-item>
     <el-descriptions-item label="状态">{{curChat?.deletedAt?'已删除':'正常'}}</el-descriptions-item>

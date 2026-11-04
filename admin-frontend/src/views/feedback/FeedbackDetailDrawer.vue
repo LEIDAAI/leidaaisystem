@@ -46,7 +46,7 @@ watch(visible, async (value) => {
           <el-descriptions-item label="状态">
             <StatusTag kind="feedback" :value="detail.status" />
           </el-descriptions-item>
-          <el-descriptions-item label="用户">{{ detail.nickname || detail.wechatNickname || '-' }}（ID: {{ detail.userId }}）</el-descriptions-item>
+          <el-descriptions-item label="用户">{{ detail.wechatNickname || '-' }}（ID: {{ detail.userId }}）</el-descriptions-item>
           <el-descriptions-item label="提交时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="反馈内容" :span="2">
             <div class="content-text">{{ detail.content }}</div>

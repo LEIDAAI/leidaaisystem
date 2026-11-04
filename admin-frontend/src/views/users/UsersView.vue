@@ -49,7 +49,7 @@ function openDetail(row: UserItem) {
 
 // -------------------------------------------------- 封禁 / 解封
 async function handleBan(row: UserItem) {
-  const reason = await promptText(`封禁用户「${row.nickname}」后将无法登录，请填写封禁原因`, '封禁用户', {
+  const reason = await promptText(`封禁用户「${row.wechatNickname}」后将无法登录，请填写封禁原因`, '封禁用户', {
     inputPattern: /^.{2,}$/,
     inputErrorMessage: '请填写至少 2 个字的原因'
   })
@@ -60,7 +60,7 @@ async function handleBan(row: UserItem) {
 }
 
 async function handleUnban(row: UserItem) {
-  const reason = await promptText(`请填写解封用户「${row.nickname}」的原因`, '解封确认', {
+  const reason = await promptText(`请填写解封用户「${row.wechatNickname}」的原因`, '解封确认', {
     inputPattern: /\S.{1,}/,
     inputErrorMessage: '请填写至少 2 个字的原因'
   })
@@ -80,7 +80,7 @@ async function handleUnban(row: UserItem) {
             <el-form-item label="关键词">
               <el-input
                 v-model="filter.keyword"
-                placeholder="昵称 / 手机 / 邮箱 / ID"
+                placeholder="手机 / 邮箱 / ID"
                 clearable
                 style="width: 210px"
                 @keyup.enter="handleSearch"
@@ -113,7 +113,6 @@ async function handleUnban(row: UserItem) {
         </template>
 
         <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="nickname" label="昵称" min-width="130" show-overflow-tooltip />
         <el-table-column prop="phone" label="手机号" min-width="130" />
         <el-table-column prop="wechatNickname" label="微信昵称" min-width="140" show-overflow-tooltip />
         <el-table-column label="状态" width="90">

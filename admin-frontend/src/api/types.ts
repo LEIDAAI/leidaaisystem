@@ -13,7 +13,7 @@ export interface RoleItem extends RolePayload { id: number; status: number; crea
 export interface Permission { id: number; code: string; name: string; type: number; sort: number }
 export interface PermissionModule { module: string; permissions: Permission[] }
 export interface UserQuery { keyword?: string; status?: number | ''; start?: string; end?: string; page?: number; pageSize?: number }
-export interface UserProfile { id: number; nickname: string; phone: string; email: string; status: number; registeredAt: string; lastLoginAt: string | null }
+export interface UserProfile { id: number; phone: string; email: string; status: number; registeredAt: string; lastLoginAt: string | null }
 export interface UserItem extends UserProfile { planName: string; chatCount: number; wechatNickname: string; region: string; expireAt: string | null }
 export interface EntitlementPayload { resourceType: 'EXPERT' | 'SKILL' | 'MCP_TOOL'; resourceId: number; quotaType: 'CHAT_COUNT' | 'SKILL_CALL'; quotaLimit: number; quotaPeriod: 'DAY' | 'MONTH' | 'LIFETIME' }
 export interface Entitlement extends EntitlementPayload { resourceName: string; used: number }
@@ -27,7 +27,7 @@ export interface UserDetail {
 }
 export interface OrderQuery { orderNo?: string; userId?: number | string; status?: string; payChannel?: string; start?: string; end?: string; page?: number; pageSize?: number }
 export interface OrderItem {
-  id: number; orderNo: string; userId: number; userNickname: string; wechatNickname: string; planId: number; planName: string
+  id: number; orderNo: string; userId: number; wechatNickname: string; planId: number; planName: string
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: string
   /** 实付金额 */
@@ -43,7 +43,7 @@ export interface OrderExportResult { filename: string; content: string }
 export interface FeedbackQuery { keyword?: string; status?: string; start?: string; end?: string; page?: number; pageSize?: number }
 export interface FeedbackChatRef { chatId: number; summary: string }
 export interface FeedbackItem {
-  id: number; fbNo: string; userId: number; nickname: string; wechatNickname: string; userStatus: number
+  id: number; fbNo: string; userId: number; wechatNickname: string; userStatus: number
   content: string; images: string[]; chatRefs: FeedbackChatRef[]
   status: string; rewardPoints: number; handleRemark: string; handledBy: string; handledAt: string | null; createdAt: string
 }

@@ -116,7 +116,7 @@ async function handleDelete(row: FeedbackItem) {
             <el-form-item label="关键词">
               <el-input
                 v-model="filter.keyword"
-                placeholder="编号 / 用户昵称 / 反馈内容"
+                placeholder="编号 / 微信昵称 / 反馈内容"
                 clearable
                 style="width: 220px"
                 @keyup.enter="handleSearch"
@@ -152,7 +152,7 @@ async function handleDelete(row: FeedbackItem) {
         <el-table-column prop="fbNo" label="编号" min-width="150" />
         <el-table-column label="用户" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">
-            <span>{{ row.nickname || row.wechatNickname || '-' }}</span>
+            <span>{{ row.wechatNickname || '-' }}</span>
             <span class="muted" style="margin-left: 6px">ID: {{ row.userId }}</span>
           </template>
         </el-table-column>

@@ -135,12 +135,11 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { userNickname: string; wechatNickname: string } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   return {
     ...rest,
-    userNickname: user ? user.nickname : `用户${o.userId}`,
     wechatNickname: user ? (user.wechatNickname || '-') : '-'
   }
 }
@@ -404,7 +403,6 @@ route('GET', '/users', (ctx) => {
   if (keyword) {
     list = list.filter(
       (u) =>
-        u.nickname.includes(keyword) ||
         u.phone.includes(keyword) ||
         u.email.includes(keyword) ||
         String(u.id) === keyword
@@ -418,7 +416,6 @@ route('GET', '/users', (ctx) => {
     total: p.total,
     list: p.list.map((u) => ({
       id: u.id,
-      nickname: u.nickname,
       phone: u.phone,
       email: u.email,
       wechatNickname: u.wechatNickname,
@@ -440,7 +437,6 @@ route('GET', '/users/:id', (ctx) => {
   return {
     profile: {
       id: u.id,
-      nickname: u.nickname,
       phone: u.phone,
       email: u.email,
       status: u.status,
@@ -682,7 +678,6 @@ function toFeedbackItem(f: MockFeedback) {
     id: f.id,
     fbNo: f.fbNo,
     userId: f.userId,
-    nickname: u?.nickname || '',
     wechatNickname: u?.wechatNickname || '',
     userStatus: u?.status ?? 0,
     content: f.content,
@@ -710,7 +705,7 @@ route('GET', '/feedbacks', (ctx) => {
       return (
         f.fbNo.includes(keyword) ||
         f.content.includes(keyword) ||
-        (u ? u.nickname.includes(keyword) || u.wechatNickname.includes(keyword) || u.phone.includes(keyword) : false)
+        (u ? u.wechatNickname.includes(keyword) || u.phone.includes(keyword) : false)
       )
     })
   }
