@@ -114,6 +114,12 @@ export async function del<T>(url: string, body?: unknown): Promise<T> {
   return res.data.data
 }
 
+export async function exportBlob(url: string, params?: object): Promise<Blob> {
+  if (USE_MOCK) return get<Blob>(url, params)
+  const res = await http.get<Blob>(url, { params, responseType: 'blob' })
+  return res.data
+}
+
 /**
  * 导出接口：mock 模式返回 {filename, content} 由前端生成 Blob 下载；
  * 真实模式请求 CSV 流（blob），由调用方触发下载。

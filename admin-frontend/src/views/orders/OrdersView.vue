@@ -275,7 +275,7 @@ async function submitGift() {
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
               <el-button @click="handleReset">重置</el-button>
-              <el-button v-perm="'order:export'" @click="handleExport">导出 CSV</el-button>
+              <el-button v-perm="'order:export'" @click="handleExport">导出 XLSX</el-button>
               <el-button v-perm="'order:create'" type="primary" plain @click="openManual">创建手工订单</el-button>
               <el-button v-perm="'order:create'" type="success" plain @click="openGift">创建赠送订单</el-button>
             </el-form-item>

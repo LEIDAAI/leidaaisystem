@@ -1,6 +1,6 @@
-import { exportCsv, get, post, put } from './request'
-import type { OrderDetail, OrderExportResult, OrderItem, OrderQuery, PageData } from './types'
-import { downloadBlobFile, downloadTextFile } from '../utils/download'
+import { exportBlob, get, post, put } from './request'
+import type { OrderDetail, OrderItem, OrderQuery, PageData } from './types'
+import { downloadBlobFile } from '../utils/download'
 
 export function listOrders(params: OrderQuery): Promise<PageData<OrderItem>> {
   return get<PageData<OrderItem>>('/orders', params)
@@ -25,10 +25,6 @@ export function createGiftOrder(payload: { phone: string; planId: number; durati
 }
 
 export async function exportOrders(params: OrderQuery): Promise<void> {
-  const result = await exportCsv<OrderExportResult>('/orders/export', params)
-  if (result instanceof Blob) {
-    downloadBlobFile(`orders-${Date.now()}.csv`, result)
-  } else {
-    downloadTextFile(result.filename, result.content)
-  }
+  const result = await exportBlob('/orders/export', params)
+  downloadBlobFile(`orders-${Date.now()}.xlsx`, result)
 }

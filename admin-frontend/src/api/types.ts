@@ -42,7 +42,6 @@ export interface OrderItem {
 }
 export interface PayTransaction { id: number; txnNo: string; type: string; payChannel: string; amount: number; status: string; createdAt: string }
 export interface OrderDetail extends OrderItem { transactions: PayTransaction[] }
-export interface OrderExportResult { filename: string; content: string }
 export interface FeedbackQuery { keyword?: string; status?: string; start?: string; end?: string; page?: number; pageSize?: number }
 export interface FeedbackChatRef { chatId: number; summary: string }
 export interface FeedbackItem {
