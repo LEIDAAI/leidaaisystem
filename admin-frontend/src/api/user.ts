@@ -9,7 +9,8 @@ export function getUserDetail(id: number): Promise<UserDetail> {
   return get<UserDetail>(`/users/${id}`)
 }
 
-export function updateUserStatus(id: number, banned: boolean, reason: string): Promise<null> {
+export function updateUserStatus(id: number, banned: true, reason: string): Promise<null> {
+  if (banned !== true) return Promise.reject(new Error('仅支持封禁用户'))
   return put<null>(`/users/${id}/status`, { banned, reason })
 }
 

@@ -472,12 +472,12 @@ route('PUT', '/users/:id/status', (ctx) => {
   assertPerm(ctx, 'user:ban')
   const u = findOr404(db.users, ctx.params.id, '用户')
   const b = (ctx.body ?? {}) as Record<string, unknown>
-  const banned = Boolean(b.banned)
+  if (b.banned !== true) throw new MockApiError(422, '仅支持封禁用户')
   const reason = String(b.reason ?? '')
-  if (!reason.trim()) throw new MockApiError(422, '请填写封禁或解封原因')
+  if (!reason.trim()) throw new MockApiError(422, '请填写封禁原因')
   const before = { status: u.status }
-  u.status = banned ? 0 : 1
-  recordAudit(ctx.adminId, banned ? 'user.ban' : 'user.unban', 'user', u.id, before, {
+  u.status = 0
+  recordAudit(ctx.adminId, 'user.ban', 'user', u.id, before, {
     status: u.status,
     reason
   })

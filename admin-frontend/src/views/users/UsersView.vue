@@ -47,7 +47,7 @@ function openDetail(row: UserItem) {
   detailVisible.value = true
 }
 
-// -------------------------------------------------- 封禁 / 解封
+// -------------------------------------------------- 封禁
 async function handleBan(row: UserItem) {
   const reason = await promptText(`封禁用户「${row.wechatNickname}」后将无法登录，请填写封禁原因`, '封禁用户', {
     inputPattern: /^.{2,}$/,
@@ -59,16 +59,6 @@ async function handleBan(row: UserItem) {
   tableRef.value?.refresh()
 }
 
-async function handleUnban(row: UserItem) {
-  const reason = await promptText(`请填写解封用户「${row.wechatNickname}」的原因`, '解封确认', {
-    inputPattern: /\S.{1,}/,
-    inputErrorMessage: '请填写至少 2 个字的原因'
-  })
-  if (reason === null) return
-  await updateUserStatus(row.id, false, reason.trim())
-  ElMessage.success('已解封')
-  tableRef.value?.refresh()
-}
 </script>
 
 <template>
@@ -139,12 +129,13 @@ async function handleUnban(row: UserItem) {
             <div class="table-actions">
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
               <el-button
+                v-if="row.status === 1"
                 v-perm="'user:ban'"
                 link
-                :type="row.status === 1 ? 'danger' : 'success'"
-                @click="row.status === 1 ? handleBan(row) : handleUnban(row)"
+                type="danger"
+                @click="handleBan(row)"
               >
-                {{ row.status === 1 ? '封禁' : '解封' }}
+                封禁
               </el-button>
             </div>
           </template>

@@ -104,8 +104,10 @@
 |---|---|---|---|
 | GET | /users | user:view | 参数 `keyword`(手机号/邮箱/昵称/ID)、`status`(1正常 0封禁)、`start`/`end`(注册时间)、分页 |
 | GET | /users/{id} | user:view | 用户详情 |
-| PUT | /users/{id}/status | user:ban | `{banned: true\|false, reason}` 封禁/解封 |
+| PUT | /users/{id}/status | user:ban | `{banned: true, reason}` 仅封禁，原因 trim 后必填；已封禁用户无解封入口 |
 | PUT | /users/{id}/entitlements | user:entitlement | 个体权益覆盖：`[{resourceType, resourceId, quotaType, quotaLimit}]` |
+
+用户状态当前由前端与 mock 实现，不新增真实后端能力。mock 严格要求 `banned === true`；传 `false` 或其他值返回 422「仅支持封禁用户」，不写状态或审计。合法请求固定状态为 0，审计动作 `user.ban`。
 
 ### GET /users 列表项
 `{id, nickname, phone, email, status, planName, chatCount, registeredAt, lastLoginAt}`
