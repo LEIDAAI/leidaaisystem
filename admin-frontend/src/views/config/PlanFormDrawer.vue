@@ -31,7 +31,7 @@ watch(
       // v12：AI 积分初始化（仅常规套餐配置，创建手工订单时默认带出；赠送套餐固定 0）
       if (draft.value.planType === 'GIFT') draft.value.credits = 0
       else if (draft.value.credits === undefined) draft.value.credits = 10000
-      giftDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
+      giftDurationMode.value = draft.value.durationMode === 'MEMBERSHIP' ? 'membership' : Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
       // 常规套餐时长模式回显：0 = 长期有效，其余 = 按天数（支持自定义任意天数）
       normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
       // v17 计费周期回显：拆到月付 / 年付两行（价格留空的行 = 未启用该周期）
@@ -51,7 +51,7 @@ watch(
 )
 
 /** v11 赠送套餐时长模式：长期有效（durationDays=0）/ 自定义天数 */
-const giftDurationMode = ref<'lifetime' | 'custom'>('custom')
+const giftDurationMode = ref<'lifetime' | 'custom' | 'membership'>('custom')
 /** 常规套餐时长模式：按天数（自定义任意天数）/ 长期有效（durationDays=0） */
 const normalDurationMode = ref<'days' | 'lifetime'>('days')
 /** 快捷天数档位（一键填入自定义天数输入框） */
@@ -70,10 +70,13 @@ watch(
       draft.value.price = 0
       draft.value.credits = 0
       // 切到赠送：0 天=长期有效保持，否则固定为自定义天数模式
-      giftDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
+      giftDurationMode.value = draft.value.durationMode === 'MEMBERSHIP' ? 'membership' : Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
     } else {
       if (draft.value.credits === undefined) draft.value.credits = 10000
-      if (giftDurationMode.value === 'lifetime') draft.value.durationDays = 30
+      if (draft.value.durationMode === 'MEMBERSHIP') {
+        draft.value.durationDays = 30
+        draft.value.durationMode = 'CUSTOM_DAYS'
+      }
       normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
     }
   }
@@ -82,8 +85,10 @@ watch(
 // 长期有效 / 自定义天数切换：写回 durationDays（0=长期有效）
 watch(giftDurationMode, (mode) => {
   if (draft.value.planType !== 'GIFT') return
-  if (mode === 'lifetime') draft.value.durationDays = 0
-  else if (Number(draft.value.durationDays) === 0) draft.value.durationDays = 30
+  draft.value.durationMode = mode === 'membership' ? 'MEMBERSHIP' : mode === 'lifetime' ? 'LIFETIME' : 'CUSTOM_DAYS'
+  if (mode === 'membership') draft.value.durationDays = undefined
+  else if (mode === 'lifetime') draft.value.durationDays = 0
+  else if (!draft.value.durationDays) draft.value.durationDays = 30
 })
 
 // -------------------------------------------------- v17 营销信息 / 计费周期 / 积分发放
@@ -178,6 +183,8 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
     const isGift = draft.value.planType === 'GIFT'
     await saveConfig('plans', {
       ...draft.value,
+      durationMode: isGift ? (giftDurationMode.value === 'membership' ? 'MEMBERSHIP' : giftDurationMode.value === 'lifetime' ? 'LIFETIME' : 'CUSTOM_DAYS') : normalDurationMode.value === 'lifetime' ? 'LIFETIME' : 'CUSTOM_DAYS',
+      durationDays: isGift && giftDurationMode.value === 'membership' ? undefined : draft.value.durationDays,
       // v17：赠送套餐不携带营销 / 计费周期 / 积分发放配置（后端亦强制 ONCE / NEVER）
       tagline: isGift ? undefined : draft.value.tagline,
       badge: isGift ? undefined : draft.value.badge,
@@ -206,7 +213,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
           <el-radio value="NORMAL">常规套餐</el-radio>
           <el-radio value="GIFT">赠送套餐</el-radio>
         </el-radio-group>
-        <p class="perm-hint">赠送套餐用于创建赠送订单：价格必须为 0 元，时长支持长期有效或自定义天数；创建后类型不可修改。</p>
+        <p class="perm-hint">赠送套餐用于创建赠送订单：价格必须为 0 元，时长支持长期有效、自定义天数或会员期内有效（随会员续费延续，到期失效）；创建后类型不可修改。</p>
       </el-form-item>
       <!-- v17 营销信息：仅常规套餐（角标 / 标语 / 卖点列表，前台套餐卡片展示） -->
       <template v-if="draft.planType !== 'GIFT'">
@@ -259,6 +266,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
         <el-radio-group v-model="giftDurationMode">
           <el-radio value="lifetime">长期有效</el-radio>
           <el-radio value="custom">自定义天数</el-radio>
+          <el-radio value="membership">会员期内有效</el-radio>
         </el-radio-group>
         <el-input-number v-if="giftDurationMode === 'custom'" v-model="draft.durationDays" :min="1" :precision="0" style="margin-top: 8px" />
       </el-form-item>

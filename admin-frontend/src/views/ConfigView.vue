@@ -611,7 +611,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'mcp'" label="健康" min-width="150"><template #default="{ row }">{{ row.healthStatus || 'UNKNOWN' }}<br /><small class="muted">{{ row.lastHealthAt }}</small></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="价格" width="90"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">¥{{ row.price }}</span><span v-else class="muted">—</span></template></el-table-column>
-      <el-table-column v-if="module === 'plan'" label="时长" width="95"><template #default="{ row }">{{ row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="时长" min-width="135"><template #default="{ row }">{{ row.durationMode === 'MEMBERSHIP' ? '会员期内有效' : row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="积分" width="100"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">{{ row.credits ?? 0 }}</span><br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
       <!-- v17 套餐营销/计费模型：排序值 + 营销摘要（角标/标语，tooltip 展示卖点列表） -->
       <el-table-column v-if="module === 'plan'" label="排序" width="70"><template #default="{ row }">{{ row.sort ?? 0 }}</template></el-table-column>

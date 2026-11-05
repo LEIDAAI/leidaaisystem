@@ -20,7 +20,7 @@ export function createManualOrder(payload: { phone: string; planId: number; cred
 }
 
 /** v11 创建赠送订单：手机号 + 赠送套餐 + 赠送时长（0=长期有效）+ 赠送 AI 积分 + 备注 */
-export function createGiftOrder(payload: { phone: string; planId: number; durationMonths: number; credits: number; remark?: string }): Promise<null> {
+export function createGiftOrder(payload: { phone: string; planId: number; durationMonths: number | null; credits: number; remark?: string }): Promise<null> {
   return post<null>('/orders/gift', payload)
 }
 

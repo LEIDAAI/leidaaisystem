@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getOrderDetail } from '@/api/order'
 import type { OrderDetail } from '@/api/types'
-import { formatAmount, formatDateTime, formatOrderExpiry, orDash } from '@/utils/format'
+import { formatAmount, formatDateTime, formatOrderExpiry, formatOrderDuration, orDash } from '@/utils/format'
 
 interface Props {
   modelValue: boolean
@@ -58,7 +58,7 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           <el-descriptions-item label="订单来源">{{ ORDER_SOURCE_LABELS[detail.source] ?? detail.source }}</el-descriptions-item>
           <el-descriptions-item label="到期状态"><el-tag :type="formatOrderExpiry(detail, now).type" size="small">{{ formatOrderExpiry(detail, now).text }}</el-tag></el-descriptions-item>
           <el-descriptions-item label="剩余积分">{{ detail.remainingCredits }}</el-descriptions-item>
-          <el-descriptions-item label="套餐时长">{{ detail.durationMonths === 0 ? '长期有效' : `${detail.durationMonths}个月` }}</el-descriptions-item>
+          <el-descriptions-item label="套餐时长">{{ formatOrderDuration(detail) }}</el-descriptions-item>
           <el-descriptions-item label="近7日消耗">{{ detail.last7DaysUsage }}</el-descriptions-item>
           <el-descriptions-item label="商品金额">{{ formatAmount(detail.goodsAmount) }}</el-descriptions-item>
           <el-descriptions-item label="优惠金额">{{ formatAmount(detail.discountAmount) }}</el-descriptions-item>

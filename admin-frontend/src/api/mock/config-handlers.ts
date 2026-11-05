@@ -45,6 +45,15 @@ function entitledBy(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): str
 
 export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   const fail = (message:string,code=422):never=>{ throw new ErrorType(code,message) }
+  const normalizeDuration = (item: ConfigItem) => {
+    item.durationMode ??= item.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
+    if (!['LIFETIME','CUSTOM_DAYS','MEMBERSHIP'].includes(item.durationMode)) fail('套餐时长模式无效')
+    if (item.durationMode === 'MEMBERSHIP') {
+      if (item.planType !== 'GIFT') fail('仅赠送套餐支持会员期内有效')
+      item.durationDays = undefined
+    } else if (item.durationMode === 'LIFETIME') item.durationDays = 0
+    else if (!Number.isInteger(item.durationDays) || Number(item.durationDays) < 1) fail('自定义时长须为正整数天数')
+  }
   /** 引用来源报错文案：最多列 5 处，其余计数 */
   const entitledFail = (plant:'专家'|'技能'|'MCP 服务', by:string[]):never => {
     const shown = by.slice(0,5).join('、')
@@ -79,7 +88,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
       for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
       item.name=String(item.name).trim();item.code=String(item.code).trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
@@ -100,10 +109,11 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       if(module==='plan') {
         // v11：套餐类型归一化（GIFT 赠送 / NORMAL 常规；赠送订单只能选 GIFT 套餐）
         item.planType=item.planType==='GIFT'?'GIFT':'NORMAL'
+        if (input.durationMode === undefined && input.durationDays !== undefined) item.durationMode = input.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
+        normalizeDuration(item)
         if(item.planType==='GIFT') {
           // 赠送套餐：价格必须为 0 元；有效天数 0=长期有效，正整数=自定义时长；不配置 AI 积分（固定 0）
           if(Number(item.price)!==0) fail('赠送套餐价格必须为 0 元')
-          if(!Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('赠送套餐有效天数须为 0（长期有效）或正整数')
           item.credits=0
         } else {
           if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('价格须非负，有效天数须为 0（长期有效）或正整数')
@@ -562,7 +572,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   })
 
   // -------------------------------------------------- 套餐版本历史（v17 补齐：营销/计费字段快照，恢复生成新版本）
-  const PLAN_RESTORE_FIELDS = ['code','name','status','platforms','price','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays'] as readonly (keyof ConfigItem)[]
+  const PLAN_RESTORE_FIELDS = ['code','name','status','platforms','price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays'] as readonly (keyof ConfigItem)[]
   route('GET','/plans/:id/versions',ctx=>{perm(ctx,'plan:view');const item=find(db.plans,ctx.params.id);return (db.planVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
   route('POST','/plans/:id/restore',ctx=>{
     perm(ctx,'plan:edit');const item=find(db.plans,ctx.params.id)
@@ -570,7 +580,9 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const hist=(db.planVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
     if(!hist) { throw new ErrorType(404,'版本不存在') }
     const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    for(const key of PLAN_RESTORE_FIELDS) if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]})
+    snap.durationMode ??= snap.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
+    normalizeDuration(snap)
+    for(const key of PLAN_RESTORE_FIELDS) Object.assign(item,{[key]:snap[key]})
     // 恢复后与保存语义对齐：权益按资源侧可见性重新派生、前台权限归一化（悬空引用自动剔除，不阻断恢复）
     item.entitlements=derivePlanEntitlements(item.id)
     item.frontendPerms=normalizeFrontendPerms(item.frontendPerms)

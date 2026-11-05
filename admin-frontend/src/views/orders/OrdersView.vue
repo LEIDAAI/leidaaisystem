@@ -8,7 +8,7 @@ import { createGiftOrder, createManualOrder, exportOrders, listOrders, updateOrd
 import { listConfig } from '@/api/config'
 import type { ConfigItem } from '@/api/config'
 import type { OrderItem, OrderQuery, ProTableHandle } from '@/api/types'
-import { formatAmount, formatDateTime, formatOrderExpiry } from '@/utils/format'
+import { formatAmount, formatDateTime, formatOrderExpiry, formatOrderDuration } from '@/utils/format'
 import { promptText } from '@/utils/feedback'
 import { useAuthStore } from '@/stores/auth'
 import OrderDetailDrawer from './OrderDetailDrawer.vue'
@@ -159,7 +159,7 @@ async function submitManual() {
 
 const giftVisible = ref(false)
 const giftSubmitting = ref(false)
-const giftForm = reactive({ phone: '', planId: null as number | null, durationMonths: 1, credits: 10000, remark: '' })
+const giftForm = reactive({ phone: '', planId: null as number | null, durationMonths: 1 as number | null, credits: 10000, remark: '' })
 const giftPlanSelected = computed(() => giftPlans.value.find((p) => p.id === giftForm.planId) || null)
 
 /** 赠送时长与套餐联动：套餐「长期有效」(durationDays=0) 时锁定不可改，否则默认 N 个月（可在 1-36 内调整） */
@@ -168,7 +168,7 @@ watch(
   () => {
     const plan = giftPlanSelected.value
     if (!plan) return
-    giftForm.durationMonths = Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30))
+    giftForm.durationMonths = plan.durationMode === 'MEMBERSHIP' ? null : Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30))
   }
 )
 
@@ -195,7 +195,7 @@ async function submitGift() {
     ElMessage.warning('请选择赠送套餐')
     return
   }
-  if (giftForm.durationMonths < 0) {
+  if (giftPlanSelected.value?.durationMode !== 'MEMBERSHIP' && (giftForm.durationMonths === null || giftForm.durationMonths < 0)) {
     ElMessage.warning('请选择赠送时长')
     return
   }
@@ -305,7 +305,7 @@ async function submitGift() {
           <template #default="{ row }">{{ row.remainingCredits }}</template>
         </el-table-column>
         <el-table-column label="套餐时长" width="100">
-          <template #default="{ row }">{{ row.durationMonths === 0 ? '长期有效' : `${row.durationMonths}个月` }}</template>
+          <template #default="{ row }">{{ formatOrderDuration(row) }}</template>
         </el-table-column>
         <el-table-column label="近7日消耗" width="110">
           <template #default="{ row }">{{ row.last7DaysUsage }}</template>
@@ -393,7 +393,8 @@ async function submitGift() {
           </el-select>
         </el-form-item>
         <el-form-item label="赠送时长" required>
-          <el-input v-if="giftPlanSelected && Number(giftPlanSelected.durationDays) === 0" model-value="长期有效" disabled />
+          <el-input v-if="giftPlanSelected?.durationMode === 'MEMBERSHIP'" model-value="会员期内有效" disabled />
+          <el-input v-else-if="giftPlanSelected && Number(giftPlanSelected.durationDays) === 0" model-value="长期有效" disabled />
           <el-select v-else v-model="giftForm.durationMonths" placeholder="请选择赠送时长" style="width: 100%">
             <el-option v-for="m in 36" :key="m" :label="`${m}个月`" :value="m" />
           </el-select>

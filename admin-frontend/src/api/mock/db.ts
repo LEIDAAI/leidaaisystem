@@ -1,4 +1,5 @@
 import dayjs from 'dayjs'
+import type { DurationMode, MembershipInfo } from '../types'
 import { ElMessage } from 'element-plus'
 import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
 
@@ -67,6 +68,20 @@ export interface MockUser {
   lastLoginAt: string | null
   entitlements: MockEntitlement[]
   loginLogs: MockLoginLog[]
+  /** 仅用于模拟源变更验证；真实会员服务尚未接入。 */
+  mockMembership?: { expiresAt: string | null; isLifetime?: boolean }
+}
+
+/** Mock 会员源：保持原演示口径 planId>=2、注册时间+1年；不代表真实会员权益。 */
+export function readMockMembership(user: MockUser | undefined, now = Date.now()): MembershipInfo {
+  const result = (status: MembershipInfo['status'], expiresAt: string | null = null): MembershipInfo => ({ source: 'MOCK', status, expiresAt, isLifetime: status === 'LIFETIME' })
+  if (!user) return result('UNKNOWN')
+  if (user.planId < 2) return result('NONE')
+  if (!Number.isFinite(user.planId)) return result('UNKNOWN')
+  if (user.mockMembership?.isLifetime) return result('LIFETIME')
+  const expiry = user.mockMembership ? user.mockMembership.expiresAt : dayjs(user.registeredAt).isValid() ? dayjs(user.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
+  if (!expiry || !dayjs(expiry).isValid()) return result('UNKNOWN')
+  return result(dayjs(expiry).valueOf() > now ? 'ACTIVE' : 'EXPIRED', expiry)
 }
 
 export interface MockTxn {
@@ -91,7 +106,9 @@ export interface MockOrder {
   goodsAmount: number
   discountAmount: number
   remainingCredits: number
-  durationMonths: number
+  durationMonths: number | null
+  durationMode?: DurationMode
+  membership?: MembershipInfo
   durationDays?: number
   expiresAt?: string | null
   last7DaysUsage: number
@@ -774,6 +791,7 @@ if (storedVersion < 17) {
 }
 // v17 订单到期增量迁移：仅补缺失字段，历史月数按日历月演示回填，不读取当前套餐。
 db.orders.forEach((order) => {
+  if (order.durationMode === 'MEMBERSHIP') return
   if (Object.prototype.hasOwnProperty.call(order, 'expiresAt')) return
   if (order.status !== 'PAID') {
     order.expiresAt = null
@@ -781,7 +799,7 @@ db.orders.forEach((order) => {
     order.expiresAt = null
   } else if (order.paidAt && dayjs(order.paidAt).isValid()) {
     if (Number.isFinite(order.durationDays) && Number(order.durationDays) > 0) order.expiresAt = fmt(dayjs(order.paidAt).add(Number(order.durationDays), 'day'))
-    else if (Number.isInteger(order.durationMonths) && order.durationMonths > 0) order.expiresAt = fmt(dayjs(order.paidAt).add(order.durationMonths, 'month'))
+    else if (Number.isInteger(order.durationMonths) && Number(order.durationMonths) > 0) order.expiresAt = fmt(dayjs(order.paidAt).add(Number(order.durationMonths), 'month'))
   }
 })
 // v17 幂等兜底：套餐版本快照集合任何路径漏初始化时补空对象（防旧库直跳或数据损坏）

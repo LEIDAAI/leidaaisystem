@@ -93,6 +93,7 @@ export interface ConfigItem {
   id: number; code: string; name: string; status: number; version: number; updatedAt: string
   refreshStatus: 'PENDING' | 'APPLIED' | 'FAILED'; appliedVersion: number; refreshMessage: string
   price?: number; durationDays?: number; entitlements?: Entitlement[]; salesCount?: number
+  durationMode?: 'LIFETIME' | 'CUSTOM_DAYS' | 'MEMBERSHIP'
   /** 套餐类型（v11）：NORMAL 常规 / GIFT 赠送（赠送订单只能选 GIFT 套餐；GIFT 价格必须为 0、时长支持长期有效 durationDays=0） */
   planType?: 'NORMAL' | 'GIFT'
   /** 套餐 AI 积分数量（v12）：仅常规套餐配置，创建手工订单时默认带出；赠送套餐固定 0 */

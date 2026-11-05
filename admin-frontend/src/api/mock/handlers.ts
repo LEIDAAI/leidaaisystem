@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
-import { formatOrderExpiry } from '../../utils/format'
+import { formatOrderExpiry, formatOrderDuration } from '../../utils/format'
 import { createExcelBlob, excelDateTime, type ExcelColumn } from '../../utils/excel'
 import { registerConfigHandlers, validateEntitlements } from './config-handlers'
 import { registerOperationsHandlers } from './operations-handlers'
@@ -17,6 +17,7 @@ import {
   nowStr,
   permissionCodesOf,
   persistMockDB,
+  readMockMembership,
   roleRefsOf,
   type MockAdmin,
   type MockFeedback,
@@ -141,8 +142,10 @@ function sessionPayload(admin: MockAdmin): {
 function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
+  const membership = o.durationMode === 'MEMBERSHIP' ? readMockMembership(user) : undefined
   return {
     ...rest,
+    ...(membership ? { membership, expiresAt: membership.expiresAt, durationMonths: null, durationDays: undefined } : {}),
     phone: user?.phone || '—',
     wechatNickname: user ? (user.wechatNickname || '-') : '-'
   }
@@ -429,7 +432,7 @@ route('GET', '/users', (ctx) => {
       chatCount: db.chats.filter((c) => c.userId === u.id).length,
       registeredAt: u.registeredAt,
       lastLoginAt: u.lastLoginAt,
-      expireAt: u.planId >= 2 ? dayjs(u.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
+      expireAt: readMockMembership(u).expiresAt
     }))
   }
 })
@@ -450,7 +453,7 @@ route('GET', '/users/:id', (ctx) => {
     plan: {
       planId: u.planId,
       planName: u.planName,
-      expireAt: u.planId >= 2 ? dayjs(u.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
+      expireAt: readMockMembership(u).expiresAt
     },
     entitlements: u.entitlements.map((e) => ({ ...e })),
     orders: {
@@ -551,6 +554,7 @@ route('POST', '/orders/manual', (ctx) => {
   if (!plan) throw new MockApiError(422, '套餐不存在')
   if ((plan.planType || 'NORMAL') === 'GIFT') throw new MockApiError(422, '手工订单不能选择赠送套餐')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
+  if (plan.durationMode === 'MEMBERSHIP') throw new MockApiError(422, '常规套餐不支持会员期内有效')
   const credits = Number(plan.credits ?? 0)
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
   // v17：允许 0 元线下减免单（仅拒绝负数金额）
@@ -569,6 +573,7 @@ route('POST', '/orders/manual', (ctx) => {
     discountAmount: 0,
     remainingCredits: Math.round(credits),
     durationMonths: Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
+    durationMode: plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'),
     durationDays: Number(plan.durationDays ?? 30),
     expiresAt: Number(plan.durationDays) === 0 ? null : dayjs(at).add(Number(plan.durationDays ?? 30), 'day').format('YYYY-MM-DD HH:mm:ss'),
     last7DaysUsage: 0,
@@ -601,8 +606,12 @@ route('POST', '/orders/gift', (ctx) => {
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, '赠送 AI 积分无效')
   if (remark.length > 200) throw new MockApiError(422, '备注最多 200 字')
-  const isLifetime = Number(plan.durationDays) === 0
-  if (isLifetime) {
+  const durationMode = plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS')
+  const isMembership = durationMode === 'MEMBERSHIP'
+  const isLifetime = durationMode === 'LIFETIME'
+  if (isMembership) {
+    if (!['ACTIVE', 'LIFETIME'].includes(readMockMembership(u).status)) throw new MockApiError(422, '当前用户无有效会员，无法赠送会员期内有效套餐')
+  } else if (isLifetime) {
     if (durationMonths !== 0) throw new MockApiError(422, '该套餐为长期有效，赠送时长固定为长期有效')
   } else if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 36) {
     throw new MockApiError(422, '赠送时长须为 1-36 个月')
@@ -620,8 +629,9 @@ route('POST', '/orders/gift', (ctx) => {
     goodsAmount: 0,
     discountAmount: 0,
     remainingCredits: Math.round(credits),
-    durationMonths: isLifetime ? 0 : durationMonths,
-    expiresAt: isLifetime ? null : dayjs(at).add(durationMonths, 'month').format('YYYY-MM-DD HH:mm:ss'),
+    durationMode,
+    durationMonths: isMembership ? null : isLifetime ? 0 : durationMonths,
+    ...(isMembership ? {} : { expiresAt: isLifetime ? null : dayjs(at).add(durationMonths, 'month').format('YYYY-MM-DD HH:mm:ss') }),
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
@@ -631,7 +641,7 @@ route('POST', '/orders/gift', (ctx) => {
     transactions: []
   }
   db.orders.unshift(order)
-  recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMonths: isLifetime ? 0 : durationMonths, credits, remark })
+  recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMode, durationMonths: order.durationMonths, credits, remark })
   return null
 })
 
@@ -667,7 +677,7 @@ route('GET', '/orders/export', async (ctx) => {
       ORDER_SOURCE_LABELS[item.source] ?? item.source,
       expiry.text,
       item.remainingCredits,
-      item.durationMonths === 0 ? '长期有效' : `${item.durationMonths}个月`,
+      formatOrderDuration(item),
       item.last7DaysUsage,
       item.goodsAmount,
       item.discountAmount,
@@ -675,7 +685,7 @@ route('GET', '/orders/export', async (ctx) => {
       ORDER_STATUS_LABELS[item.status] ?? item.status,
       item.paidAt ?? '',
       item.createdAt,
-      expiry.time === '长期有效' || expiry.time === '—' ? expiry.time : excelDateTime(item.expiresAt),
+      item.expiresAt && expiry.time !== '—' ? excelDateTime(item.expiresAt) : expiry.time,
       CHANNEL_LABELS[item.payChannel] ?? item.payChannel,
       item.remark || ''
     ]

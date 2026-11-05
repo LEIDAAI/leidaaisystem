@@ -26,6 +26,13 @@ export interface UserDetail {
   loginLogs: { ip: string; userAgent: string; loginAt: string }[]
 }
 export interface OrderQuery { orderNo?: string; userId?: number | string; status?: string; payChannel?: string; start?: string; end?: string; page?: number; pageSize?: number }
+export type DurationMode = 'LIFETIME' | 'CUSTOM_DAYS' | 'MEMBERSHIP'
+export interface MembershipInfo {
+  source: 'MOCK'
+  status: 'ACTIVE' | 'EXPIRED' | 'NONE' | 'LIFETIME' | 'UNKNOWN'
+  expiresAt: string | null
+  isLifetime: boolean
+}
 export interface OrderItem {
   id: number; orderNo: string; userId: number; wechatNickname: string; planId: number; planName: string
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
@@ -33,7 +40,9 @@ export interface OrderItem {
   /** 实付金额 */
   amount: number
   goodsAmount: number; discountAmount: number
-  remainingCredits: number; durationMonths: number; last7DaysUsage: number
+  remainingCredits: number; durationMonths: number | null; last7DaysUsage: number
+  durationMode?: DurationMode
+  membership?: MembershipInfo
   payChannel: string; status: string; remark: string
   phone?: string
   expiresAt?: string | null

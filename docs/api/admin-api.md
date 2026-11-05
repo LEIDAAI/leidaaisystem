@@ -131,12 +131,20 @@
 | GET | /orders | order:view | 参数 `orderNo`、`userId`、`status`(PENDING/PAID/CLOSED)、`payChannel`(WECHAT/ALIPAY/OFFLINE)、`start`/`end`、分页 |
 | GET | /orders/{id} | order:view | 详情，含支付流水列表 |
 | POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐；R6 服务端先验证套餐存在、启用且为常规，再读取套餐 credits（含 0），不信任并忽略传入 credits（为兼容现有 payload 保留字段）；套餐积分及金额须非负有限；金额可调、允许 0 元；生成 PAID/OFFLINE 订单及成功支付流水 |
-| POST | /orders/gift | order:create | `{phone, planId, durationMonths, credits, remark?}`；启用赠送套餐，有限时长 1–36 整数月，长期固定 0；金额 0，无支付流水；备注最多 200 字 |
+| POST | /orders/gift | order:create | `{phone, planId, durationMonths, credits, remark?}`；启用赠送套餐，有限时长 1–36 整数月，长期固定 0，MEMBERSHIP 传 null 并由服务端读取会员源；金额 0，无支付流水；备注最多 200 字 |
 | PUT | /orders/{id}/remark | order:remark | `{remark}` 备注（留痕） |
 | GET | /orders/export | order:export | R8：同列表筛选，忽略分页导出全部命中项；Mock 在 `{code:0,msg,data}` 的 data 中返回真正 OOXML XLSX Blob，exportBlob 在 mock 模式解包、真实模式按 responseType=blob 接收；前端下载 `orders-时间戳.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；真实后端待按同一二进制契约实现 |
 
-### 订单项（R4，2026-11-05）
-`{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMonths, durationDays?, expiresAt?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
+### 订单项（R9，2026-11-05）
+
+用户于 2026-11-05 确认「跟随会员有效期」：会员续费赠送继续有效，到期失效。仅本仓库后台实现，独立前台未改。
+
+- 套餐 `durationMode: LIFETIME | CUSTOM_DAYS | MEMBERSHIP` 独立保存、白名单校验、进入版本快照及恢复字段；旧数据缺失模式按 `durationDays===0` 归一 LIFETIME，否则 CUSTOM_DAYS。LIFETIME 存 0 天，CUSTOM_DAYS 为正整数天，MEMBERSHIP 清空 durationDays，仅 GIFT 可用，NORMAL 传会员模式返回 422。恢复旧快照显式归一模式并清理当前值，禁止会员残留。
+- 新订单显式记录 durationMode；会员模式 `durationMonths=null`（不能用 0），不存固定 expiresAt。赠送创建锁定「会员期内有效」，不显示 1–36 月，不允许客户端填写会员到期；服务端由套餐确定模式，忽略客户端 mode/到期字段。NONE/EXPIRED/UNKNOWN 用户拒绝 422，ACTIVE/LIFETIME 可创建。
+- 当前唯一来源是 `readMockMembership`，标准返回 `membership:{source:'MOCK',status:ACTIVE|EXPIRED|NONE|LIFETIME|UNKNOWN,expiresAt:string|null,isLifetime:boolean}`。默认仍为 planId>=2、注册时间+1年的模拟口径；用户列表/详情沿用该口径。`MockUser.mockMembership` 仅用于模拟源更新验证（非客户端订单参数、无真实续费接口）。真实会员服务、续费、退款及积分回收均未接入。
+- MEMBERSHIP 订单每次列表/详情/导出经 toOrderItem 动态读取当前会员源并返回 expiresAt 与 membership；模拟源到期改变后再次查询即跟随，不把创建时会员有效期固定成订单历史。前端 format 仅消费标准返回值。ACTIVE 到期前未到期N天；EXPIRED 已到期N天；NONE 会员已失效/—；UNKNOWN —；长期会员显示「会员期内有效（长期会员）」，不作为赠送独立永久有效。XLSX 与列表/详情共用解析；历史到期补值跳过 MEMBERSHIP。
+- 保留创建不回写用户权益边界；此链路仅已完成模拟源驱动的运行验证，真实会员联调仍待接入。以下固定时长规则仅适用于非 MEMBERSHIP 订单。
+`{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMode?, durationMonths:number|null, durationDays?, expiresAt?, membership?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
 
 - `phone` 由 `userId` 关联当前用户手机号，保留原脱敏格式，查无显示 `—`；不保存订单手机号快照。
 - `expiresAt` 为订单级明确到期时间（`yyyy-MM-dd HH:mm:ss`，dayjs 同现有时间约定解析），长期有效明确为 `null`；可选以兼容旧接口，缺失或非法值显示 `—`，不可据此推断长期有效。`durationDays` 为新手工订单创建时套餐精确天数快照，不随套餐变更。
@@ -155,7 +163,7 @@
 - 配置公共返回字段：`id,code,name,status,version,updatedAt,refreshStatus(PENDING/APPLIED/FAILED),appliedVersion,refreshMessage`。保存成功版本加一，进入 PENDING；`POST /{plans|experts|skills|mcp/servers}/{id}/refresh` 刷新当前版本，失败后同接口重试。Mock 请求可带 `{simulateFailure:true}` 模拟失败；真实请求不带此字段。APPLIED 仅在返回版本一致时生效，Mock 不代表 AgentScope 已接入。
 - 四类配置均支持 GET 列表（数组）、GET /{id}、POST 新建、PUT /{id}、PUT /{id}/status `{status}`、DELETE /{id}。DELETE 被套餐权益、个体权益、专家绑定、默认专家、历史订单/会话引用时返回409。
 - POST/PUT 返回保存后配置；仅允许业务字段，客户端不能修改 version / appliedVersion。
-- 套餐写入 `code,name,price`（非负元，两位小数）、`durationDays`（正整数）、`status,entitlements`；列表附 `salesCount`（已支付订单数）。
+- 套餐写入 `code,name,price`（非负元，两位小数）、`durationMode`、`durationDays`、`status,entitlements`；R9 模式及兼容规则见订单项：MEMBERSHIP仅GIFT且清空天数，LIFETIME存0，CUSTOM_DAYS正整数；列表附 `salesCount`（已支付订单数）。
 - 权益数组每项为 `{resourceType:EXPERT|SKILL|MCP_TOOL,resourceId,quotaType:CHAT_COUNT|SKILL_CALL,quotaLimit,quotaPeriod:DAY|MONTH|LIFETIME}`。专家使用 CHAT_COUNT，其余 SKILL_CALL；限额为非负整数，0 禁用；DAY / MONTH 按 Asia/Shanghai 自然日 / 自然月重置，LIFETIME 终身累计。资源不能重复，必须存在。个体覆盖优先于套餐，删除覆盖恢复继承。旧 Mock 权益增量迁移为 MONTH，不清空P0数据。当前仅管理配置，不执行真实配额扣减。
 - `GET /entitlement-resources` 返回上述权益资源模板数组，权限为 user:entitlement 或 plan:view / plan:edit 任一。个体权益 PUT 同结构全量覆盖，服务层验证周期和资源，保留已有 used。
 - 专家字段（v0.4 助手预设模型，附录 12.1）：`code`（助手 ID，创建后不可改，导入导出与前台 API 标识）、`name`、`description`（能力摘要）、`baseModel`（**v0.5 起存模型管理 `model_config.code`**，如表单只允许选择「启用」模型，选项显示 `名称（code）`；旧数据不在模型表的 base_model 迁移时自动注册为「自定义」模型）、`avatarUrl`、`systemPrompt`、`skillIds[]`（绑定技能）、`mcpServerIds[]`（绑定 MCP/OpenAPI 连接，替代旧 mcpToolIds 的服务层绑定）、`suggestedQuestions[]`（建议问题，非空字符串）、`capabilities`（能力开关对象，仅允许 file_context/file_upload/vision/web_search/image_generation/code_interpreter/terminal/citations/status_updates/memory/builtin_tools/usage，布尔值；v3 旧键 `file` 迁移时映射为 file_context+file_upload）、`tags[]`、`visibility:{type:PUBLIC|PLAN|PRIVATE, planIds[]}`（PLAN 必须携带有效非空套餐；PUBLIC/PRIVATE 服务层清空 planIds）、`isDefault`（默认专家必须启用；`PUT /experts/{id}/default` 原子切换）。旧字段 `intro/modelParams/mcpToolIds` 保留兼容展示，写入不再要求。`GET /experts/{id}/prompt-versions` 与 `POST /experts/{id}/restore-prompt` 为旧提示词版本接口（保留兼容）；新版本历史用 `GET /experts/{id}/versions` + `POST /experts/{id}/restore`（全量快照恢复，恢复生成新版本）。
