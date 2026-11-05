@@ -26,12 +26,12 @@
 <div class="eyebrow">店雷达 AI 系统 · 功能交付说明</div>
 <h1>前后台功能说明<br>与测试验收清单</h1>
 <p>面向前端、后端与测试，明确功能行为、配置契约、权限边界、演示数据范围和版本回归依据。本文按 V17 功能清单编排，保持已实现能力与待接入能力的状态区分。<sup><a href="#cite-1">[1]</a></sup></p>
-<div class="meta"><span>版本 V17</span><span class="r2-badge">修订 R10 · 积分包统一入口与滑块配置预览 · 178 项原型说明</span><span>2026-11-05</span><span>前台 7 页</span><span>后台登录 + 15 业务菜单</span><span>权限声明 36 项 / 字典实列 34 项</span><span>104 项编号验收</span></div>
+<div class="meta"><span>版本 V17</span><span class="r2-badge">R10 + 交易规则建议稿(待确认，未实现)</span><span>R10 积分包统一入口与滑块配置预览 · 178 项原型说明</span><span>2026-11-05</span><span>前台 7 页</span><span>后台登录 + 15 业务菜单</span><span>权限声明 36 项 / 字典实列 34 项</span><span>104 项编号验收</span></div>
 </header>
 <nav class="toc" aria-label="功能板块导航">
 <div class="toc-group"><strong>后台功能</strong><ol><li><a href="#pn-A00">登录与会话</a></li><li><a href="#pn-A01">工作概览</a></li><li><a href="#pn-A02">用户管理</a></li><li><a href="#pn-A03">订单管理</a></li><li><a href="#pn-A04">套餐管理</a></li><li><a href="#pn-r10">R10 积分包与滑块</a></li><li><a href="#pn-A05">积分加油包</a></li><li><a href="#pn-A06">计费设置</a></li><li><a href="#pn-A07">专家管理</a></li><li><a href="#pn-A08">技能管理</a></li><li><a href="#pn-A09">MCP 服务</a></li><li><a href="#pn-A10">模型管理</a></li><li><a href="#pn-A11">知识库管理</a></li><li><a href="#pn-A12">对话管理</a></li><li><a href="#pn-A13">反馈管理</a></li><li><a href="#pn-A14">管理员账号</a></li><li><a href="#pn-A15">角色与权限</a></li></ol></div>
 <div class="toc-group"><strong>前台功能</strong><ol><li><a href="#pn-F01">登录与游客</a></li><li><a href="#pn-F02">AI 选品对话</a></li><li><a href="#pn-F03">套餐购买</a></li><li><a href="#pn-F04">个人信息</a></li><li><a href="#pn-F05">订单中心</a></li><li><a href="#pn-F06">消耗明细</a></li><li><a href="#pn-F07">专家·技能·MCP 目录</a></li></ol></div>
-<div class="toc-group"><strong>研发与测试</strong><ol><li><a href="#scope">阅读口径</a></li><li><a href="#frontend">前台总览</a></li><li><a href="#admin">后台总览</a></li><li><a href="#plans">套餐契约</a></li><li><a href="#permissions">权限字典</a></li><li><a href="#api">接口能力</a></li><li><a href="#rules">业务规则</a></li><li><a href="#boundaries">已知边界</a></li><li><a href="#preview">在线原型</a></li><li><a href="#acceptance">测试验收</a></li><li><a href="#regression">版本回归</a></li><li><a href="#handoff">三方协作</a></li></ol></div>
+<div class="toc-group"><strong>研发与测试</strong><ol><li><a href="#scope">阅读口径</a></li><li><a href="#frontend">前台总览</a></li><li><a href="#admin">后台总览</a></li><li><a href="#plans">套餐契约</a></li><li><a href="#permissions">权限字典</a></li><li><a href="#api">接口能力</a></li><li><a href="#rules">业务规则</a></li><li><a href="#boundaries">已知边界</a></li><li><a href="#preview">在线原型</a></li><li><a href="#acceptance">测试验收</a></li><li><a href="#regression">版本回归</a></li><li><a href="#handoff">三方协作</a></li><li><a href="#transaction-rules">购买与退款规则方案</a></li></ol></div>
 </nav>
 <main>
 <section id="scope"><h2>01 · 阅读口径与测试准备</h2>
@@ -567,6 +567,82 @@
 </tbody></table></div>
 <h3>建议执行顺序</h3><ol><li>准备 V17 数据与角色，验证登录、会话和权限。</li><li>构造四组套餐，完成全字段、计费和时长测试。</li><li>执行保存→发布→未刷新检查→刷新→历史 diff→恢复→再次刷新。</li><li>创建手工/赠送订单，核金额、积分、时长、来源、导出与审计；明确权益不回写边界。</li><li>覆盖资源、对话、反馈与管理员；再执行前台真实接口及演示模块测试。</li><li>按版本矩阵复核关键回归，整理真实结果与后续接入任务。</li></ol>
 <p class="note">待澄清但不阻断本说明编写的细节：具体接口方法/结构、TTL 与锁定阈值、通用字段必填和长度、积分数值范围、文件限制、计费公式/滑杆范围、历史恢复版本编号策略。实施与测试应以实际契约补充确认，不在本文新增业务规则。</p>
+</section>
+<section id="transaction-rules"><h2>13 · 购买与退款规则方案</h2>
+<p class="note warning"><strong>R10 + 交易规则建议稿(待确认，未实现)</strong>。本节为独立产品评审建议，不是开发授权、已实现能力或退款法律承诺；POL 与 EX 独立编号，不计入现有 178 项 PN / 104 项 TC。R10 仅完成原范围内的积分包配置入口等能力；现有退款已按要求移除，订单仍为待支付/已支付/已关闭，TC-38 保留。本节建议重新引入人工退款，本次不修改业务、接口或数据。</p>
+<p>文档依据与维护：<a href="https://github.com/LEIDAAI/leidaaisystem/blob/master/docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md" target="_blank" rel="noopener">GitHub 源功能清单 §8（建议状态）</a> · <a href="https://github.com/LEIDAAI/leidaaisystem/blob/master/docs/feature-spec.html" target="_blank" rel="noopener">HTML 源稿</a>。以下价格均为说明算法的假设值。</p>
+<div class="prototype-module">
+<h4 id="POL-01">POL-01 · 会员时间轴与商品边界</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>单账户会员时间轴与独立积分资产</td></tr><tr><th>逻辑说明</th><td><p>一账户只有一条有序、不重叠的付费会员时间轴，当前有效段与未来已付款预约段分开记录；等级使用显式 rank 比较，不能按价格排序，免费版不是付费会员，月付/年付只是周期而非等级。积分以来源订单的独立批次管理；积分包、赠送包均不提升会员等级，积分包也不改变会员到期时间。不能用 orders.status=PAID 或某订单 expiresAt 推断用户当前会员；按会员段和生效时刻查询。</p><p>商品类型 MEMBERSHIP/CREDIT_PACKAGE/GIFT 与订单来源 ONLINE/MANUAL/GIFT 分开，手工录入也可有真实实付，赠送及 0 元无现金可退。统一服务端时钟，时区 Asia/Shanghai，接口携带时区或偏移，区间为 [startAt,endAt)，开始包含、结束不含；终身以明确标志和空 endAt 表达，不能把未知到期当终身。</p><p>按天为明确 N×24 小时，按月为日历月、按年为日历年；目标月没有原日期则收敛至月底，保留时分秒。每个新段从其 startAt 加购买周期计算；同一年度内按月发放的边界从该年度段原始起点加 k 个日历月计算，避免逐月收敛漂移。</p></td></tr></tbody></table>
+<h4 id="POL-02">POL-02 · 首购、续费与预约降级</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>支付后生效、同级续费及高版本未到期购买低版本</td></tr><tr><th>逻辑说明</th><td><p>免费/已过期且无未来排期可买任意等级，支付成功后生效；有排期则仍须按整条时间轴报价。无未来队列的同级续费从 max(当前到期,支付成功时刻) 顺延；有队列时新增续费一律排在队尾，不能插到当前段后挤掉其他已付费段。报价和支付均展示完整队列、新单首个 start/end 及权益快照；支付成功状态不等于延期段已生效。</p><p><strong>推荐：高级未到期可以买低级，但仅预约降级</strong>，排在当前已付费权益及所有已有预约段结束后生效，不立即降级、不抵扣高等级余额，默认不提前发下期积分。月/年价不能当等级比较。备选简化政策为“高等级到期前完全禁止购买低等级”，待 PM 取舍。终身或无确定队尾时不能给出有限预约日期，转人工，不收取无确定履约时间的预约款。</p><p>未生效预约订单取消可退该订单全部实付，撤销未来发放，并追回该订单可用且未消费赠品；若曾异常提前赠送且已消费，转人工风险审批，不负扣。取消后其他已付款段保留原 start/end；出现空档回免费，可另申请提前生效，不能静默前移。</p></td></tr></tbody></table>
+<h4 id="POL-03">POL-03 · 多等级排期与即时升级报价</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>仅升级当前段并保护未来队列</td></tr><tr><th>逻辑说明</th><td><p>报价前重算并展示旧/新整条排期；即时升级只替换当前有效段，保留该段 endAt，未来段原顺序、start/end、价格及权益 snapshot 不变；显示升级后回落日期、回落等级和后续排期。无后续段则到期回免费。所有未来订单保留购买时不可变价格/权益快照，不按后续改价重算；退款单独核算。</p><p>等效同期限报价：本期原始实付净额 P_old 为本段累计原始付款及既有升级补款减已处理成功退款后的可归属净额；处理中退款占用须先解决，不能重复抵扣。<code>r=clamp((end−now)/(end−start),0,1)</code>，start/end 为本段原始完整期限，升级不能重置分母。<code>V_old=P_old×r</code>，P_target 为服务端当前有效的目标同期限完整售价，<code>V_target=P_target×r</code>；<code>补差=roundHalfUp(max(0,V_target−V_old),2)</code>，金额按分计算并只在最终补差四舍五入。</p><p>仅目标 rank 更高才可升级；若补差为 0，仍须明确展示 0 元升级并审计，不能伪造现金付款。连续升级保留本段付款归属链，旧段被替代后不得独立再退款。不同周期、无等价售价、终身会员不能自动套比例，走客服专项报价审批；无实际生效及无付费对价的赠送会员不得抵现。报价带有效期、价格版本、时间轴版本；支付时若过期或时间轴变化，重新报价并由用户确认，不沿用失效差价。</p></td></tr></tbody></table>
+<h4 id="POL-04">POL-04 · 积分包购买与自定义充值</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>固定包及统一单价自定义积分包</td></tr><tr><th>逻辑说明</th><td><p>固定充值包在支付确认后即时一次性到账独立购买积分批次，附赠积分另建零现金批次，两者关联同订单。自定义购买必须满足 <code>quantity=min+n×step</code>、n 为非负整数且 quantity≤max，服务端校验 min/max/step 与统一单价，<code>金额=roundHalfUp(统一单价×数量,2)</code>，前端预览不替代后端报价。</p><p>后台统一单价配置与独立前台演示阶梯价当前未对齐，需前台接入后统一。本建议不把截图 90000 积分／855 元固定为规则或默认价。配置入口已实现不表示真实购买、支付、到账或退款已实现。</p></td></tr></tbody></table>
+<h4 id="POL-05">POL-05 · 积分有效期、发放与升级补发</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>按来源独立过期与生效期发放</td></tr><tr><th>逻辑说明</th><td><p>建议付费积分包自到账时起 365 天有效（与截图一致，仍待确认）；是否另允许永久模式由产品决定，expiresAt=creditedAt+365×24 小时，边界不含。续费不延长任何历史积分包批次。会员套餐积分跟随其发放期结束：一次性积分在会员段生效时发、到该段结束；按月积分在每个实际生效月周期发、到该月周期结束，不预发未来月份；延期订单不提前发。按月调度和真实发放任务尚未实现。</p><p>“会员期内有效”赠送已由用户确认跟随会员源续费延长，会员结束则失效；这条沿用 R9 现有 mock 动态查询逻辑，不改成固定 365 天。固定天数及永久赠送独立管理，不跟随续费；赠送包不提升会员等级。</p><p>升级积分建议可配置：<code>本发放周期补发=max(0,目标本周期额度−该周期已发套餐额度)</code>，以发放账本累计额度为基准，不用当前余额，不乘 r；提供即时本期服务是该政策理由，不能表述成既有实现。连续升级扣除本周期累计已发套餐及升级额度，避免重复补发；旧批次和已消费不回收、不重置余额，新补批次到当前发放周期结束。若当前段仍有下月则按目标档发，下段恢复预约等级及其 snapshot。</p></td></tr></tbody></table>
+<h4 id="POL-06">POL-06 · 积分耗用与返还</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>最早到期扣减与原批次返还</td></tr><tr><th>逻辑说明</th><td><p>FEFO：最早到期先用，永久在最后；同到期先不可退款赠送、再付费、再按创建时间（仍同序用批次 ID 稳定排序）。扣减账本记录逐批分配，业务撤销返还归原批次；原批已过期仍过期，不能返还成新有效批次。余额、冻结、消费、过期、撤销分别记录；账户总余额不能代替某订单可退余额，其他订单积分不得拿来抵该单已耗积分。</p></td></tr></tbody></table>
+<h4 id="POL-07">POL-07 · 人工退款审批与资金状态</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>独立退款单、双人审批与实际出款确认</td></tr><tr><th>逻辑说明</th><td><p>建议退款单关联原订单、原支付流水及权益来源链，支持部分/剩余权益终止退与金额为 0 的权益撤销。线上优先原路退款（当前无退款接口）；线下填写收款信息与凭证，由申请/审批/人工出款双人复核，禁止同人自批自付。审批通过≠退款到账；仅渠道成功回执或人工出款证据经复核后标成功，审批页面显示处理中、失败和到账时刻。</p><p>每笔 refundId 为幂等键，金额、对象及申请快照不可被重试改写；<code>累计成功退款+处理中预留金额≤原实付</code>，等价地本次可申请≤原实付−已成功退−其他处理中预留。失败释放金额与积分预留；未知/处理中保留预留并查单，不能盲目重付。拒绝无出款，成功后不可直接改回失败。赠送/0 元订单只能撤销未耗权益，无现金退款；不以修改原 orders.status 实现会员或退款状态。</p></td></tr></tbody></table>
+<h4 id="POL-08">POL-08 · 积分包部分退款</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>按原实付分摊购买积分退款</td></tr><tr><th>逻辑说明</th><td><p>原购买积分数 Q、原实付 P，净单价 <code>u=P/Q</code>（保留高精度，赠送不分现金）；剩余可退未消费未过期购买积分 q 的<code>退款额=roundHalfUp(q×u,2)</code>，扣除已预留分配并受原支付可退金额上限约束。多次部分退累计金额不得超 P；最后一次可退积分清零时，在剩余可退现金上限内结清分舍入尾差。</p><p>附赠按本次退购买积分/Q 的比例追回可用未耗赠品，累计追回向下取整到整数积分，最后一次全退结清赠送尾数；已耗赠品风险转人工审批，不负余额追扣、不转罚金。申请受理时锁住具体购买/赠送批次积分与现金额度，防止消费竞态；退款失败解锁，成功后扣减原批次并写退款账本。过期包默认不自动退，可由人工按原因、支付与消费证据例外审查；不能为了退款恢复已过期积分或自动给到全额。Q=0 或来源缺失不能套公式，转人工。</p></td></tr></tbody></table>
+<h4 id="POL-09">POL-09 · 会员剩余权益终止退与升级退款</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>会员保守双上限及付款链分摊</td></tr><tr><th>逻辑说明</th><td><p>建议商业公式（待 PM 确认，非法律承诺）：<code>可退=min(P×remainingRatio, P×max(0,1−C/T))</code>，最终按分四舍五入并受支付退款剩余额度约束。P 为本段实付净额，remainingRatio 按原始完整段 start/end 与申请冻结时刻求剩余比例；T 为该订单快照承诺的全部付费套餐积分（含未来未发），C 为该订单/合并升级段已消费的付费套餐积分，赠送不计现金基数。C 不含未来未发额度，已过期未耗也不算已消费。无积分或尚未发生任何发放时，积分上限取 P，不能除 0；T 不可确定（如未来按月额度未快照）则转人工，不猜总量。</p><p>不推荐“未消费已发/已发总量”的分母：它会把尚未发放的未来权益排除，导致过低退款。T 必须冻结在订单快照，升级后保留原支付及升级各项付费权益映射，不能拿账户余额或赠送积分代入。已退款部分应按剩余未退款价值和权益重新计算，不重复分摊。</p><p>首期推荐积分包可部分退、会员只支持“剩余权益终止退”；它不是原订单全原款退款，已经消费/经过的服务扣除后可能仅退部分现金。退款成功即终止该单剩余会员段、撤销未发任务及对应未耗积分；会员期赠送跟随失效，固定赠送按订单关联撤销未耗部分，已耗不负扣。其他未来已付款段保持原 start/end，不自动提前，空档回免费，用户可另申请提前生效。</p><p>首期默认不开放会员部分权益退款；专项审批若允许部分退，须关联清晰权益变更方案，建议只按未用时长截短，退款成功缩短 end，不得保持相同等级/期限白用；复杂情况转人工专项，不让客服只改现金。</p><p>升级退款以合并后的本段价值与原始付款链统一算上限，按各原支付当前可退净额比例分摊、各笔原路退并处理分尾差，不允许旧单+升级单双退。回退等级、终止时刻及队列必须展示，不自动续回被替代的旧权益。多笔出款部分失败时保留原冻结与逐笔状态、人工处理差异，不能宣称整单成功或放开权益继续消费。</p></td></tr></tbody></table>
+<h4 id="POL-10">POL-10 · 交易决策矩阵与状态流程</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>购买决策与退款状态可核查</td></tr><tr><th>逻辑说明</th><td>以下为建议状态，与现订单三状态分离；矩阵与流程共同描述买后及退后结果。</td></tr></tbody></table>
+<div class="table-wrap" tabindex="0" role="region" aria-label="交易决策矩阵"><table><thead><tr><th>当前状态/动作</th><th>建议结果</th><th>确认重点</th></tr></thead><tbody>
+<tr><td>免费/过期且无队列→购买会员</td><td>支付后立即生效</td><td>等级、起止、首次发分</td></tr><tr><td>有效同级→续费</td><td>无队列顺延，有队列排尾</td><td>完整排期、无提前发分</td></tr><tr><td>高级有效→买低级</td><td>预约降级，队尾生效</td><td>不降当前档、不抵高档余额</td></tr><tr><td>低级有效→升高级</td><td>等效同期限即时升级</td><td>补差、保留 end、回落日期</td></tr><tr><td>不同周期/终身/无等价价→升级</td><td>人工专项报价</td><td>不自动比例折算</td></tr><tr><td>任意会员→积分包/赠送包</td><td>独立积分批次</td><td>不改等级与会员期限</td></tr><tr><td>未生效预约→取消</td><td>退本单全部实付</td><td>撤销任务/赠品，后续不前移</td></tr><tr><td>积分包→退款</td><td>未耗未过期购买积分可部分退</td><td>锁批次、赠品风险、现金上限</td></tr><tr><td>生效会员→退款</td><td>首期剩余权益终止退</td><td>双上限、终止权益、队列空档</td></tr>
+</tbody></table></div>
+<p>购买流程：服务端报价 → 用户确认 → 待支付 → 支付成功回调幂等入账 → 立即 ACTIVE 或未来 SCHEDULED → 到期 ENDED；未支付关闭不发权益。升级原段 REPLACED 并保留追溯；退款成功剩余段 TERMINATED，队列按保留起止重算。</p>
+<p>退款流程：DRAFT 草稿 → SUBMITTED 申请（受理时预留）→ APPROVED 审批通过 → PROCESSING 出款中 → SUCCEEDED 实际退款成功。SUBMITTED 可 REJECTED 拒绝并释放预留；确定未出款的失败为 FAILED 并释放；未知结果保持 PROCESSING 对账。受理后的会员剩余权益冻结，失败按原 end 恢复可用、不额外补时；结算以冻结报价为准，防止出款期间消费与重复重算。多笔退款只有全部成功才结单成功；审批撤回、重试及异常均有审计。</p>
+<h4 id="POL-11">POL-11 · 数据最小契约与并发约束</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>支付、会员、积分、退款独立记账</td></tr><tr><th>逻辑说明</th><td>字段为建议最小契约，未新增真实表或接口；生效、到账与出款分别记时。</td></tr></tbody></table>
+<div class="table-wrap" tabindex="0" role="region" aria-label="交易数据最小契约"><table><thead><tr><th>对象</th><th>最小字段与约束</th></tr></thead><tbody>
+<tr><td>会员段</td><td>segmentId/userId/orderId/rank/startAt/endAt/lifetime/status/originalStartEnd/queueVersion/replacedBy/paymentChain；当前与未来段不重叠</td></tr>
+<tr><td>订单</td><td>orderId/productType/source/paidAmount/currency/paymentIds/paidAt；商品类型与来源分开，状态不派生会员</td></tr>
+<tr><td>不可变商品/报价快照</td><td>snapshotId/planVersion/rank/period/price/paidEntitlementCredits/grantMode/grantSchedule/expiryPolicy/giftPolicy；quoteId/quotedAt/validUntil/queueVersion/差价公式入参及舍入值</td></tr>
+<tr><td>积分批次</td><td>batchId/userId/orderId/segmentId/sourceType/purchasedOrGift/granted/consumed/available/frozen/expired/revoked/creditedAt/expiresAt/sourceMembershipId；购买与赠送分批</td></tr>
+<tr><td>积分账本</td><td>ledgerId/businessId/batchId/action/amount/原扣减分配/reversalOf/createdAt；发放、消费、返还、冻结、过期、退款可追溯</td></tr>
+<tr><td>退款单/逐笔出款</td><td>refundId/orderId/paymentId/segmentChain/申请人/审批人/出款复核人/reason/evidence/requested/reserved/settled/status/channelTxnId/冻结积分分配/权益变更/申请报价/approvedAt/refundedAt；多支付用子流水</td></tr>
+<tr><td>生效与到账</td><td>paidAt 支付成功、startAt 会员生效、creditedAt 积分到账、refundedAt 退款成功独立，不得混为下单或审批时间</td></tr>
+</tbody></table></div>
+<p>支付回调按渠道交易号去重；订单支付→会员段→积分发放→账本须事务或可重试一致性机制，按订单/发放周期唯一键防重复。账号时间轴使用版本锁；同账户同时续费/升级/取消，后提交重新报价。消费、退款冻结/解冻、成功扣减批次采用原子事务/条件更新，禁止超卖积分和超额退款；refundId 重试同对象同金额，成功回调重复不重复扣款。服务端权威校验权限、有效售价、等级、剩余余额和排期；按月任务幂等、取消后任务不可再发，账务成功但权益写入失败须可对账修复并阻断重复出款。</p>
+<h4 id="POL-12">POL-12 · 前端确认明细与研发测试分工</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>明确展示买后、退后状态</td></tr><tr><th>逻辑说明</th><td><p>购买确认显示商品类型/来源、当前档与 rank、当前 start/end、完整已付款队列、新单首个 start/end、即时或预约、周期与售价快照、实付优惠、升级旧净额/r/目标价/补差/0 元原因、升级后回落日期与等级、到账积分及赠分、各批有效期、下次发放日期、不预发提示、报价有效期及变更后重确认。不能仅展示当前到期日。</p><p>退款确认显示原单/原支付/合并升级链、原实付/已退/处理中预留/本次上限、时间与积分双上限入参、所锁购买及赠送积分、现金金额、赠品已耗风险、退款后会员等级/截止/空档/排期、终止而非全原款说明、渠道与审批/出款/到账状态、理由凭证和失败解锁结果。后台审批和前台订单详情均保留这些快照，用户可辨认“批准”与“已到账”。</p><p>前端负责确认明细、排期与失败提示；后端负责报价、时间轴、支付回调、发放任务、批次账本、退款预留及权限审计；测试按下列 POL 示例做未来验收设计，当前不得按未实现建议提回归缺陷或算作 TC 已通过。真实接口、支付与调度接入后另开开发任务并补端到端证据。</p></td></tr></tbody></table>
+<h4 id="POL-13">POL-13 · 数字情景（设计预期，未执行业务测试）</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>交易规则评审示例</td></tr><tr><th>逻辑说明</th><td>所有价格仅说明算法，不是产品售价。日期时间均为 Asia/Shanghai，未注明时刻为 00:00；天数示例均用精确 24 小时，金额最终按分四舍五入。</td></tr></tbody></table>
+<div class="table-wrap" tabindex="0" role="region" aria-label="24 个交易规则数字情景"><table><thead><tr><th>编号</th><th>输入/动作</th><th>预期与核算</th></tr></thead><tbody>
+<tr><td>EX-01</td><td>免费用户 2026-11-05 10:00 支付100元买30天rank1</td><td>[11-05 10:00,12-05 10:00)，支付前不生效</td></tr>
+<tr><td>EX-02</td><td>rank1到期2026-12-01，同级11-20支付100元续30天，无队列</td><td>新段[12-01,12-31)，不从11-20吃掉原时长</td></tr>
+<tr><td>EX-03</td><td>原到期2026-11-01，11-05支付100元买30天</td><td>新段[11-05,12-05)，不补过去4天</td></tr>
+<tr><td>EX-04</td><td>2027-01-31 10:00买1日历月</td><td>到2027-02-28 10:00；再新购1月从02-28到03-28；2028-02-29买1年到2029-02-28</td></tr>
+<tr><td>EX-05</td><td>rank3当前到12-01；rank2已预约[12-01,01-01)；11-05买rank1一月100元</td><td>新单[2027-01-01,02-01)，当前仍rank3，不退高档差额</td></tr>
+<tr><td>EX-06</td><td>30天段实付300元，剩12天，目标同期限600元</td><td>r=12/30=0.4；旧余值120，目标余值240，补120元；end不变</td></tr>
+<tr><td>EX-07</td><td>同期限30天，原300元已成功退60（有明确权益审批），剩15天，目标600元</td><td>P_old=240，r=0.5，旧120，目标300，补180元；不是150元</td></tr>
+<tr><td>EX-08</td><td>rank1实付500元，r=0.5；rank2有效同期限售价400元</td><td>旧250、目标200，补0元，仅rank上升允许并留0元审计，不退50元</td></tr>
+<tr><td>EX-09</td><td>同周期额度1000已发且耗900，目标额度2000，r=0.1</td><td>补2000−1000=1000分，不是100分或1900分；再升3000则再补1000</td></tr>
+<tr><td>EX-10</td><td>自定义min=1000、step=500、max=5000，单价0.013元</td><td>2500合法，32.50元；2600不合法；5500超限拒绝</td></tr>
+<tr><td>EX-11</td><td>2026-11-05 10:00付费包到账10000分，365天</td><td>到2027-11-05 10:00失效；会员11-20续费不延长该批</td></tr>
+<tr><td>EX-12</td><td>同截止赠送200分+付费500分，消费300分</td><td>先赠送200，再付费100，付费剩400；以后截止的批次不先扣</td></tr>
+<tr><td>EX-13</td><td>包实付90元买1000分另赠100，购买已耗400、赠送未耗</td><td>购买可退600，u=0.09，退54元；追回60赠分，保留40赠分</td></tr>
+<tr><td>EX-14</td><td>同包已耗购买400且赠送100全耗，再申请退600购买分</td><td>现金上限仍54元，但赠分已耗转人工；不扣成−60、不加罚款</td></tr>
+<tr><td>EX-15</td><td>订单P=300，30天剩20天，总承诺T=3000，已发1000且耗600</td><td>时间上限200；积分上限300×(1−600/3000)=240；退200元并终止剩余段；误用已发分母得120不采用</td></tr>
+<tr><td>EX-16</td><td>P=300，剩20/30，T=3000，已耗2400</td><td>时间200，积分60，退60元并终止；若T=0则积分上限300、退200</td></tr>
+<tr><td>EX-17</td><td>尚未生效预约实付120元、未来分未发、未耗赠品50分</td><td>取消退120元，撤销50赠分与任务；后续2027-02-01起点保持不变</td></tr>
+<tr><td>EX-18</td><td>原支付100元，已成功退30元，其他处理中预留50元</td><td>本次最多20元；再申请21元拒绝，失败释放50后最多70元</td></tr>
+<tr><td>EX-19</td><td>包900分剩600，退款先锁500，消费请求200</td><td>仅100可消费，200请求拒绝或按明确业务原子规则失败；退款失败解锁500</td></tr>
+<tr><td>EX-20</td><td>原付300+升级补300，合并段剩1/2，T=6000已耗0</td><td>双上限min(300,600)=300元，按两笔各150原路退；不能旧单退300再升级单退300</td></tr>
+<tr><td>EX-21</td><td>2026-12-01 00:00为end，返还原批100分且批次同刻到期</td><td>当前段无效，返还100仍不可用；不生成新的有效100分</td></tr>
+<tr><td>EX-22</td><td>升级后rank3到12-01，原未来rank1[12-01,01-01)，退款11-20成功终止当前段</td><td>11-20至12-01免费，12-01恢复已排rank1；不自动恢复被替代rank2、不前移rank1</td></tr>
+<tr><td>EX-23</td><td>年段2027-01-31起，按月额度1000分</td><td>首月[01-31,02-28)发1000，次月[02-28,03-31)再发1000；未来10期不预发</td></tr>
+<tr><td>EX-24</td><td>3分购买实付0.10元，无赠送，分3次各退1分</td><td>前两次各0.03元，最后结清0.04元，总0.10元不超付；退款重复回调不重复扣分</td></tr>
+</tbody></table></div>
+<h4 id="POL-14">POL-14 · 待 PM 确认的关键政策</h4>
+<table class="prototype-note"><tbody><tr><th>功能名称</th><td>建议稿决策门槛</td></tr><tr><th>逻辑说明</th><td><p>下列8项确认前不得把方案写成已实现或据此开发上线；其中会员期赠送跟随续费为已确认事实，不重新列为悬而未决。</p><ol><li>降级采用推荐预约排队，还是高档到期前禁买；空档保留未来起点与另申请提前生效是否接受。</li><li>升级采用同期限剩余价值差价、原始完整期限分母、0元升级审计；跨周期/终身专项报价的审批权限和有效期。</li><li>付费包365天是否正式采用、是否允许永久；会员积分按发放期结束与固定赠送期限的默认配置。</li><li>升级积分按本周期额度正差、不乘r是否采用及是否可配；连续升级累计发放与下一周期/回落档规则。</li><li>会员退款双上限是否采用，承诺总积分T的快照口径、无积分/未发放/未来额度不可确定的处理；商业政策与适用退款承诺另行审核。</li><li>首期只开放积分包部分退及会员剩余权益终止退是否接受；预约全退、过期包例外、部分会员专项审批和截短方案的边界。</li><li>已耗赠品不负扣的风险审批标准；逐笔原路退、线下双人复核及失败/未知/部分成功资金对账责任和证据要求。</li><li>退款受理时冻结权益、失败按原截止恢复不补时、成功终止与未来段不前移，以及分摊舍入尾差政策是否接受。</li></ol></td></tr></tbody></table>
+</div>
+<p class="note">本次发布仅更新两个文档并同步 HTML 到 Pages，应用继续保留 R10 产物；无业务实现变更。后续确认后须另立开发/联调任务，将 POL 转成真实接口与验收，不能直接改已实现 PN/TC 的结论。</p>
 </section>
 </main>
 <footer><div class="sources"><h2>来源与维护</h2><ol><li id="cite-1"><span>LEIDAAI · 前后台功能清单（V17，2026-11-05）。本文功能、规则、边界与回归的内容依据；仅省略不宜公开的开发机地址及绝对路径。</span><a class="src-url" href="https://github.com/LEIDAAI/leidaaisystem/blob/master/docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md" target="_blank" rel="noopener">github.com/LEIDAAI/leidaaisystem/blob/master/docs/功能清单.md</a></li><li id="cite-2"><span>店雷达 V3.0.6 · 后台 AI 积分原型说明。视觉参考：绿白配色、报告头、吸顶目录、章节表格。</span><a class="src-url" href="https://leidaai.github.io/dianleida1688/v6/v3.0.6/ai-spec.html" target="_blank" rel="noopener">https://leidaai.github.io/dianleida1688/v6/v3.0.6/ai-spec.html</a></li></ol></div><p class="muted">维护约定：功能变更后同步更新源功能清单对应小节、版本回归表和本文关联用例。文档版本 V17 · 2026-11-05 · <a href="#top">回到顶部</a></p></footer>
