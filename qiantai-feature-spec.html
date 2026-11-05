@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>店雷达 AI 前台 · 功能页面原型说明</title>
+<style>
+:root{--bg:#fff;--surface:#f6f9f7;--soft:#edf6f0;--strong:#dcede2;--ink:#1d2722;--muted:#3f4c45;--rule:#d8e2dc;--accent:#00873c;--accent-dark:#075c33;--warn-bg:#fff6e8;--warn-ink:#805009;--font:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;--mono:Consolas,'Cascadia Code',monospace;--max:1080px}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.8 var(--font);-webkit-font-smoothing:antialiased}a{color:var(--accent-dark);text-underline-offset:3px}a:hover{color:var(--accent)}.page{max-width:var(--max);margin:auto;padding:32px 20px 64px}.report-head{padding:40px;background:linear-gradient(135deg,var(--soft),var(--strong));border-radius:12px;margin-bottom:24px}.eyebrow{font-size:13px;letter-spacing:.08em;color:var(--accent-dark);font-weight:700}h1{font-size:30px;line-height:1.35;margin:10px 0 16px}h2{font-size:23px;color:var(--accent-dark);border-bottom:2px solid var(--strong);padding-bottom:10px;margin:0 0 18px}h3{font-size:18px;margin:26px 0 10px}p{margin:0 0 12px}.meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.meta span,.tag{padding:2px 10px;border:1px solid var(--rule);border-radius:20px;background:var(--bg);font-size:13px;color:var(--accent-dark)}.toc{position:sticky;top:0;z-index:10;display:block;max-height:32vh;overflow-y:auto;overscroll-behavior:contain;padding:10px 12px;background:var(--surface);border:1px solid var(--rule);border-radius:8px;margin-bottom:32px}.toc-group{display:flex;align-items:flex-start;gap:12px}.toc-group+.toc-group{border-top:1px solid var(--rule);margin-top:8px;padding-top:8px}.toc-group>strong{flex:0 0 78px;padding-top:4px;white-space:nowrap;color:var(--accent-dark)}.toc-group ol{flex:1;min-width:0;display:flex;flex-wrap:wrap;list-style:none;gap:2px;margin:0;padding:0;overflow:visible}.toc li{white-space:nowrap;margin:0}.toc a{display:block;padding:4px 8px;font-size:13px;text-decoration:none;border-radius:20px}.toc a:hover{background:var(--strong)}section{margin-bottom:48px;scroll-margin-top:calc(32vh + 20px)}ol,ul{padding-left:24px;margin:10px 0 18px}li{margin-bottom:5px}.note{padding:16px 20px;background:var(--soft);border-left:4px solid var(--accent);border-radius:4px;margin:16px 0}.warning{background:var(--warn-bg);border-color:var(--warn-ink);color:var(--warn-ink)}.table-wrap{max-width:100%;overflow-x:auto;overflow-y:auto;max-height:600px;margin:14px 0 20px;border:1px solid var(--rule);border-radius:6px;overscroll-behavior:contain}table{width:100%;border-collapse:collapse;font-size:14px}caption{text-align:left;padding:12px;font-weight:700;background:var(--surface)}th,td{padding:11px 12px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:var(--strong);color:var(--accent-dark);position:sticky;top:0;z-index:1}tbody tr:last-child td{border-bottom:0}tbody tr:nth-child(even){background:var(--surface)}code{font:.9em var(--mono);background:var(--soft);padding:2px 5px;border-radius:3px;overflow-wrap:anywhere}.muted{color:var(--muted)}.routes{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.routes a{padding:4px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--bg)}iframe{display:block;width:100%;height:640px;border:1px solid var(--rule);border-radius:6px;background:var(--bg);margin-top:16px}
+/* 逐功能原型说明 */
+.prototype-module{margin:30px 0 42px;scroll-margin-top:calc(32vh + 20px)}.prototype-module h3{padding:10px 0;border-bottom:1px solid var(--rule)}.prototype-module h4{font-size:16px;color:#1763b5;margin:24px 0 8px;scroll-margin-top:calc(32vh + 20px)}.prototype-note{table-layout:fixed;width:100%;min-width:0!important;margin:0 0 18px;border:1px solid var(--rule)}.prototype-note col:first-child,.prototype-note th{width:110px;position:static;background:#edf4fc;color:#225184}.prototype-note td{background:#fff}.prototype-note p{margin:0 0 8px}.prototype-note p:last-child{margin-bottom:0}.prototype-note ol{margin:4px 0 8px;padding-left:22px}.prototype-evidence{font-size:13px;color:var(--muted)}
+@media(max-width:768px){.page{padding:16px 12px 40px}.report-head{padding:24px 20px}h1{font-size:25px}h2{font-size:21px}.toc-group{display:block}.toc-group>strong{display:block;margin-bottom:4px}table{min-width:740px}.prototype-note{min-width:0!important}.prototype-note th,.prototype-note td{padding:9px 8px}iframe{height:520px}}
+@media print{html{scroll-behavior:auto}body{font-size:11pt}.page{max-width:none;padding:0}.toc,.prototype-frame{display:none}.report-head{padding:20px;border:1px solid var(--rule);background:var(--bg)}section{break-before:page;margin-bottom:24px}h2,h3{break-after:avoid}.table-wrap{max-height:none;overflow:visible;border-radius:0}table{min-width:0;font-size:9pt}th{position:static}thead{display:table-header-group}tr{break-inside:avoid}a{color:var(--ink)}footer{break-before:page;border-top:1px solid var(--rule);padding-top:24px}.prototype-module{break-before:auto}.prototype-note tr{break-inside:auto}.prototype-note h4,.prototype-module h4{break-after:avoid}.prototype-note th{width:110px}.prototype-module details{break-inside:auto}}
+</style>
+</head>
+<body>
+<div class="page">
+<header class="report-head" id="top">
+<div class="eyebrow">店雷达 AI 前台 · 原型交付说明</div>
+<h1>前台功能页面<br>原型说明</h1>
+<p>面向前端、后端与测试，逐页拆解前台（雷达AI）全部功能页面的交互逻辑、字段口径、状态规则与验收依据。本文与后台 <a href="https://leidaai.github.io/leidaaisystem/feature-spec.html">feature-spec.html</a> 同一套规范编排，F01–F07 编号与其中的“前台功能”一一对应，并扩展 F08 全局框架与 F09 通用弹窗。</p>
+<div class="meta"><span>前台 Vue3 + Vite</span><span>修订 R1</span><span>2026-11-05</span><span>9 个原型模块</span><span>37 项原型说明</span><span><a href="https://leidaai.github.io/leidaaiqiantai/">线上前台</a></span></div>
+</header>
+<nav class="toc" aria-label="原型模块导航">
+<div class="toc-group"><strong>前台页面</strong><ol><li><a href="#pn-F01">登录与游客</a></li><li><a href="#pn-F02">AI 选品对话</a></li><li><a href="#pn-F03">套餐购买</a></li><li><a href="#pn-F04">个人信息</a></li><li><a href="#pn-F05">订单中心</a></li><li><a href="#pn-F06">消耗明细</a></li><li><a href="#pn-F07">专家·技能·MCP</a></li><li><a href="#pn-F08">全局框架与导航</a></li><li><a href="#pn-F09">通用弹窗与反馈</a></li></ol></div>
+<div class="toc-group"><strong>研发与测试</strong><ol><li><a href="#scope">阅读口径</a></li><li><a href="#frontend">前台总览</a></li><li><a href="#preview">在线原型</a></li></ol></div>
+</nav>
+<main>
+<section id="scope"><h2>01 · 阅读口径与测试准备</h2>
+<p>前台为独立 Vue3 + Vite 工程，无 vue-router；页面通过左侧导航与顶部导航切换，页面选择持久化到 localStorage，无 URL 深链、无 404 页。本文全部结论以当前源码实现为准，不构成对线上完成情况的额外背书。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="范围与环境"><table><thead><tr><th>事项</th><th>明确口径</th><th>测试使用方式</th></tr></thead><tbody>
+<tr><td>页面构成</td><td>页面键位 <code>chat / experts / skills / pricing / account / orders / consume</code>；登录为全屏视图层；钱包、反馈等为弹窗。</td><td>按导航逐页验收；刷新后停留在上次的页面（未登录时 account/orders/consume 回退对话页）。</td></tr>
+<tr><td>数据状态标注</td><td>【真实】后端接口；【演示】硬编码/本地 mock；【模拟】交互不上送服务端；【未对接/待开发】不作为已完成链路。</td><td>演示数据数值与真实业务不一致不报缺陷；不把模拟交互当作真实链路验收证据。</td></tr>
+<tr><td>会话与消息</td><td>会话列表、历史消息、1688 商品表、obsUrl 报告、会员套餐信息走真实接口；流式回复为 SSE。【真实】</td><td>以真实响应内容验收；注意报告预览依赖 <code>/api/proxy</code> 同源代理链路。</td></tr>
+<tr><td>演示与模拟数据</td><td>登录/注册/微信扫码、套餐与充值、订单与消耗记录、专家技能 MCP 目录、案例报告为本地 mock 或硬编码。【演示】【模拟】</td><td>预置账号 <code>17688894656 / 123456abc</code>，万能验证码 <code>123456</code>；仅供演示测试。</td></tr>
+<tr><td>本地存储</td><td><code>dld_auth_v1</code> 登录态、<code>dld_last_page</code> 页面记忆、<code>dld-expert-workspace-v1</code> 目录工作区、<code>dld_promo_banner_closed</code>、<code>dld_left_collapsed</code>/<code>dld_left_width</code>/<code>dld_right_width</code> 等。</td><td>清缓存即恢复初始种子数据；先记录前置数据再操作，避免原型操作污染测试结论。</td></tr>
+<tr><td>访问与保密</td><td>前台公开地址 <a href="https://leidaai.github.io/leidaaiqiantai/">leidaai.github.io/leidaaiqiantai</a>；不发布内网地址与真实密钥。</td><td>页面原型链接不代表生产入口；输入真实手机号不会触发真实短信。</td></tr>
+</tbody></table></div>
+<p class="note">每项原型说明由“功能名称 + 逻辑说明”组成，逻辑说明固定给出：入口与角色、字段、操作步骤、状态规则、异常边界、关联页面、验收依据。文中测试项为<strong>待执行验收清单</strong>，不是已通过测试报告。</p>
+</section>
+<section id="frontend"><h2>02 · 前台功能总览（9 模块）</h2>
+<p>前台以“AI 选品对话工作台”为中心，围绕账户与商业化提供套餐/订单/消耗页面，并以专家、技能、MCP 目录组织能力入口。真实接口与本地演示数据混合，下表给出每模块的数据状态与验收要点。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="前台9模块总览"><table><thead><tr><th>模块</th><th>功能与数据状态</th><th>规则 / 可执行测试要点</th><th>责任划分</th></tr></thead><tbody>
+<tr><td>F01 登录与游客<br>LoginView<br><a href="#pn-F01">查看原型说明</a></td><td>验证码登录与注册、密码登录、微信扫码与绑定三视图；游客免登录可用。全程【模拟，localStorage mock】。</td><td>三种方式分别进入验证交互；未注册新号触发注册补流程；游客验证权限受限行为。</td><td>前端：登录态与拦截；后端：真实认证待接入；测试：区分模拟登录与后台认证。</td></tr>
+<tr><td>F02 AI 选品对话<br>ChatPane + Sidebar + RightPanel<br><a href="#pn-F02">查看原型说明</a></td><td>三栏工作台：会话列表/对话区/预览面板。SSE 流式回复、停止生成、专家技能携带发送、1688 商品卡、obsUrl 报告、附件、推荐追问、会话管理、Excel 导出。核心链路【真实】，演示组件多。</td><td>验证流式逐段返回与停止、跨轮上下文、会话分页与置顶/重命名/删除回查、商品表字段、报告代理打开、Excel 导出内容。</td><td>前端：三栏与 SSE 交互；后端：会话/搜索/报告能力；测试：以真实响应与导出结果验收。</td></tr>
+<tr><td>F03 套餐购买<br>pricing + 钱包弹窗<br><a href="#pn-F03">查看原型说明</a></td><td>三档套餐卡（演示硬编码，登录后可被真实会员接口覆盖）、月/年付切换、购买确认与扫码支付、升级补差价、积分加油包滑杆。支付【模拟】。</td><td>切换月/年付核对价格；确认支付仅本地加积分，不产生后台订单；补差价按剩余整月折算核对。</td><td>前端：wallet 层与交付流程；后端：支付与订单联动待接入；测试：不宣称支付闭环完成。</td></tr>
+<tr><td>F04 个人信息<br>account<br><a href="#pn-F04">查看原型说明</a></td><td>个人中心子导航四页共用；资料与资产概览、积分余额（getMemberLimit【真实】）、子账号设置为假数据【演示】。</td><td>对照 getMemberLimit 响应核余额；子账号开关互斥验证；退出登录后受保护页回退。</td><td>前端：资料资产展示；后端：会员真实响应；测试：区分真实余额与演示切换。</td></tr>
+<tr><td>F05 订单中心<br>orders<br><a href="#pn-F05">查看原型说明</a></td><td>本地 mock 订单列表、状态/类型/日期筛选、分页与详情。<a class="tag">演示</a>“有效时长”用正则识别文案，<strong>未对接</strong>后台 <code>durationDays=0</code> 长期有效语义。</td><td>筛选与详情只验证本地数据；不按后台契约判定已打通；退款单默认隐藏要验证。</td><td>前端：订单接口接入与时长语义待办；后端：真实订单数据；测试：本地展示与后台订单分开验收。</td></tr>
+<tr><td>F06 消耗明细<br>consume<br><a href="#pn-F06">查看原型说明</a></td><td>本地 mock 消耗记录 12 条；今天 / 7 天 / 30 天快捷范围与自定义日期区间。【演示】</td><td>切换快捷范围与自定义区间，对照本地记录总量；不作为真实积分流水证据。</td><td>前端：筛选交互；后端：台账/流水待开发；测试：仅验证演示筛选。</td></tr>
+<tr><td>F07 专家·技能·MCP<br>experts / skills<br><a href="#pn-F07">查看原型说明</a></td><td>专家 14 个、技能 12 个、MCP 3 个全部硬编码；筛选、分页、案例弹窗、使用/安装计数派生。<a class="tag">演示</a>后台按套餐 visibility 过滤<strong>未对接</strong>。</td><td>验证目录交互与筛选空态；“立即使用”自动发送与“前往使用”不自动发送的差异；真实套餐可见性联调单列待办。</td><td>前端：目录与 visibility 接入；后端：过滤契约；测试：不把硬编码目录当作真实权益结果。</td></tr>
+<tr><td>F08 全局框架与导航<br>TopNavbar + Sidebar + Banner<br><a href="#pn-F08">查看原型说明</a></td><td>页面切换与记忆、未登录拦截、顶部导航与客服弹层、积分胶囊、新人 Banner、栏宽折叠。交互【模拟】，会员信息【真实】。</td><td>验证 dld_last_page 恢复、登出回退、拦截原因文案、Banner 会话级关闭、拖拽宽度持久化。</td><td>前端：框架行为；后端：无关；测试：以 localStorage 证据验收。</td></tr>
+<tr><td>F09 通用弹窗与反馈<br>Modals<br><a href="#pn-F09">查看原型说明</a></td><td>欢迎赠 100 积分、意见反馈（引用会话/截图 4 张/+50 积分）、删除确认、重命名、Esc 统一关闭。【模拟】</td><td>验证每账号一次礼包、反馈写 localStorage、运行中会话删除拦截、Esc 行为。</td><td>前端：弹窗与本地记录；后端：反馈与奖励接口待接入；测试：区分本地奖励与真实积分。</td></tr>
+</tbody></table></div>
+</section>
+<div class="prototype-module" id="pn-F01">
+<h3>F01 · 登录与游客</h3>
+<p>登录层为全屏三视图（验证码 / 密码 / 微信扫码），全部为 localStorage mock，不触发真实短信与真实微信认证。登录态持久化 <code>dld_auth_v1</code>，注册表 <code>dld_reg_v1</code>、密码表 <code>dld_passwords_v1</code>、微信绑定 <code>dld_wx_bind_v1</code>。</p>
+<h4 id="PN-F01-01">原型说明 · PN-F01-01 验证码登录与注册</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>验证码登录与注册（默认 tab）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>游客访问前台默认落地登录层；被拦截操作（购买、查看账户等）带原因文案打开登录层并默认聚焦验证码 tab。</p>
+<p><strong>字段：</strong>手机号（校验 <code>^1\d{10}$</code>）、“获取验证码”按钮（60s 倒计时文案「60s后可重发」）、验证码输入、密码输入（仅未注册新号时追加，≥6 位）、主按钮「登录」/「注册并登录」。</p>
+<ol>
+<li>输入合法手机号 → 点「获取验证码」→ 演示 toast 明示万能验证码 <code>123456</code>，按钮进入 60s 倒计时。</li>
+<li>提交：命中预置/已注册号码 → 验证码正确即登录成功并关闭登录层。</li>
+<li>未注册新号 → 提示「首次使用该手机号，请输入验证码并设置密码」并追加密码框，按钮文案变「注册并登录」；提交成功后注册手机号写 <code>dld_reg_v1</code>、密码写 <code>dld_passwords_v1</code>。</li>
+<li>注册成功后延迟约 400ms 弹出欢迎赠积分弹窗（见 F09-02）。</li>
+</ol>
+<p><strong>状态规则：</strong>手机号非法时按钮允许点击但提示「请输入正确的手机号」；倒计时期间不可重发；登录态恢复在模块加载时完成，避免刷新出现登录墙闪烁。</p>
+<p><strong>异常边界：</strong>验证码错误提示「验证码错误（模拟验证码 123456）」；未注册号走密码 tab 提示「该手机号未注册，请使用验证码注册」；都不发送真实短信。</p>
+<p><strong>关联页面：</strong>登录成功回到原操作上下文；游客入口、密码登录、微信扫码（同视图切换）。</p>
+<p><strong>验收依据：</strong>步骤 1–3 逐条执行并截图 toast 与状态文案；断言 <code>dld_reg_v1</code>/<code>dld_auth_v1</code> 写入。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F01-02">原型说明 · PN-F01-02 密码登录</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>密码登录（tab 二）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录层内切换“密码登录”tab；预置账号提示条展示 <code>17688894656 / 123456abc</code>。</p>
+<p><strong>字段：</strong>手机号、密码（支持明文/密文切换眼睛钮）、「登录」按钮。</p>
+<ol>
+<li>输入预置账号或已注册密码表中的手机号 + 对应密码 → 登录成功。</li>
+<li>「忘记密码」点击 → toast「演示环境暂不支持找回密码，请使用验证码登录」。</li>
+</ol>
+<p><strong>状态规则：</strong>密码显隐切换不改变已输入值；提交后命中即写登录态。</p>
+<p><strong>异常边界：</strong>未注册号提示「该手机号未注册，请使用验证码注册」；密码错误提示「密码错误」。</p>
+<p><strong>关联页面：</strong>验证码注册流程产生的密码可在此登录（两 tab 数据互通）。</p>
+<p><strong>验收依据：</strong>分别用预置账号、新注册号、错误密码三组用例回放，记录 toast 文案。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F01-03">原型说明 · PN-F01-03 微信扫码与绑定</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>微信扫码登录与手机号绑定</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录层默认落地视图为扫码；面向选择微信习惯的游客。</p>
+<p><strong>字段：</strong>二维码占位图、状态文案；绑定视图：手机号、验证码、「完成绑定并登录」按钮、「返回重新扫码」链接。</p>
+<ol>
+<li>进入扫码视图 → 约 3.2s 模拟“已扫码” → 再 2.2s 出结果。</li>
+<li>已绑定（<code>dld_wx_bind_v1</code> 命中）→ 直接登录成功。</li>
+<li>未绑定 → 切换绑定视图，输入手机号 + 验证码（万能 123456）→「完成绑定并登录」，提交期间按钮呈「绑定中…」；成功写入绑定表并登录。</li>
+</ol>
+<p><strong>状态规则：</strong>演示条提供「重置扫码绑定」按钮，可清空 <code>dld_wx_bind_v1</code> 重走流程。</p>
+<p><strong>异常边界：</strong>二维码不代表真实微信认证成功；整个过程不与微信服务端交互。</p>
+<p><strong>关联页面：</strong>绑定成功即进入对话工作台。</p>
+<p><strong>验收依据：</strong>按步骤 1–3 走完整链路并重置一次验证可重复性。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F01-04">原型说明 · PN-F01-04 游客访问与登录拦截</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>游客免登录访问与带原因拦截</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录层「暂不登录，先看看→」进入游客态；未登录 点击受保护资源时统一走 <code>requireLogin(reason)</code>。</p>
+<p><strong>字段：</strong>拦截原因文案随触发点变化：购买积分包 / 购买套餐或积分包 / 查看账户信息 / 升级套餐 / 完成支付等。</p>
+<ol>
+<li>游客可浏览工作台、专家/技能目录、套餐页（pricing 不拦截）。</li>
+<li>点击 account / orders / consume 页或钱包、购买按钮 → 打开登录层并展示对应原因文案。</li>
+<li>登录成功后回到触发前的操作上下文继续原动作（如重新打开钱包）。</li>
+</ol>
+<p><strong>状态规则：</strong>游客态不持久化登录数据；登录态被清（退出）时若停留在受保护页自动回退对话页。</p>
+<p><strong>异常边界：</strong>未登录输入框仍可输入，发送前才拦截与否以当前实现为准（以发送按钮反馈为准验收）。</p>
+<p><strong>验收依据（关联页面）：</strong>逐个触发点核对原因文案与登录成功后的回续行为。</p>
+<p><strong>异常验收：</strong>登录层三种视图切换不丢失已填内容。</p>
+</td></tr>
+</tbody></table>
+<p class="prototype-evidence">资料：LoginView.vue、components/Modals.vue（登录视图）、stores/auth.ts</p>
+</div>
+<div class="prototype-module" id="pn-F02">
+<h3>F02 · AI 选品对话工作台</h3>
+<p>前台核心页面，三栏布局：左栏会话列表（Sidebar）、中栏对话区（ChatPane + Composer）、右栏预览面板（RightPanel）。会话与消息走真实接口，回复为 SSE 流式；专家/技能目录与案例为演示数据。</p>
+<h4 id="PN-F02-01">原型说明 · PN-F02-01 工作台首屏与引导</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>新会话首屏 hero 引导</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>「开启新对话」或登录后默认进入；面向开始一次选品咨询的用户。</p>
+<p><strong>字段：</strong>标题「跨境电商运营助手」；专家/技能双 tab；平台筛选（1688 / OZON / 亚马逊 / TEMU）；场景 chips；推荐卡片每页 6 个 + 翻页；浮动按钮（用户反馈、消息交互演示）。</p>
+<ol>
+<li>选择平台与场景 → 卡片列表联动筛选。</li>
+<li>专家卡「看案例」打开案例弹窗（见 PN-F07-03）。</li>
+<li>专家卡「立即使用」→ 将该专家 prompts[0] 填入输入框并<strong>自动发送</strong>。</li>
+<li>技能卡「前往使用」→ 填入提示词跳对话区，<strong>不自动发送</strong>（与专家差异点）。</li>
+</ol>
+<p><strong>状态规则：</strong>卡片数据全部硬编码【演示】；已发出首条消息后 hero 收起进入流式布局。</p>
+<p><strong>异常边界：</strong>无网络不阻塞首屏展示（卡片为本地数据）。</p>
+<p><strong>关联页面：</strong>pn-F07（目录）、pn-F09-01（反馈弹窗）。</p>
+<p><strong>验收依据：</strong>截图 hero 布局与双 tab 筛选联动；分别点专家/技能卡验证自动发送差异。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-02">原型说明 · PN-F02-02 选品发送与 SSE 流式回复</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>消息发送、SSE 流式渲染与停止生成</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>对话区 Composer；所有登录/游客用户。</p>
+<p><strong>字段：</strong>textarea 占位「输入您的选品需求...（Enter 发送，Shift+Enter 换行）」自适应高度；发送按钮双态「开始查询」/「停止生成」；运行中消息状态文案「· 正在执行」。</p>
+<ol>
+<li>输入需求 Enter 或点「开始查询」→ 建立会话/追加轮次，消息进入流式渲染（liveText 逐段刷新）。</li>
+<li>运行中再次 Enter → toast「当前对话正在生成，请等待完成或先停止生成」。</li>
+<li>点「停止生成」→ 中断 SSE，消息定格已生成内容并给出状态标记。</li>
+<li>回复完成 → 附推荐追问 chips（见 PN-F02-07）；1688 类问题附商品卡/明细（PN-F02-04），报告任务附 obsUrl 卡片（PN-F02-05）。</li>
+</ol>
+<p><strong>状态规则：</strong>消息流底部显示「消息加载中…」直到历史拉取完成；内容区距底 &gt;120px 时出现「跳到最新」浮钮；页脚固定免责声明「内容由AI大模型生成，请仔细甄别」；切换会话会重置右栏预览上下文。</p>
+<p><strong>异常边界：</strong>SSE 中断/异常在消息内呈现 errorText，不弹阻塞对话框；刷新页面后运行中任务以接口实际状态恢复。</p>
+<p><strong>关联页面：</strong>pn-F02-09（会话状态同步）、pn-F05/F06（产生消耗的口径说明见 F06-02）。</p>
+<p><strong>验收依据：</strong>录制一次完整流式回复与一次停止操作；断言停止后 no further chunk 渲染。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-03">原型说明 · PN-F02-03 专家 / 技能身份携带发送</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>输入区专家 / 技能浮窗选择</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>Composer 工具条打开浮窗；将专家/技能作为“身份”随消息发送。</p>
+<p><strong>字段：</strong>浮窗内搜索框 + 平台筛选 + 场景 chips；推荐列表 ≤6 个；已选项在工具条以 chip 呈现（可移除）；身份切换下拉（当前 <code>v-if=false</code> 隐藏，不做验收）。</p>
+<ol>
+<li>打开浮窗 → 搜索/筛选 → 点选专家或技能 → toast「已选择专家…随消息一起发送」。</li>
+<li>再次点击同一项可反选取消。</li>
+<li>发送消息时所选身份随请求携带，影响回复口径。</li>
+</ol>
+<p><strong>状态规则：</strong>专家与技能单选槽位各自独立；跨消息保留至手动移除。</p>
+<p><strong>异常边界：</strong>无匹配结果空态「未找到匹配的专家/技能」。</p>
+<p><strong>关联页面：</strong>pn-F07（目录详情）、pn-F02-01（hero 推荐位）。</p>
+<p><strong>验收依据：</strong>选择→发送→移除三步链路截图；核对请求携带字段（前端日志）。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-04">原型说明 · PN-F02-04 1688 商品卡与消息内明细</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>1688 商品卡（ali1688Product）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>回复命中选品类问题时内嵌商品卡；数据与右栏商品表同源【真实】。</p>
+<p><strong>字段：</strong>主图、标题、价格区间、成交/复购等关键指标、跳转链接。</p>
+<ol>
+<li>流式完成后商品卡随消息渲染。</li>
+<li>点卡片或“查看明细”联动右栏商品表（PN-F02-10）。</li>
+</ol>
+<p><strong>状态规则：</strong>仅 1688 渠道问题触发；无命中数据时该消息不渲染商品卡。</p>
+<p><strong>异常边界：</strong>接口失败时消息流保留 errorText，商品卡缺席不阻塞对话。</p>
+<p><strong>关联页面：</strong>pn-F02-10 右栏表格为完整数据视图。</p>
+<p><strong>验收依据：</strong>触发典型 1688 选品问题，截图卡片与右栏联动一致。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-05">原型说明 · PN-F02-05 obsUrl 报告生成与预览</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>报告任务卡片与 obsUrl 预览 / 下载</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>消息触发的报告任务（reportTask）完成后给出 obsUrl；右栏承载预览。</p>
+<p><strong>字段：</strong>任务卡（状态、标题、入口按钮）；右栏报告视图：iframe 沙箱预览、缩放 50%–200%、刷新、下载 HTML、全屏。</p>
+<ol>
+<li>发送报告类请求 → 任务卡以“生成中”轮询展示。</li>
+<li>完成后取 obsUrl → 打开右栏报告视图。</li>
+<li>remote 模式经 <code>/api/proxy?url=</code> 同源代理加载（注入 base + 滚动样式，srcdoc 缓存），失败回退直连。</li>
+<li>「下载」保存报告 HTML 本地文件。</li>
+</ol>
+<p><strong>状态规则：</strong>预览内容 srcdoc 缓存直到刷新/切换；报告另在右栏以「📄报告」标签页常驻可切回。</p>
+<p><strong>异常边界：</strong>代理失败自动回退直连；obsUrl 为空则按钮禁用。</p>
+<p><strong>关联页面：</strong>pn-F02-10（多标签结构）、后台 A 系列（obsUrl 生成契约见后台规范）。</p>
+<p><strong>验收依据：</strong>一次真实生成 → 预览 → 下载全链路截图，核对代理请求 200。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-06">原型说明 · PN-F02-06 附件与图片灯箱</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>消息附件上传（点击 + 拖拽）与图片预览</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>Composer 工具条「添加附件」；用作选品参考图/单据说明。</p>
+<p><strong>字段：</strong>附件 chip（按扩展名分色图标、名称、可删）；图片 chip 点击进灯箱。</p>
+<ol>
+<li>点击或拖拽添加文件 → 生成 chip 并随消息发送。</li>
+<li>点图片 chip → lightbox：缩放 25%–300%，&gt;100% 可拖拽平移，Esc 关闭，方向键切图。</li>
+</ol>
+<p><strong>状态规则：</strong>附件仅本地会话上下文保留；发送后 chip 清空。</p>
+<p><strong>异常边界：</strong>粘贴失败提示；超大文件以当前实现限制为准（不发说明）。</p>
+<p><strong>关联页面：</strong>pn-F02-02（发送链路）。</p>
+<p><strong>验收依据：</strong>添加 2 类文件 + 1 张图，验证 chip 删除、灯箱缩放与 Esc。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-07">原型说明 · PN-F02-07 推荐追问与多轮上下文</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>推荐追问 chips 与多轮对话</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>每条回复完成后附推荐追问；引导用户连续追问。</p>
+<p><strong>字段：</strong>chips 文案来源于响应字段 <code>suggest</code>；加载中呈 suggestLoading 态。</p>
+<ol>
+<li>回复完成 → 渲染追问 chips；点击即作为用户消息发送。</li>
+<li>继续追问走同一会话上下文（历史消息真实接口回填）。</li>
+</ol>
+<p><strong>状态规则：</strong>历史消息加载完成前发送不受阻；新轮次仍可携带专家/技能身份。</p>
+<p><strong>异常边界：</strong>suggest 为空则不渲染该区域。</p>
+<p><strong>关联页面：</strong>pn-F02-02、pn-F02-09（会话持久化）。</p>
+<p><strong>验收依据：</strong>两轮追问内容连续的场景截图；刷新后历史完整回显。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-08">原型说明 · PN-F02-08 会话列表：分组、搜索与分页</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>左栏会话列表分组 / 搜索 / 分页加载</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录用户可见完整会话列表（游客为空态）。</p>
+<p><strong>字段：</strong>顶部按钮（开启新对话 / 专家 / 技能）；搜索框占位「搜索对话标题 / 标签」；分组：置顶 / 今天 / 昨天~本周 / 更早（groupHeader 可折叠且持久）；会话项含标题、轮次、时间、运行中「生成中」badge 与停止按钮。</p>
+<ol>
+<li>会话全量由 <code>DLD.conversations(cursor,20)</code> 循环拉取（兼容 cursor/nextCursor），默认选中最近会话。</li>
+<li>搜索即时过滤标题/标签。</li>
+<li>空组显示「暂无会话」；全空显示「该账号暂无历史对话」。</li>
+<li>分组折叠状态跨刷新保留。</li>
+</ol>
+<p><strong>状态规则：</strong>无「加载更多」按钮——分页在进入页面时静默完成，数据全量内存分组。</p>
+<p><strong>异常边界：</strong>接口异常时列表空但不阻塞新对话创建；本地种子与真实接口不可混淆（以接口返回为准）。</p>
+<p><strong>关联页面：</strong>pn-F02-10（切换会话重置右栏）、pn-F08-01（页面记忆）。</p>
+<p><strong>验收依据：</strong>登录后核对列表分组与真实接口条数一致；搜索命中/空态两截图。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-09">原型说明 · PN-F02-09 会话置顶 / 重命名 / 删除</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>会话项右键菜单（⋮ / 右键）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>会话项 ⋮ 或右键打开菜单。</p>
+<p><strong>字段：</strong>菜单项「置顶 / 取消置顶」「重命名」「删除任务」；重命名输入框 <code>maxlength=50</code>。</p>
+<ol>
+<li>置顶 → 项移入置顶组，可再次点击取消。</li>
+<li>重命名 → 弹窗输入，Enter 提交 / Esc 取消；失败保留弹窗可重试。</li>
+<li>删除 → 确认弹窗「…无法恢复」；会话运行中时 alert「该会话正在生成，请先停止并等待任务结束后再删除。」阻止删除。</li>
+<li>操作后列表与接口同步刷新，当前会话被删则切换下一个。</li>
+</ol>
+<p><strong>状态规则：</strong>置顶全部折叠为置顶组；重命名成功后标题即时更新。</p>
+<p><strong>异常边界：</strong>菜单打开时滚动列表自动关闭；连续操作不产生脏标题。</p>
+<p><strong>关联页面：</strong>pn-F09-03（通用弹窗规则）、pn-F02-02（运行中态）。</p>
+<p><strong>验收依据：</strong>三操作各一次 + 运行中删除被拦的截图。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F02-10">原型说明 · PN-F02-10 右侧预览面板与 Excel 导出</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>右栏多标签预览：商品表 / 报告 / 表格详情 / Excel</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>查询产生结果后右栏自动出现标签页（📄报告 / 📋表格），可切换与关闭；空态「暂无预览内容 / 发起选品查询后，报告和商品数据会显示在这里」。</p>
+<p><strong>字段：</strong>商品表【真实】列为勾选框、序号、商品信息（图 + 标题 + 复制标题/链接）、上架时间、批发价（最低/最高汇总）、起批量、近30天订单、件数、销售额、复购率、店铺（诚信通年限、公司类型徽标）；「详情▾」展开 18+ 字段（代发价、24H/48H 揽收率、7 日增长率、采购集中率、履约率、回头率等）；列表/图片卡双模式；汇总条：命中商品数、最低/最高批发价、Top1 近30天订单。</p>
+<ol>
+<li>表格支持表头排序（数字列）与分页（50/100 条每页 + 窗口页码 + 跳页）。</li>
+<li>「查看更多」加载下一页（骨架屏）。</li>
+<li>「导出勾选」未勾选时禁用；「导出全部」→ 下载 <code>1688商品选品结果.xlsx</code>。</li>
+<li>对话表格详情：多 tab、排序、分页，「⤓ 导出 Excel」不受分页限制全量导出。</li>
+<li>报告标签 = PN-F02-05 的 obsUrl 预览。</li>
+</ol>
+<p><strong>状态规则：</strong>主图悬停放大；切换会话清空右栏；导出按当前筛选/勾选口径。</p>
+<p><strong>异常边界：</strong>导出大数据量可能延迟，需出现下载无报错即可；Excel 导入<strong>不在本清单</strong>（未实现，不写说明）。</p>
+<p><strong>关联页面：</strong>pn-F02-04 / F02-05。</p>
+<p><strong>验收依据：</strong>核对导出文件行数与接口总量一致；排序与分页正确性两张截图。</p>
+</td></tr>
+</tbody></table>
+<p class="prototype-evidence">资料：ChatPane.vue、Composer.vue、Sidebar.vue、RightPanel.vue、MessageBubble.vue、stores/chat.ts、send.ts、api/index.ts</p>
+</div>
+<div class="prototype-module" id="pn-F03">
+<h3>F03 · 套餐购买</h3>
+<p>页面 <code>pricing</code> 与钱包弹窗共同承载商业化交付。套餐数据硬编码在 wallet 层（演示），登录后若真实会员接口返回套餐字段则覆盖演示列表（renderWalletPackagesFromMember）。当前演示套餐：基础版 5600 积分 ¥99 月 / ¥949 年；高级版 22000 积分 ¥299 / ¥2870（推荐位）；团队版 52500 积分 ¥499 / ¥4788；各档含图片/视频额度、查询与报告次数及 7 条权益。</p>
+<h4 id="PN-F03-01">原型说明 · PN-F03-01 套餐卡展示与月付 / 年付切换</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>套餐卡、计费周期切换与登录购买入口</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>左侧导航/底部账号卡「套餐购买」、顶栏积分胶囊「购买/升级套餐」、新人 Banner「立即参与」（已登录）。</p>
+<p><strong>字段：</strong>个人中心子导航（个人信息 / 套餐购买 / 订单中心 / 消耗明细，四页共用）；月付/年付切换；套餐卡：名称、积分额度、价格、年付对比文案（如基础版年付对比月付省 239）、并发额度（10/1）、权益 7 条；高级版带「推荐」featured 角标。</p>
+<ol>
+<li>切换月付/年付 → 三卡价格与年省文案联动更新。</li>
+<li>点「立即购买」：未登录 → 打开登录层（原因「购买套餐或积分包」）；已登录 → 打开购买确认弹窗。</li>
+</ol>
+<p><strong>状态规则：</strong>当前套餐卡不重复购买入口口径以现实现为准；演示数据数值不代表真实价格。</p>
+<p><strong>异常边界：</strong>真实会员接口异常时回退演示套餐列表，不白屏。</p>
+<p><strong>关联页面：</strong>pn-F03-02（确认与支付）、pn-F08-03（Banner 引流）。</p>
+<p><strong>验收依据：</strong>月/年切换前后价格对比截图；未登录点购拦截原因文案。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F03-02">原型说明 · PN-F03-02 购买确认与扫码模拟支付</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>订单支付弹窗（积分中心 / 购买确认）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>购买确认（buyConfirm）、升级确认第二步共用支付弹窗。</p>
+<p><strong>字段：</strong>左栏支付方式（微信 / 支付宝）+ 二维码 canvas（伪随机点阵 + 中心 logo 占位）+ 15 分钟倒计时；右栏订单详情：商品名、实付金额（演示口径“原价=应付×2、优惠 50%”）、协议链接、「确认支付 ¥xx」按钮、提示「虚拟商品，一经售出不支持退款」。</p>
+<ol>
+<li>确认支付 → 弹出扫码视图，倒计时启动（≤60s 变红）。</li>
+<li>超时 → toast「支付超时，订单已自动取消」并关闭。</li>
+<li>点击二维码 → 模拟支付成功 → confirmPay：加油包 totalCoins += 积分；套餐订单切换套餐/周期/到期日（不加积分）。</li>
+<li>订单号规则 <code>dld+时间戳+3 位随机</code>，订单 unshift 置顶；toast「充值成功，到账 N 积分」。</li>
+</ol>
+<p><strong>状态规则：</strong>整条链路【模拟】，不产生后台订单、不校验真实到账；未登录先弹登录（原因「完成支付」）。</p>
+<p><strong>异常边界：</strong>弹窗内 Esc 关闭视为放弃，无残留订单。</p>
+<p><strong>关联页面：</strong>pn-F05（订单可见该模拟单）、pn-F03-04（加油包）、pn-F09-03（Esc 规则）。</p>
+<p><strong>验收依据：</strong>走通一次“确认→扫码→成功”，核对 toast、订单置顶与积分变化。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F03-03">原型说明 · PN-F03-03 升级套餐与补差价</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>升级确认（两步）与补差价折算</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>账号卡「升级套餐」、积分胶囊「升级套餐」、F04 套餐权益卡。</p>
+<p><strong>字段：</strong>第一步：当前套餐 → 目标套餐、实付金额、目标价、月度额度、到期时间；第二步：进入 PN-F03-02 支付弹窗，按钮文案「补差价 ¥xx，确认升级」。</p>
+<ol>
+<li>确认升级 → 展示两步信息，补差价 = 目标价 − 剩余价值（按剩余<strong>整月</strong>折算）。</li>
+<li>确认 → 扫码模拟支付 → 成功 toast「升级成功，当前套餐：xx」。</li>
+<li>confirmPay 切换套餐/计费周期/到期日，积分额度更新，<strong>不追加积分</strong>。</li>
+</ol>
+<p><strong>状态规则：</strong>月付/年付换档均走同一流程；演示套餐当前为“基础版·年付，到期 2027-10-16”。</p>
+<p><strong>异常边界：</strong>差价折算结果仅演示口径，不与后台对账。</p>
+<p><strong>关联页面：</strong>pn-F04（权益展示）、pn-F05（升级单）。</p>
+<p><strong>验收依据：</strong>月付→年付、低档→高档各演示一次，核对差价与 toast 文案。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F03-04">原型说明 · PN-F03-04 钱包积分加油包</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>钱包弹窗：自定义积分包滑杆与阶梯单价</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>顶栏「我的积分」胶囊或账号卡「购买积分包」打开钱包（积分中心）。</p>
+<p><strong>字段：</strong>左栏：套餐卡入口 + 自定义包滑块（3 万–10 万积分、步进 1 万；阶梯单价 0.015 / 0.0125 / 0.0095 元/积分）+ 有效期 365 天提示「到期未使用部分次日清零」+ 微信/支付宝选择；右栏：订单详情、「确认支付 ¥xx」、协议链接、不退款提示。</p>
+<ol>
+<li>拖动滑块 → 实时计算应付金额（按当前阶梯单价）。</li>
+<li>确认支付 → 进入 PN-F03-02 扫码模拟支付。</li>
+<li>成功后积分立即到账（totalCoins 累加）。</li>
+</ol>
+<p><strong>状态规则：</strong>未登录打开钱包先弹登录（原因「购买积分包」）；滑块最小/最大值不可越界。</p>
+<p><strong>异常边界：</strong>清零规则仅为文案说明，无定时任务。</p>
+<p><strong>关联页面：</strong>pn-F06（消耗扣减口径演示）、pn-F09-02（注册赠积分同池）。</p>
+<p><strong>验收依据：</strong>三档阶梯各拖一次核对金额；成功到账后积分胶囊同步。</p>
+</td></tr>
+</tbody></table>
+<p class="prototype-evidence">资料：components/Modals.vue（积分中心 / 支付 / 升级确认）、stores/wallet.ts、App.vue（pricing 页）</p>
+</div>
+<div class="prototype-module" id="pn-F04">
+<h3>F04 · 个人信息</h3>
+<p>个人中心四页（account / pricing / orders / consume）共用顶部子导航；account 为资料与资产概览。会员权益余额经 <code>getMemberLimit</code>【真实】，展示层含演示兜底数据。</p>
+<h4 id="PN-F04-01">原型说明 · PN-F04-01 资料与资产概览</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>资料卡、积分与套餐权益展示</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>左侧底部账号卡 hover →「个人中心」；顶栏头像下拉「账号与积分」。</p>
+<p><strong>字段：</strong>头像、昵称/手机号（脱敏展示）、当前套餐（名称+周期）、剩余积分、积分余额胶囊、「升级套餐」「查看明细」入口。</p>
+<ol>
+<li>进入 account 页渲染资料与资产卡片。</li>
+<li>「升级套餐」跳 pricing；「查看明细」跳 consume（携带当前积分上下文）。</li>
+</ol>
+<p><strong>状态规则：</strong>余额优先取 getMemberLimit 真实响应，失败回落演示值；套餐信息与钱包 currentPackage 同源。</p>
+<p><strong>异常边界：</strong>未登录不可达（拦截原因「查看账户信息」）。</p>
+<p><strong>关联页面：</strong>pn-F03-03（升级）、pn-F06（明细）。</p>
+<p><strong>验收依据：</strong>真实接口返回与页面余额一致性截图（可脱敏）。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F04-02">原型说明 · PN-F04-02 子账号设置</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>子账号互看 / 权限开关与列表（演示）</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>account 页子账号区域或「设置」弹窗。</p>
+<p><strong>字段：</strong>「子账号互看」「查看权限控制」两开关（互斥）；子账号列表（共享积分额度）+ 外链「管理子账号」（dianleida.net 会员中心）；「保存」按钮。</p>
+<ol>
+<li>开启其一 → 另一个自动关闭（互斥联动）。</li>
+<li>保存 → saveSubSettings【模拟】+ toast 成功；不请求后台。</li>
+<li>「管理子账号」新窗口打开外链。</li>
+</ol>
+<p><strong>状态规则：</strong>开关状态仅本地会话内存，刷新不恢复承诺（以现实现为准）。</p>
+<p><strong>异常边界：</strong>无真实子账号数据，列表为演示假数据（600ms 延迟模拟加载）。</p>
+<p><strong>关联页面：</strong>外部会员中心。</p>
+<p><strong>验收依据：</strong>互斥联动与保存 toast 截图；标注“演示数据”声明。</p>
+</td></tr>
+</tbody></table>
+<h4 id="PN-F04-03">原型说明 · PN-F04-03 账号下拉与退出登录</h4>
+<table class="prototype-note"><tbody>
+<tr><th>功能名称</th><td>已登录头像下拉与退出</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>顶栏头像（仅登录态）。</p>
+<p><strong>字段：</strong>下拉项「账号与积分」（openAccount → account 页）、「退出登录」。</p>
+<ol>
+<li>点头像展开下拉；点「退出登录」清除登录态（<code>dld_auth_v1</code>）。</li>
+<li>退出后若停留在 account/orders/consume 自动回退对话页；下次进入重新拦截。</li>
+</ol>
+<p><strong>状态规则：</strong>游客态不显示头像下拉。</p>
+<p><strong>异常边界：</strong>退出不清空会话数据，重新登录同账号可续用。</p>
+<p><strong>关联页面：</strong>pn-F08-02（顶栏）、pn-F01-04（拦截）。</p>
+<p><strong>验收依据：</strong>退出后受保护页回退与 localStorage 清空断言。</p>
+</td></tr>
+</tbody></table>
+<p class="prototype-evidence">资料：App.vue（account 页）、stores/account.ts、stores/auth.ts、components/Modals.vue（子账号设置）、TopNavbar.vue</p>
+</div>
+<div class="prototype-module" id="pn-F05">
+<h3>F05 · 订单中心</h3>
+<p>对应页面：orders（顶栏头像下拉 / 个人信息页入口，未登录跳登录）。订单数据为本地 <code>buyLedger</code> 演示账本，共 5 条（三档套餐 + 加油包 + 一条退款单，退款单默认隐藏）。【演示】</p>
+
+<h4 id="PN-F05-01">原型说明 · PN-F05-01 订单列表与筛选</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>订单列表与筛选</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录用户从顶栏头像下拉或个人信息页进入「订单中心」；页面顶部为状态 / 类型 / 日期三个筛选器与订单表格。</p>
+<p><strong>字段：</strong>筛选器含订单状态（全部 / 待支付 / 已完成 / 已退款）、订单类型（套餐 / 加油包）、日期范围（近 7 天 / 近 30 天 / 全部）；表格列：订单号（dld+时间戳+3位随机）、商品名称、金额、支付方式、状态 badge、下单时间、操作（查看详情）。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>进入页面默认加载本地 buyLedger 全部订单（退款单默认隐藏，切换状态为「已退款」时可见）。</li>
+<li>选择状态 / 类型 / 日期任一筛选，表格即时过滤，无刷新。</li>
+<li>超过 10 条时分页，每页 10 条，底部页码切换。</li>
+<li>点击行内「查看详情」展开订单详情（见 PN-F05-02）。</li>
+</ol>
+<p><strong>状态规则：</strong>待支付订单（来自 F03-02 未支付订单）显示「继续支付」按钮，点击回到支付弹窗续接倒计时；已完成显示绿色 badge；已退款显示灰色 badge 且仅在明确筛选时出现。</p>
+<p><strong>异常边界：</strong>筛选结果为空时显示空态与「暂无符合条件的订单」；本地无订单时引导「去选购套餐」跳转 pricing 页。</p>
+<p><strong>关联页面：</strong>F03-02（支付成功写入订单）、F04-01（入口）、F03-01（继续支付回套餐页）。</p>
+<p><strong>验收依据：</strong>orders 页渲染与筛选后行数一致；退款单默认不可见；分页每页 ≤10 条。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F05-02">原型说明 · PN-F05-02 订单详情</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>订单详情</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>订单列表行内「查看详情」，弹出订单详情面板（非独立页面）。</p>
+<p><strong>字段：</strong>订单号、商品名称与规格（月付 / 年付 / 加油包档位）、订单金额、支付方式（微信 / 支付宝）、下单时间、支付时间（未支付为 —）、订单状态、积分说明（套餐赠送积分与加油包积分数）。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点击「查看详情」，面板展示全部字段。</li>
+<li>待支付订单在详情内同样提供「继续支付」按钮，行为同列表。</li>
+<li>点击关闭或遮罩层关闭详情，回到列表且筛选条件保持不变。</li>
+</ol>
+<p><strong>状态规则：</strong>已退款订单详情内不提供继续支付，仅展示退款时间与退款金额。</p>
+<p><strong>异常边界：</strong>本地账本被清空后刷新，列表为空态，不渲染详情。</p>
+<p><strong>关联页面：</strong>PN-F05-01（列表）、F03-02（支付弹窗）。</p>
+<p><strong>验收依据：</strong>详情字段与本地账本记录一致；关闭后列表筛选条件不丢失。</p>
+</td></tr>
+</table>
+<p class="prototype-evidence">资料：vue-app 订单中心页（orders）+ 本地账本 store（buyLedger，5 条演示记录）。</p>
+</div>
+
+<div class="prototype-module" id="pn-F06">
+<h3>F06 · 消耗明细</h3>
+<p>对应页面：consume（顶栏头像下拉 / 个人信息页入口，未登录跳登录）。数据为本地 <code>consumeLedger</code> 演示账本，共 12 条，单条扣减 -20 ~ -35 积分。【演示】</p>
+
+<h4 id="PN-F06-01">原型说明 · PN-F06-01 日期筛选与积分汇总</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>日期筛选与积分汇总</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录用户进入「消耗明细」，顶部为快捷日期与汇总卡。</p>
+<p><strong>字段：</strong>快捷日期（今天 / 近 7 天 / 近 30 天 / 本月）；自定义区间起止日期；汇总卡：区间总消耗积分、消耗笔数、当前余额。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点选快捷日期，明细表与汇总卡即时按区间重算。</li>
+<li>点「自定义」展开起止日期选择，确认后按所选区间过滤。</li>
+<li>汇总卡同步显示区间内总消耗与笔数。</li>
+</ol>
+<p><strong>状态规则：</strong>快捷日期与自定义区间互斥高亮；自定义区间起止可同日。</p>
+<p><strong>异常边界：</strong>起始日期晚于结束日期时以开始日期为准并提示；区间内无记录显示空态。</p>
+<p><strong>关联页面：</strong>F04-01（资产卡片余额同源）。</p>
+<p><strong>验收依据：</strong>汇总卡数值 = 明细行扣减绝对值之和；切换区间无刷新。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F06-02">原型说明 · PN-F06-02 消耗记录列表</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>消耗记录列表</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>消耗明细页主体表格，展示逐笔积分扣减。</p>
+<p><strong>字段：</strong>列：时间（精确到分）、消耗场景（AI 对话 / 专家对话 / 技能执行）、关联对象（会话标题或专家名）、消耗积分（负数，-20 ~ -35）、消耗后余额。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>默认展示全部 12 条演示记录，按时间倒序。</li>
+<li>随 PN-F06-01 的区间筛选联动过滤。</li>
+<li>真实场景：每次 AI 对话扣减后写入本地账本并出现在列表顶部（与 F02-02 消息扣减提示同源）。</li>
+</ol>
+<p><strong>状态规则：</strong>演示记录统一 -20 ~ -35 积分档位；真实扣减按模型计费规则写入。</p>
+<p><strong>异常边界：</strong>余额不足导致的失败对话不产生记录；记录不可删除与编辑。</p>
+<p><strong>关联页面：</strong>F02-02（消息扣减提示）、PN-F06-01（区间筛选）。</p>
+<p><strong>验收依据：</strong>12 条记录字段完整、时间倒序；与汇总卡口径一致。</p>
+</td></tr>
+</table>
+<p class="prototype-evidence">资料：vue-app 消耗明细页（consume）+ 本地账本 store（consumeLedger，12 条演示记录）。</p>
+</div>
+
+<div class="prototype-module" id="pn-F07">
+<h3>F07 · 专家 · 技能 · MCP</h3>
+<p>对应页面：experts（专家广场 / 技能广场两个 tab + MCP 服务列表）。内置 14 位专家、12 个技能、3 个 MCP 服务，均随包内置。【真实内容 + 演示执行】</p>
+
+<h4 id="PN-F07-01">原型说明 · PN-F07-01 专家广场</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>专家广场</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>所有用户可浏览；登录用户可「立即使用」。入口：侧边栏「专家」或工作台顶栏「专家」按钮。</p>
+<p><strong>字段：</strong>专家卡：头像、姓名、一句话定位、擅长标签（3 个内）、对话轮次、NEW 角标（前 2 位）；顶部 tab：专家 / 技能；分页 8 卡/页。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>进入专家广场默认浏览 14 位专家卡，8 卡/页分页切换。</li>
+<li>未登录点击「立即使用」弹登录引导（走 F01-01）。</li>
+<li>已登录点击「立即使用」进入 AI 对话工作台，并携带该专家身份（见 F02-03、PN-F07-04）。</li>
+</ol>
+<p><strong>状态规则：</strong>NEW 角标固定展示前 2 位专家；游客可浏览不可使用。</p>
+<p><strong>异常边界：</strong>分页末页不足 8 卡按实际数量渲染。</p>
+<p><strong>关联页面：</strong>F02-03（专家身份携带）、PN-F07-04（使用差异）、F01（登录引导）。</p>
+<p><strong>验收依据：</strong>14 位专家渲染完整、分页正确；未登录点使用触发登录弹窗。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F07-02">原型说明 · PN-F07-02 技能广场</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>技能广场</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>专家广场切换「技能」tab；所有用户可浏览，登录用户可「前往使用」。</p>
+<p><strong>字段：</strong>技能卡：图标、技能名、能力说明、适用场景标签、NEW 角标；分页 8 卡/页。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>切换到「技能」tab，浏览 12 个技能卡。</li>
+<li>已登录点击「前往使用」进入工作台并挂载技能（见 F02-03、PN-F07-04）。</li>
+</ol>
+<p><strong>状态规则：</strong>技能与专家 tab 互斥切换，切换保留各自分页位置。</p>
+<p><strong>异常边界：</strong>同 PN-F07-01 分页规则。</p>
+<p><strong>关联页面：</strong>F02-03（技能挂载）、PN-F07-04。</p>
+<p><strong>验收依据：</strong>12 个技能卡完整渲染；tab 切换无状态丢失。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F07-03">原型说明 · PN-F07-03 案例详情与导出报告</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>案例详情与导出报告</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>专家 / 技能卡「查看案例」，弹出案例详情弹窗。</p>
+<p><strong>字段：</strong>案例标题、背景说明、执行过程摘要、结果指标；「导出案例报告」按钮（演示：预置 PDF「2.4 MB · 12页」）。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点击「查看案例」弹窗展示案例说明与结果。</li>
+<li>点击「导出案例报告」下载演示 PDF。</li>
+<li>关闭弹窗返回广场。</li>
+</ol>
+<p><strong>状态规则：</strong>案例报告为预置演示文件，不随用户输入变化。【演示】</p>
+<p><strong>异常边界：</strong>浏览器拦截下载时提示允许下载。</p>
+<p><strong>关联页面：</strong>PN-F07-01 / PN-F07-02（卡片入口）。</p>
+<p><strong>验收依据：</strong>弹窗可开合；PDF 可下载。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F07-04">原型说明 · PN-F07-04 立即使用 / 前往使用差异</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>立即使用 / 前往使用差异</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>专家卡与技能卡的行动按钮，进入工作台时行为不同。</p>
+<p><strong>字段：</strong>专家卡按钮「立即使用」；技能卡按钮「前往使用」；身份浮窗内 ≤6 个候选，单选。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>专家「立即使用」→ 跳转工作台，专家身份写入身份浮窗并<b>自动发送</b>一条该专家的推荐开场白。</li>
+<li>技能「前往使用」→ 跳转工作台，技能挂载到身份浮窗但<b>不自动发送</b>，等待用户输入后按技能执行。</li>
+<li>再次从广场选择其他专家 / 技能时替换当前生效身份，仅有一个生效项。</li>
+</ol>
+<p><strong>状态规则：</strong>「专家自动发送、技能不自动发送」是二者核心差异。</p>
+<p><strong>异常边界：</strong>未登录一律先走登录；会话进行中切换身份不影响已发送消息，仅作用于后续轮次。</p>
+<p><strong>关联页面：</strong>F02-03（身份携带与浮窗）、PN-F07-01 / PN-F07-02。</p>
+<p><strong>验收依据：</strong>专家进入后自动出现开场消息；技能进入后输入框为空待输入。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F07-05">原型说明 · PN-F07-05 MCP 服务列表</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>MCP 服务列表</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>experts 页内 MCP 分组区块，展示平台接入的 MCP 数据服务。</p>
+<p><strong>字段：</strong>MCP 卡：服务名（共 3 个：1688 选品 / TikTok 电商 / Ozon 电商）、能力说明、数据范围标签。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>浏览 3 个 MCP 服务卡。</li>
+<li>对话中由模型按需调用 MCP 工具（如拉取 1688 商品数据，见 F02-04），此页仅作能力展示。</li>
+</ol>
+<p><strong>状态规则：</strong>卡片为静态展示，无独立操作项。</p>
+<p><strong>异常边界：</strong>无。</p>
+<p><strong>关联页面：</strong>F02-04（MCP 数据卡）。</p>
+<p><strong>验收依据：</strong>3 个 MCP 卡完整渲染。</p>
+</td></tr>
+</table>
+<p class="prototype-evidence">资料：vue-app ExpertPanel.vue（14 专家 / 12 技能 / 3 MCP，NEW 角标前 2，8 卡/页）。</p>
+</div>
+<div class="prototype-module" id="pn-F08">
+<h3>F08 · 全局框架与导航</h3>
+<p>对应范围：App.vue 整体骨架、左侧栏、TopNavbar、PromoBanner。前台无 vue-router，页面切换由 <code>modals.page</code> 状态驱动，7 个页面键位 <code>chat / experts / skills / pricing / account / orders / consume</code>。【真实】</p>
+
+<h4 id="PN-F08-01">原型说明 · PN-F08-01 页面切换与记忆</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>页面切换与记忆</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>全局；所有页面共享同一 App 骨架，通过侧边栏 / 顶栏 / 各页入口按钮切换。</p>
+<p><strong>字段：</strong>页面键位 chat（AI 选品对话工作台）、experts（专家·技能·MCP）、skills（技能广场直达）、pricing（套餐购买）、account（个人信息）、orders（订单中心）、consume（消耗明细）；localStorage <code>dld_last_page</code> 记录最后访问页面。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点击侧边栏或页面内导航入口，切换 <code>modals.page</code>，主区域整体替换。</li>
+<li>切换后写入 <code>dld_last_page</code>；下次打开应用恢复到上次页面。</li>
+<li>未登录访问 account / orders / consume 时拦截并弹出登录（走 F01-01），登录成功后回到目标页。</li>
+</ol>
+<p><strong>状态规则：</strong>chat / experts / skills / pricing 游客可访问；account / orders / consume 仅登录可见；chat 为默认页。</p>
+<p><strong>异常边界：</strong>无 URL 深链与 404 页（无 vue-router）；恢复的键位无效时回落到 chat。</p>
+<p><strong>关联页面：</strong>全部 F01–F07；F01-04（登录拦截）。</p>
+<p><strong>验收依据：</strong>7 个键位切换正常；刷新后停留在上次页面；未登录访问受限页弹出登录。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F08-02">原型说明 · PN-F08-02 顶栏与客服</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>顶栏与客服</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>TopNavbar 全局常驻；未登录展示「登录 / 注册」，已登录展示积分胶囊与头像下拉。</p>
+<p><strong>字段：</strong>左侧品牌 logo；中部当前页标题；右侧：客服按钮、积分胶囊（余额）、头像下拉（个人信息 / 订单中心 / 消耗明细 / 退出登录，见 F04-03）。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点击「客服」弹出客服弹层（150ms 动画），展示客服二维码图片 wx-kefu.png。</li>
+<li>二维码图片加载失败时 onerror 回退为占位文案，不留破图。</li>
+<li>点击遮罩或关闭按钮收起弹层。</li>
+</ol>
+<p><strong>状态规则：</strong>积分胶囊余额与 wallet store 实时联动（充值 / 消耗后立即刷新）。</p>
+<p><strong>异常边界：</strong>图片回退不影响弹层其它内容；未登录不展示积分胶囊。</p>
+<p><strong>关联页面：</strong>F03（充值后胶囊刷新）、F04-03（头像下拉）、F01（登录入口）。</p>
+<p><strong>验收依据：</strong>弹层 150ms 动画正常；图片挂时可回退；余额变动即时可见。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F08-03">原型说明 · PN-F08-03 新人 Banner</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>新人 Banner</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>PromoBanner 顶部通栏；面向新用户推广「注册领取 100 积分」活动。</p>
+<p><strong>字段：</strong>活动文案、领取入口按钮、关闭按钮；关闭状态记录于 <code>dld_promo_banner_closed</code>（sessionStorage，会话级）。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>符合条件（未领取新人礼）时顶部展示 Banner。</li>
+<li>点击领取入口进入注册流程（F01-01），注册成功赠 100 积分并展示欢迎弹窗（F09-02）。</li>
+<li>点击关闭按钮，本次会话内不再展示。</li>
+</ol>
+<p><strong>状态规则：</strong>会话内关闭后同会话不再出现；新开会话重新展示；已领取用户不展示。</p>
+<p><strong>异常边界：</strong>无。</p>
+<p><strong>关联页面：</strong>F01-01（注册赠积分）、F09-02（欢迎弹窗）。</p>
+<p><strong>验收依据：</strong>关闭后刷新不再出现（同会话）；注册链路可从 Banner 进入。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F08-04">原型说明 · PN-F08-04 栏宽与折叠</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>栏宽与折叠</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>工作台三栏布局（左栏会话 / 中栏对话 / 右栏预览）的个性化调整。</p>
+<p><strong>字段：</strong>折叠开关（<code>dld_left_collapsed</code>）、左栏宽度（<code>dld_left_width</code>）、右栏宽度（<code>dld_right_width</code>），均 localStorage 持久化。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>拖动左 / 右栏边缘调整宽度，松手持久化。</li>
+<li>点击折叠按钮收起左栏为窄条，再点展开。</li>
+<li>刷新后保持上次的宽度与折叠状态。</li>
+</ol>
+<p><strong>状态规则：</strong>折叠仅作用于左栏；右栏仅可调宽不可折叠。</p>
+<p><strong>异常边界：</strong>宽度有最小 / 最大值钳制，拖出范围取边界值。</p>
+<p><strong>关联页面：</strong>F02（工作台布局）。</p>
+<p><strong>验收依据：</strong>刷新后布局与关闭前一致；宽度有边界限制。</p>
+</td></tr>
+</table>
+<p class="prototype-evidence">资料：App.vue（页面切换与三栏布局）、TopNavbar.vue（客服弹层 150ms、wx-kefu.png onerror 回退）、PromoBanner.vue（sessionStorage）、localStorage 键 dld_last_page / dld_left_collapsed / dld_left_width / dld_right_width。</p>
+</div>
+
+<div class="prototype-module" id="pn-F09">
+<h3>F09 · 通用弹窗与反馈</h3>
+<p>对应范围：Modals.vue 集中管理的弹窗族（欢迎弹窗、反馈弹窗、支付弹窗、删除确认、升级确认等）与通用交互规则。【真实 + 演示】</p>
+
+<h4 id="PN-F09-01">原型说明 · PN-F09-01 反馈弹窗</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>反馈弹窗</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>登录用户从侧边栏或头像下拉进入「意见反馈」。</p>
+<p><strong>字段：</strong>反馈类型选择、文字描述（必填）、截图上传（最多 4 张）；提交后赠送 50 积分。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>填写类型与描述，可选上传 ≤4 张截图（本地预览）。</li>
+<li>点击提交，本地记录反馈并赠送 50 积分（积分胶囊即时刷新）。</li>
+<li>弹窗关闭并出现「感谢反馈」提示。</li>
+</ol>
+<p><strong>状态规则：</strong>截图超过 4 张拒绝追加并提示；描述为空时提交按钮禁用。</p>
+<p><strong>异常边界：</strong>同一用户重复提交仍可再赠 50 积分（演示口径，无频控）。</p>
+<p><strong>关联页面：</strong>F08-02（积分胶囊）、F04-01（余额）。</p>
+<p><strong>验收依据：</strong>≤4 张限制生效；提交后余额 +50 可见。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F09-02">原型说明 · PN-F09-02 欢迎赠积分弹窗</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>欢迎赠积分弹窗</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>新注册成功后自动弹出，一次性展示新人 100 积分到账。</p>
+<p><strong>字段：</strong>赠送金额（100 积分）、说明文案、「开始使用」按钮；已展示状态记录于 <code>dld_welcome_gift_v1</code>。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>注册成功（或预置账号首次登录且未展示过）触发弹窗。</li>
+<li>积分余额同步 +100（顶部胶囊与个人信息页一致）。</li>
+<li>点击「开始使用」进入工作台。</li>
+</ol>
+<p><strong>状态规则：</strong>每账号仅弹一次（localStorage 标记）；再次登录不再弹出。</p>
+<p><strong>异常边界：</strong>标记存在但余额未到账（用户手动清了账本）以标记为准，不重复赠送。</p>
+<p><strong>关联页面：</strong>F01-01（注册）、F08-02（余额刷新）。</p>
+<p><strong>验收依据：</strong>仅首次弹出；余额确实 +100。</p>
+</td></tr>
+</table>
+
+<h4 id="PN-F09-03">原型说明 · PN-F09-03 通用弹窗与 Esc 规则</h4>
+<table class="prototype-note">
+<tr><th style="width:120px">功能名称</th><td>通用弹窗与 Esc 规则</td></tr>
+<tr><th>逻辑说明</th><td>
+<p><strong>入口与角色：</strong>全局；统管删除确认、升级确认（两步）、支付弹窗（F03-02）等弹窗的开合与层级。</p>
+<p><strong>字段：</strong>遮罩层、弹窗容器、右上角关闭按钮、主 / 次按钮；危险操作（删除会话）红色主按钮。</p>
+<p><strong>步骤：</strong></p>
+<ol>
+<li>点击遮罩或右上角关闭按钮可关闭常规弹窗。</li>
+<li>按 Esc 关闭最顶层弹窗；支付弹窗在倒计时进行中需二次确认（防误关）。</li>
+<li>删除确认弹窗点击「删除」后本地移除会话并 toast 提示。</li>
+</ol>
+<p><strong>状态规则：</strong>弹窗互斥，同一时刻仅展示一个；支付倒计时不受弹窗关闭影响（订单保留待支付状态）。</p>
+<p><strong>异常边界：</strong>连续快速开关不产生叠层；Esc 在输入框聚焦时优先冒泡处理弹窗。</p>
+<p><strong>关联页面：</strong>F02-09（删除会话）、F03-02（支付弹窗）、F03-03（升级确认）。</p>
+<p><strong>验收依据：</strong>Esc / 遮罩 / 关闭按钮三种方式均可关闭；删除需确认后生效。</p>
+</td></tr>
+</table>
+<p class="prototype-evidence">资料：components/Modals.vue（反馈 ≤4 截图 + 50 积分、欢迎弹窗、删除确认、升级两步）、localStorage 键 dld_welcome_gift_v1。</p>
+</div>
+
+<section class="prototype-module" id="preview">
+<h3>03 · 在线原型预览</h3>
+<table class="prototype-note">
+<tr><th style="width:120px">预览地址</th><td><a href="https://leidaai.github.io/leidaaiqiantai/" target="_blank" rel="noopener">https://leidaai.github.io/leidaaiqiantai/</a>（前台线上环境，与本文档描述一致）</td></tr>
+<tr><th>测试准备</th><td>预置账号 <code>17688894656 / 123456abc</code>；短信验证码用万能码 <code>123456</code>；支付环节为扫码模拟（点击二维码即成功）。</td></tr>
+<tr><th>预览窗口</th><td><iframe src="https://leidaai.github.io/leidaaiqiantai/" style="width:100%;height:640px;border:1px solid #d7e3f0;border-radius:8px;background:#fff" loading="lazy"></iframe></td></tr>
+</table>
+</section>
+</main>
+
+<div class="report-footer">
+<p>店雷达 AI 前台 · 功能页面原型说明 · 修订 R1 · 2026-11-05 · 9 个原型模块 / 37 项原型说明 · 仅供内部研发与测试使用</p>
+</div>
+</div>
+</body>
+</html>
