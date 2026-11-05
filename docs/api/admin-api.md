@@ -141,7 +141,7 @@
 
 - 套餐 `durationMode: LIFETIME | CUSTOM_DAYS | MEMBERSHIP` 独立保存、白名单校验、进入版本快照及恢复字段；旧数据缺失模式按 `durationDays===0` 归一 LIFETIME，否则 CUSTOM_DAYS。LIFETIME 存 0 天，CUSTOM_DAYS 为正整数天，MEMBERSHIP 清空 durationDays，仅 GIFT 可用，NORMAL 传会员模式返回 422。恢复旧快照显式归一模式并清理当前值，禁止会员残留。
 - 新订单显式记录 durationMode；会员模式 `durationMonths=null`（不能用 0），不存固定 expiresAt。赠送创建锁定「会员期内有效」，不显示 1–36 月，不允许客户端填写会员到期；服务端由套餐确定模式，忽略客户端 mode/到期字段。NONE/EXPIRED/UNKNOWN 用户拒绝 422，ACTIVE/LIFETIME 可创建。
-- 当前唯一来源是 `readMockMembership`，标准返回 `membership:{source:'MOCK',status:ACTIVE|EXPIRED|NONE|LIFETIME|UNKNOWN,expiresAt:string|null,isLifetime:boolean}`。默认仍为 planId>=2、注册时间+1年的模拟口径；用户列表/详情沿用该口径。`MockUser.mockMembership` 仅用于模拟源更新验证（非客户端订单参数、无真实续费接口）。真实会员服务、续费、退款及积分回收均未接入。
+- 当前唯一来源是 `readMockMembership`，只读取持久化 `MockUser.membershipExpireAt:string|null`、`membershipIsLifetime` 和明确付费计划，标准返回 `membership:{source:'MOCK',status:ACTIVE|EXPIRED|NONE|LIFETIME|UNKNOWN,expiresAt:string|null,isLifetime:boolean}`。用户列表/详情 expireAt 同源。v17 仅缺失期限字段时按旧注册+1年口径一次性补值：历史演示回填非真实权益；保留已有字段（含 null）与早期显式 mockMembership，不重置数据。读取时不再推算注册日期。免费版 null 是 NONE，付费版 null 是 UNKNOWN；终身需显式标记，不因 null 推断，无内置真实终身会员来源。真实会员服务、续费、退款及积分回收均未接入；mock 验证直接更新该单一记录。C端配置仅透传，会员模式消费未接入。
 - MEMBERSHIP 订单每次列表/详情/导出经 toOrderItem 动态读取当前会员源并返回 expiresAt 与 membership；模拟源到期改变后再次查询即跟随，不把创建时会员有效期固定成订单历史。前端 format 仅消费标准返回值。ACTIVE 到期前未到期N天；EXPIRED 已到期N天；NONE 会员已失效/—；UNKNOWN —；长期会员显示「会员期内有效（长期会员）」，不作为赠送独立永久有效。XLSX 与列表/详情共用解析；历史到期补值跳过 MEMBERSHIP。
 - 保留创建不回写用户权益边界；此链路仅已完成模拟源驱动的运行验证，真实会员联调仍待接入。以下固定时长规则仅适用于非 MEMBERSHIP 订单。
 `{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMode?, durationMonths:number|null, durationDays?, expiresAt?, membership?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
@@ -150,7 +150,7 @@
 - `expiresAt` 为订单级明确到期时间（`yyyy-MM-dd HH:mm:ss`，dayjs 同现有时间约定解析），长期有效明确为 `null`；可选以兼容旧接口，缺失或非法值显示 `—`，不可据此推断长期有效。`durationDays` 为新手工订单创建时套餐精确天数快照，不随套餐变更。
 - 新手工订单：以 `paidAt + durationDays 天` 计算 `expiresAt`，不先转换月数；套餐 0 天为长期有效。新赠送订单：以 `paidAt + 用户实际选择的 durationMonths 日历月` 计算，月底按目标月份末日收敛；长期有效固定 0 月、`expiresAt=null`。
 - PAID 且明确长期标记（0 月或 0 天）并且 `expiresAt=null`：到期状态/时间均为「长期有效」。PENDING/CLOSED：状态「未生效」、时间 `—`。PAID 有限到期：`now < expiresAt` 显示「未到期 ceil((expiresAt-now)/86400000)天」，否则「已到期 ceil((now-expiresAt)/86400000)天」；相等为已到期 0 天。
-- 列表/详情/XLSX 共用 `formatOrderExpiry`；页面单一时钟每分钟刷新并在卸载时清理，XLSX 一次导出固定同一个 now。严格插列：微信昵称前为用户手机号、订单来源后为到期状态、下单时间后为到期时间。
+- 列表/详情/XLSX 共用 `formatOrderExpiry` 与 `formatOrderDuration`；页面单一时钟每分钟只刷新当前返回值的倒计时，并在卸载时清理。会员记录变动后须重新查询列表或重开详情取得最新期限；XLSX 每次请求动态读取会员源，一次导出固定同一个 now。长期订单月份必须传 0，null 不转换成 0。严格插列：微信昵称前为用户手机号、订单来源后为到期状态、下单时间后为到期时间。
 - XLSX 单表「订单列表」表头及顺序：订单号、用户ID、用户手机号、微信昵称、套餐、订单来源、到期状态、剩余积分、套餐时长、近7日消耗、商品金额、优惠金额、实付金额、状态、支付时间、下单时间、到期时间、支付渠道、备注。订单号/手机号及用户输入以字符串单元格存储（保留前导零、中文、逗号、换行和公式样式原文，不生成公式）；用户ID、剩余积分、近7日消耗为整数（`0`），商品/优惠/实付金额为数值两位小数（`#,##0.00`）。支付/下单/有限到期时间使用完整 `yyyy-mm-dd hh:mm:ss` 文本（`@`），缺失/非法为 `—`，长期有效保持原语义，日期列宽 25，避免窄日期列出现 `####`。R8 通过 `src/utils/excel.ts` 按需加载 ExcelJS：绿色 `#00A83E` 表头、白字加粗微软雅黑、白/浅绿 `#E9F7EE` 斑马纹、`#BFE7CB` 细边框、26 表头行高，正文按内容调整行高；订单号宽 28、手机号 18、备注 40 并换行，冻结首行与全数据范围自动筛选；零行仍有完整表头；权限不足返回 403，不生成文件。
 - Mock v17 非破坏性幂等补齐：仅对无自有 `expiresAt` 字段的历史订单回填，保留现存值（包括 null/非法值）；历史仅月数时用历史 `paidAt + durationMonths 日历月` 作演示回填，不读当前套餐覆盖历史；无有效支付时间或时长保持缺失。新种子同样含订单到期字段。
 - 创建订单与审计已实现；订单到期展示不代表用户权益发放，手工/赠送仍不回写用户套餐、用户到期时间或积分权益（TC-39）。独立前台订单仍为原演示能力。

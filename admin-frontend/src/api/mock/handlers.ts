@@ -595,7 +595,7 @@ route('POST', '/orders/gift', (ctx) => {
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const phone = String(b.phone ?? '').trim()
   const planId = Number(b.planId)
-  const durationMonths = Number(b.durationMonths)
+  const durationMonths = b.durationMonths === null ? NaN : Number(b.durationMonths)
   const credits = Number(b.credits)
   const remark = String(b.remark ?? '').trim()
   if (!phone) throw new MockApiError(422, '请填写手机号')

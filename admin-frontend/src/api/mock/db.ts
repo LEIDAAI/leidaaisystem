@@ -68,18 +68,19 @@ export interface MockUser {
   lastLoginAt: string | null
   entitlements: MockEntitlement[]
   loginLogs: MockLoginLog[]
-  /** 仅用于模拟源变更验证；真实会员服务尚未接入。 */
-  mockMembership?: { expiresAt: string | null; isLifetime?: boolean }
+  /** 持久化演示会员期限；null 表示未知或无会员，不能据此判断终身。 */
+  membershipExpireAt: string | null
+  membershipIsLifetime?: boolean
 }
 
-/** Mock 会员源：保持原演示口径 planId>=2、注册时间+1年；不代表真实会员权益。 */
+/** 唯一 Mock 会员源，只读取显式会员记录；真实会员服务尚未接入。 */
 export function readMockMembership(user: MockUser | undefined, now = Date.now()): MembershipInfo {
   const result = (status: MembershipInfo['status'], expiresAt: string | null = null): MembershipInfo => ({ source: 'MOCK', status, expiresAt, isLifetime: status === 'LIFETIME' })
   if (!user) return result('UNKNOWN')
-  if (user.planId < 2) return result('NONE')
-  if (!Number.isFinite(user.planId)) return result('UNKNOWN')
-  if (user.mockMembership?.isLifetime) return result('LIFETIME')
-  const expiry = user.mockMembership ? user.mockMembership.expiresAt : dayjs(user.registeredAt).isValid() ? dayjs(user.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
+  if (user.planId === 1) return result('NONE')
+  if (!PLANS.some((plan) => plan.id === user.planId && plan.price > 0)) return result('UNKNOWN')
+  if (user.membershipIsLifetime === true) return result('LIFETIME')
+  const expiry = user.membershipExpireAt
   if (!expiry || !dayjs(expiry).isValid()) return result('UNKNOWN')
   return result(dayjs(expiry).valueOf() > now ? 'ACTIVE' : 'EXPIRED', expiry)
 }
@@ -344,6 +345,8 @@ function buildUsers(): MockUser[] {
       planName: PLANS[planId - 1].name,
       chatCount: (i * 37) % 520,
       registeredAt,
+      membershipExpireAt: planId >= 2 ? fmt(dayjs(registeredAt).add(1, 'year')) : null,
+      membershipIsLifetime: false,
       lastLoginAt: lastLogin,
       entitlements,
       loginLogs
@@ -789,6 +792,15 @@ if (storedVersion < 17) {
   db.creditPackages ||= seedCreditPackages()
   db.billingSettings ||= seedBillingSettings()
 }
+// R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
+// 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
+db.users.forEach((user) => {
+  const legacy = (user as MockUser & { mockMembership?: { expiresAt: string | null; isLifetime?: boolean } }).mockMembership
+  if (!Object.prototype.hasOwnProperty.call(user, 'membershipExpireAt')) {
+    user.membershipExpireAt = legacy ? legacy.expiresAt : PLANS.some((plan) => plan.id === user.planId && plan.price > 0) && dayjs(user.registeredAt).isValid() ? fmt(dayjs(user.registeredAt).add(1, 'year')) : null
+  }
+  if (!Object.prototype.hasOwnProperty.call(user, 'membershipIsLifetime')) user.membershipIsLifetime = legacy?.isLifetime === true
+})
 // v17 订单到期增量迁移：仅补缺失字段，历史月数按日历月演示回填，不读取当前套餐。
 db.orders.forEach((order) => {
   if (order.durationMode === 'MEMBERSHIP') return
