@@ -14,6 +14,10 @@
 .prototype-module{margin:30px 0 42px;scroll-margin-top:88px}.prototype-module h3{padding:10px 0;border-bottom:1px solid var(--rule)}.prototype-module h4{font-size:16px;color:#1763b5;margin:24px 0 8px;scroll-margin-top:88px}.prototype-note{table-layout:fixed;width:100%;min-width:0!important;margin:0 0 18px;border:1px solid var(--rule)}.prototype-note col:first-child{width:110px}.prototype-note th{width:110px;position:static;background:#edf4fc;color:#225184}.prototype-note td{background:#fff}.prototype-note p{margin:0 0 8px}.prototype-note p:last-child{margin-bottom:0}.prototype-note ol{margin:4px 0 8px;padding-left:22px}.prototype-index{display:flex;flex-wrap:wrap;gap:6px 14px}.prototype-evidence{font-size:13px}.prototype-note-wrap{max-height:none;overflow:visible}.r2-badge{color:#1763b5!important}
 @media(max-width:768px){.prototype-note{min-width:0!important}.prototype-note th,.prototype-note td{padding:9px 8px}.prototype-module{scroll-margin-top:84px}}
 @media print{.prototype-module{break-before:auto}.prototype-note tr{break-inside:auto}.prototype-note h4,.prototype-module h4{break-after:avoid}.prototype-note th{width:110px}.prototype-index{display:block}.prototype-module details{break-inside:auto}.prototype-module details>*{display:block!important}}
+/* 按功能板块分组，导航项自动换行，长目录在自身区域滚动。 */
+.toc{display:block;max-height:32vh;overflow-y:auto;overscroll-behavior:contain}.toc-group{display:flex;align-items:flex-start;gap:12px}.toc-group+.toc-group{border-top:1px solid var(--rule);margin-top:8px;padding-top:8px}.toc-group>strong{flex:0 0 78px;padding-top:4px}.toc-group ol{flex:1;min-width:0;flex-wrap:wrap;overflow:visible;gap:2px}.toc-group a{font-size:13px;padding:4px 8px}section,.prototype-module,.prototype-module h4{scroll-margin-top:calc(32vh + 20px)}
+@media(max-width:768px){.toc-group{display:block}.toc-group>strong{display:block;margin-bottom:4px}.toc-group a{padding:5px 8px}}
+@media print{.toc{display:none}}
 </style>
 </head>
 <body>
@@ -24,7 +28,11 @@
 <p>面向前端、后端与测试，明确功能行为、配置契约、权限边界、演示数据范围和版本回归依据。本文按 V17 功能清单编排，保持已实现能力与待接入能力的状态区分。<sup><a href="#cite-1">[1]</a></sup></p>
 <div class="meta"><span>版本 V17</span><span class="r2-badge">修订 R2 · 174 项原型说明</span><span>2026-11-05</span><span>前台 7 页</span><span>后台登录 + 15 业务菜单</span><span>权限声明 36 项 / 字典实列 34 项</span><span>88 项编号验收</span></div>
 </header>
-<nav class="toc" aria-label="功能说明目录"><strong>目录</strong><ol><li><a href="#scope">01 阅读口径</a></li><li><a href="#frontend">02 前台</a></li><li><a href="#admin">03 后台</a></li><li><a href="#plans">04 套餐契约</a></li><li><a href="#permissions">05 权限</a></li><li><a href="#api">06 接口</a></li><li><a href="#rules">07 业务规则</a></li><li><a href="#boundaries">08 已知边界</a></li><li><a href="#preview">09 原型</a></li><li><a href="#prototype-notes">R2 逐功能原型说明</a></li><li><a href="#acceptance">10 验收</a></li><li><a href="#regression">11 回归</a></li><li><a href="#handoff">12 协作</a></li></ol></nav>
+<nav class="toc" aria-label="功能板块导航">
+<div class="toc-group"><strong>后台功能</strong><ol><li><a href="#pn-A00">登录与会话</a></li><li><a href="#pn-A01">工作概览</a></li><li><a href="#pn-A02">用户管理</a></li><li><a href="#pn-A03">订单管理</a></li><li><a href="#pn-A04">套餐管理</a></li><li><a href="#pn-A05">积分加油包</a></li><li><a href="#pn-A06">计费设置</a></li><li><a href="#pn-A07">专家管理</a></li><li><a href="#pn-A08">技能管理</a></li><li><a href="#pn-A09">MCP 服务</a></li><li><a href="#pn-A10">模型管理</a></li><li><a href="#pn-A11">知识库管理</a></li><li><a href="#pn-A12">对话管理</a></li><li><a href="#pn-A13">反馈管理</a></li><li><a href="#pn-A14">管理员账号</a></li><li><a href="#pn-A15">角色与权限</a></li></ol></div>
+<div class="toc-group"><strong>前台功能</strong><ol><li><a href="#pn-F01">登录与游客</a></li><li><a href="#pn-F02">AI 选品对话</a></li><li><a href="#pn-F03">套餐购买</a></li><li><a href="#pn-F04">个人信息</a></li><li><a href="#pn-F05">订单中心</a></li><li><a href="#pn-F06">消耗明细</a></li><li><a href="#pn-F07">专家·技能·MCP 目录</a></li></ol></div>
+<div class="toc-group"><strong>研发与测试</strong><ol><li><a href="#scope">阅读口径</a></li><li><a href="#frontend">前台总览</a></li><li><a href="#admin">后台总览</a></li><li><a href="#plans">套餐契约</a></li><li><a href="#permissions">权限字典</a></li><li><a href="#api">接口能力</a></li><li><a href="#rules">业务规则</a></li><li><a href="#boundaries">已知边界</a></li><li><a href="#preview">在线原型</a></li><li><a href="#acceptance">测试验收</a></li><li><a href="#regression">版本回归</a></li><li><a href="#handoff">三方协作</a></li></ol></div>
+</nav>
 <main>
 <section id="scope"><h2>01 · 阅读口径与测试准备</h2>
 <p>功能依据为仓库 <code>docs/功能清单.md</code>，样式参考 V3.0.6 AI 积分说明页的绿白配色、1080px 内容版心、吸顶目录和章节表格。<sup><a href="#cite-2">[2]</a></sup>本说明为清单的结构化交付，不构成对线上系统完成情况的额外背书。</p>
