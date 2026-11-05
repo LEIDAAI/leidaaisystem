@@ -130,7 +130,7 @@
 |---|---|---|---|
 | GET | /orders | order:view | 参数 `orderNo`、`userId`、`status`(PENDING/PAID/CLOSED)、`payChannel`(WECHAT/ALIPAY/OFFLINE)、`start`/`end`、分页 |
 | GET | /orders/{id} | order:view | 详情，含支付流水列表 |
-| POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐、非负有限积分/金额；允许 0 元；生成 PAID/OFFLINE 订单及成功支付流水 |
+| POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐；R6 服务端先验证套餐存在、启用且为常规，再读取套餐 credits（含 0），不信任并忽略传入 credits（为兼容现有 payload 保留字段）；套餐积分及金额须非负有限；金额可调、允许 0 元；生成 PAID/OFFLINE 订单及成功支付流水 |
 | POST | /orders/gift | order:create | `{phone, planId, durationMonths, credits, remark?}`；启用赠送套餐，有限时长 1–36 整数月，长期固定 0；金额 0，无支付流水；备注最多 200 字 |
 | PUT | /orders/{id}/remark | order:remark | `{remark}` 备注（留痕） |
 | GET | /orders/export | order:export | 同列表筛选，导出全部命中项；Mock 返回 `{filename,content}`，前端下载 CSV；真实后端待实现 Blob 契约 |

@@ -102,15 +102,14 @@ const manualVisible = ref(false)
 const manualSubmitting = ref(false)
 const manualForm = reactive({ phone: '', planId: null as number | null, credits: 0, amount: 0 })
 const manualPlanSelected = computed(() => normalPlans.value.find((p) => p.id === manualForm.planId) || null)
-/** v12 手工订单积分/金额联动：选择套餐后默认带出该套餐配置的 AI 积分与售价（v17，均可微调） */
+/** R6 手工订单积分锁定为当前套餐积分，金额默认带出售价且可调整 */
 watch(
-  () => manualForm.planId,
-  () => {
-    const plan = manualPlanSelected.value
-    if (!plan) return
-    manualForm.credits = Number(plan.credits ?? 0)
-    manualForm.amount = Number(plan.price ?? 0)
-  }
+  manualPlanSelected,
+  (plan) => {
+    manualForm.credits = Number(plan?.credits ?? 0)
+    manualForm.amount = Number(plan?.price ?? 0)
+  },
+  { flush: 'sync' }
 )
 
 async function openManual() {
@@ -131,7 +130,7 @@ async function submitManual() {
     ElMessage.warning('请输入用户手机号')
     return
   }
-  if (!manualForm.planId) {
+  if (!manualPlanSelected.value) {
     ElMessage.warning('请选择套餐')
     return
   }
@@ -144,8 +143,8 @@ async function submitManual() {
   try {
     await createManualOrder({
       phone: manualForm.phone.trim(),
-      planId: manualForm.planId,
-      credits: manualForm.credits,
+      planId: manualPlanSelected.value.id,
+      credits: Number(manualPlanSelected.value.credits ?? 0),
       amount: manualForm.amount
     })
     ElMessage.success('手工订单创建成功')
@@ -361,7 +360,10 @@ async function submitGift() {
           </el-select>
         </el-form-item>
         <el-form-item label="AI积分" required>
-          <el-input-number v-model="manualForm.credits" :min="0" :step="1000" style="width: 100%" />
+          <div style="width: 100%">
+            <el-input-number v-model="manualForm.credits" :min="0" :step="1000" disabled style="width: 100%" />
+            <p class="muted" style="margin: 6px 0 0; font-size: 12px">积分来自当前套餐，不可修改；支付金额可调整</p>
+          </div>
         </el-form-item>
         <el-form-item label="支付金额(元)" required>
           <!-- v17 允许 0 元：线下赠送 / 减免场景 -->

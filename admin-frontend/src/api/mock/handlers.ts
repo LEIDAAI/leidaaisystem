@@ -543,7 +543,6 @@ route('POST', '/orders/manual', (ctx) => {
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const phone = String(b.phone ?? '').trim()
   const planId = Number(b.planId)
-  const credits = Number(b.credits)
   const amount = Number(b.amount)
   if (!phone) throw new MockApiError(422, '请填写手机号')
   const u = findUserByPhone(phone)
@@ -551,6 +550,7 @@ route('POST', '/orders/manual', (ctx) => {
   if (!plan) throw new MockApiError(422, '套餐不存在')
   if ((plan.planType || 'NORMAL') === 'GIFT') throw new MockApiError(422, '手工订单不能选择赠送套餐')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
+  const credits = Number(plan.credits ?? 0)
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
   // v17：允许 0 元线下减免单（仅拒绝负数金额）
   if (!Number.isFinite(amount) || amount < 0) throw new MockApiError(422, '支付金额不能为负数')
