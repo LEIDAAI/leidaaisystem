@@ -133,7 +133,7 @@
 | POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐；R6 服务端先验证套餐存在、启用且为常规，再读取套餐 credits（含 0），不信任并忽略传入 credits（为兼容现有 payload 保留字段）；套餐积分及金额须非负有限；金额可调、允许 0 元；生成 PAID/OFFLINE 订单及成功支付流水 |
 | POST | /orders/gift | order:create | `{phone, planId, durationMonths, credits, remark?}`；启用赠送套餐，有限时长 1–36 整数月，长期固定 0；金额 0，无支付流水；备注最多 200 字 |
 | PUT | /orders/{id}/remark | order:remark | `{remark}` 备注（留痕） |
-| GET | /orders/export | order:export | R7：同列表筛选，忽略分页导出全部命中项；Mock 在 `{code:0,msg,data}` 的 data 中返回真正 OOXML XLSX Blob，exportBlob 在 mock 模式解包、真实模式按 responseType=blob 接收；前端下载 `orders-时间戳.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；真实后端待按同一二进制契约实现 |
+| GET | /orders/export | order:export | R8：同列表筛选，忽略分页导出全部命中项；Mock 在 `{code:0,msg,data}` 的 data 中返回真正 OOXML XLSX Blob，exportBlob 在 mock 模式解包、真实模式按 responseType=blob 接收；前端下载 `orders-时间戳.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；真实后端待按同一二进制契约实现 |
 
 ### 订单项（R4，2026-11-05）
 `{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMonths, durationDays?, expiresAt?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
@@ -143,7 +143,7 @@
 - 新手工订单：以 `paidAt + durationDays 天` 计算 `expiresAt`，不先转换月数；套餐 0 天为长期有效。新赠送订单：以 `paidAt + 用户实际选择的 durationMonths 日历月` 计算，月底按目标月份末日收敛；长期有效固定 0 月、`expiresAt=null`。
 - PAID 且明确长期标记（0 月或 0 天）并且 `expiresAt=null`：到期状态/时间均为「长期有效」。PENDING/CLOSED：状态「未生效」、时间 `—`。PAID 有限到期：`now < expiresAt` 显示「未到期 ceil((expiresAt-now)/86400000)天」，否则「已到期 ceil((now-expiresAt)/86400000)天」；相等为已到期 0 天。
 - 列表/详情/XLSX 共用 `formatOrderExpiry`；页面单一时钟每分钟刷新并在卸载时清理，XLSX 一次导出固定同一个 now。严格插列：微信昵称前为用户手机号、订单来源后为到期状态、下单时间后为到期时间。
-- XLSX 单表「订单列表」表头及顺序：订单号、用户ID、用户手机号、微信昵称、套餐、订单来源、到期状态、剩余积分、套餐时长、近7日消耗、商品金额、优惠金额、实付金额、状态、支付时间、下单时间、到期时间、支付渠道、备注。订单号/手机号及用户输入以字符串单元格存储（保留前导零、中文、逗号、换行和公式样式原文，不生成公式）；用户ID、金额、积分为数值，金额/积分显示两位小数。浅色表头、合理列宽、冻结首行、低调斑马纹；零行仍有完整表头；权限不足返回 403，不生成文件。
+- XLSX 单表「订单列表」表头及顺序：订单号、用户ID、用户手机号、微信昵称、套餐、订单来源、到期状态、剩余积分、套餐时长、近7日消耗、商品金额、优惠金额、实付金额、状态、支付时间、下单时间、到期时间、支付渠道、备注。订单号/手机号及用户输入以字符串单元格存储（保留前导零、中文、逗号、换行和公式样式原文，不生成公式）；用户ID、剩余积分、近7日消耗为整数（`0`），商品/优惠/实付金额为数值两位小数（`#,##0.00`）。支付/下单/有限到期时间使用完整 `yyyy-mm-dd hh:mm:ss` 文本（`@`），缺失/非法为 `—`，长期有效保持原语义，日期列宽 25，避免窄日期列出现 `####`。R8 通过 `src/utils/excel.ts` 按需加载 ExcelJS：绿色 `#00A83E` 表头、白字加粗微软雅黑、白/浅绿 `#E9F7EE` 斑马纹、`#BFE7CB` 细边框、26 表头行高，正文按内容调整行高；订单号宽 28、手机号 18、备注 40 并换行，冻结首行与全数据范围自动筛选；零行仍有完整表头；权限不足返回 403，不生成文件。
 - Mock v17 非破坏性幂等补齐：仅对无自有 `expiresAt` 字段的历史订单回填，保留现存值（包括 null/非法值）；历史仅月数时用历史 `paidAt + durationMonths 日历月` 作演示回填，不读当前套餐覆盖历史；无有效支付时间或时长保持缺失。新种子同样含订单到期字段。
 - 创建订单与审计已实现；订单到期展示不代表用户权益发放，手工/赠送仍不回写用户套餐、用户到期时间或积分权益（TC-39）。独立前台订单仍为原演示能力。
 
@@ -242,8 +242,11 @@
 | GET | /chats | chat:view | 参数 `userId`、`expertId`、`keyword`(消息内容全文)、`start`/`end`、分页；返回脱敏摘要 |
 | GET | /chats/{id}/messages | chat:view | 完整消息流（每次调用记审计） |
 | DELETE | /chats/{id} | chat:delete | 软删除，`{reason}` |
-| GET | /chats/{id}/export | chat:export | 参数 `format=json|csv`，独立于 chat:view 授权 |
+| GET | /chats/{id}/export | chat:export | R8 参数 `format=json` 或 `format=xlsx`（默认 json），独立于 chat:view 授权；仅导出目标会话完整脱敏消息并审计，不扩大至跨会话全量；其他格式返回 422 |
 | POST | /chats/{id}/restore | chat:restore | 恢复软删除会话 |
+
+- JSON 保留原 `{filename,content}` Mock 描述，真实模式按 Blob 接收。XLSX Mock 在业务包装 data 中返回真正 OOXML Blob；`exportFile` 保留两种响应支持，真实后端待按相同二进制契约实现。下载文件名 `chat-{id}.xlsx`，MIME 与订单 XLSX 相同。
+- XLSX 单表「对话消息」，列为角色、消息内容、创建时间，宽度 16/80/25；创建时间为完整秒级文本、缺失/非法为 `—`。与订单复用 R8 统一绿色表头/浅绿斑马纹/细边框/冻结/自动筛选及按内容调整行高；消息保持脱敏结果，以文本写入不生成公式；空消息也有完整表头。保留 chat:export、审计与原目标会话范围；缺权限 403、会话不存在 404。历史跨会话「全量 CSV」待实现；专家/技能 JSON、技能 ZIP 与报告 HTML 不属于表格改造。
 
 ## 12. 前台工作台只读 API（C 端，附录 12.4）
 

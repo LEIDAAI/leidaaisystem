@@ -1,4 +1,5 @@
 import dayjs from 'dayjs'
+import { createExcelBlob } from '../../utils/excel'
 import { db, nowStr, permissionCodesOf } from './db'
 import { redact, buildChatAnalysis, buildAskAnalysis } from './extension-data'
 import type { Chat } from './extension-data'
@@ -19,7 +20,22 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
   route('GET','/chats/:id/analysis',ctx=>{perm(ctx,'chat:view');const c=chat(ctx);const expertName=db.experts.find(e=>e.id===c.expertId)?.name;const askRaw=ctx.query.askIdx;if(askRaw!==undefined&&askRaw!==''){const askIdx=Number(askRaw);const askCount=c.messages.filter(m=>m.role==='user').length;if(!Number.isInteger(askIdx)||askIdx<0||askIdx>=askCount) throw new ErrorType(404,'该问话不存在或已删除');audit(ctx.adminId,'chat.analysis.view','chat',c.id,null,{askIdx});return buildAskAnalysis(c,askIdx,expertName)}audit(ctx.adminId,'chat.analysis.view','chat',c.id,null,{steps:4});return buildChatAnalysis(c,expertName)})
   route('DELETE','/chats/:id',ctx=>{perm(ctx,'chat:delete');const c=chat(ctx);const reason=String((ctx.body as Record<string,unknown>)?.reason || '').trim();if(!reason) throw new ErrorType(422,'必须填写软删除理由');if(c.deletedAt) throw new ErrorType(409,'会话已删除');c.deletedAt=nowStr();c.deleteReason=reason;audit(ctx.adminId,'chat.delete','chat',c.id,{deletedAt:null},{deletedAt:c.deletedAt,reason});return null})
   route('POST','/chats/:id/restore',ctx=>{perm(ctx,'chat:restore');const c=chat(ctx);if(!c.deletedAt) throw new ErrorType(409,'会话未删除');const before={deletedAt:c.deletedAt,reason:c.deleteReason};c.deletedAt=null;c.deleteReason='';audit(ctx.adminId,'chat.restore','chat',c.id,before,{deletedAt:null});return null})
-  route('GET','/chats/:id/export',ctx=>{perm(ctx,'chat:export');const c=chat(ctx);const format=String(ctx.query.format || 'json');if(!['json','csv'].includes(format)) throw new ErrorType(422,'仅支持JSON/CSV');const messages=c.messages.map(m=>({...m,content:redact(m.content)}));const cell=(v:unknown)=>{const s=String(v);return `"${(/^[=+@\-\t\r]/.test(s)?"'"+s:s).replace(/"/g,'""')}"`};audit(ctx.adminId,'chat.export','chat',c.id,null,{format,messageCount:messages.length});return {filename:`chat-${c.id}.${format}`,content:format==='json'?JSON.stringify({id:c.id,userId:c.userId,expertId:c.expertId,messages},null,2):['role,content,createdAt',...messages.map(m=>[m.role,m.content,m.createdAt].map(cell).join(','))].join('\n')}})
+  route('GET','/chats/:id/export',async ctx=>{
+    perm(ctx,'chat:export')
+    const c=chat(ctx)
+    const format=String(ctx.query.format || 'json')
+    if(!['json','xlsx'].includes(format)) throw new ErrorType(422,'仅支持JSON/XLSX')
+    const messages=c.messages.map(m=>({...m,content:redact(m.content)}))
+    const result=format==='json'
+      ? {filename:`chat-${c.id}.json`,content:JSON.stringify({id:c.id,userId:c.userId,expertId:c.expertId,messages},null,2)}
+      : await createExcelBlob('对话消息',[
+        {header:'角色',width:16,kind:'text'},
+        {header:'消息内容',width:80,kind:'text'},
+        {header:'创建时间',width:25,kind:'datetime'}
+      ],messages.map(m=>[m.role,m.content,m.createdAt]))
+    audit(ctx.adminId,'chat.export','chat',c.id,null,{format,messageCount:messages.length})
+    return result
+  })
   route('GET','/dashboard',ctx=>{
     perm(ctx,'dashboard:view')
     /* 本地时区日期（toISOString 为 UTC，东八区 0-8 点会落到昨天） */

@@ -1,4 +1,4 @@
-import { get, post, del, exportCsv } from './request'
+import { get, post, del, exportFile } from './request'
 export interface ChatItem { id:number;userId:number;expertId:number;title:string;expertName:string|null;summary:string;messageCount:number;createdAt:string;deletedAt:string|null;deleteReason:string;phone?:string;wechatNickname?:string }
 export interface Message { role:string;content:string;createdAt:string }
 /** 对话管理（用户视角）：一行 = 一个用户 + 其最新一条对话 */
@@ -25,5 +25,5 @@ export const chatMessages=(id:number)=>get<Message[]>(`/chats/${id}/messages`)
 export const chatAnalysis=(id:number,askIdx?:number)=>get<ChatAnalysis>(`/chats/${id}/analysis`,askIdx===undefined?undefined:{askIdx})
 export const deleteChat=(id:number,reason:string)=>del(`/chats/${id}`,{reason})
 export const restoreChat=(id:number)=>post(`/chats/${id}/restore`)
-export const exportChat=(id:number,format:string)=>exportCsv<{filename:string;content:string}>(`/chats/${id}/export`,{format})
+export const exportChat=(id:number,format:'json'|'xlsx')=>exportFile<{filename:string;content:string}>(`/chats/${id}/export`,{format})
 export const dashboard=()=>get<Dashboard>('/dashboard')

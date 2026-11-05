@@ -121,10 +121,10 @@ export async function exportBlob(url: string, params?: object): Promise<Blob> {
 }
 
 /**
- * 导出接口：mock 模式返回 {filename, content} 由前端生成 Blob 下载；
- * 真实模式请求 CSV 流（blob），由调用方触发下载。
+ * 导出接口：mock 模式返回文件描述或 XLSX Blob；
+ * 真实模式以 Blob 接收 JSON / XLSX 文件，由调用方触发下载。
  */
-export async function exportCsv<T>(url: string, params?: object): Promise<T | Blob> {
+export async function exportFile<T>(url: string, params?: object): Promise<T | Blob> {
   if (USE_MOCK) return get<T>(url, params)
   const res = await http.get<Blob>(url, { params, responseType: 'blob' })
   return res.data

@@ -1,5 +1,6 @@
 import dayjs from 'dayjs'
 import { formatOrderExpiry } from '../../utils/format'
+import { createExcelBlob, excelDateTime, type ExcelColumn } from '../../utils/excel'
 import { registerConfigHandlers, validateEntitlements } from './config-handlers'
 import { registerOperationsHandlers } from './operations-handlers'
 import { registerWorkspaceHandlers } from './workspace-handlers'
@@ -648,23 +649,23 @@ route('GET', '/orders/export', async (ctx) => {
   assertPerm(ctx, 'order:export')
   const list = filterOrders(ctx)
   const now = Date.now()
-  const { default: ExcelJS } = await import('exceljs')
-  const workbook = new ExcelJS.Workbook()
-  const sheet = workbook.addWorksheet('订单列表', { views: [{ state: 'frozen', ySplit: 1 }] })
   const headers = ['订单号', '用户ID', '用户手机号', '微信昵称', '套餐', '订单来源', '到期状态', '剩余积分', '套餐时长', '近7日消耗', '商品金额', '优惠金额', '实付金额', '状态', '支付时间', '下单时间', '到期时间', '支付渠道', '备注']
-  const widths = [28, 12, 20, 22, 22, 14, 20, 16, 16, 16, 16, 16, 16, 14, 22, 22, 22, 14, 40]
-  sheet.columns = headers.map((header, index) => ({ header, width: widths[index] }))
-  sheet.autoFilter = { from: 'A1', to: 'S1' }
-  for (const o of list) {
+  const widths = [28, 12, 18, 22, 22, 14, 20, 16, 16, 16, 16, 16, 16, 14, 25, 25, 25, 14, 40]
+  const columns: ExcelColumn[] = headers.map((header, index) => ({
+    header, width: widths[index]!,
+    kind: [10, 11, 12].includes(index) ? 'money' : [1, 7, 9].includes(index) ? 'integer' : [14, 15].includes(index) ? 'datetime' : 'text'
+  }))
+  const rows = list.map(o => {
     const item = toOrderItem(o)
-    sheet.addRow([
+    const expiry = formatOrderExpiry(item, now)
+    return [
       item.orderNo,
       item.userId,
       item.phone,
       item.wechatNickname,
       item.planName,
       ORDER_SOURCE_LABELS[item.source] ?? item.source,
-      formatOrderExpiry(item, now).text,
+      expiry.text,
       item.remainingCredits,
       item.durationMonths === 0 ? '长期有效' : `${item.durationMonths}个月`,
       item.last7DaysUsage,
@@ -674,23 +675,12 @@ route('GET', '/orders/export', async (ctx) => {
       ORDER_STATUS_LABELS[item.status] ?? item.status,
       item.paidAt ?? '',
       item.createdAt,
-      formatOrderExpiry(item, now).time,
+      expiry.time === '长期有效' || expiry.time === '—' ? expiry.time : excelDateTime(item.expiresAt),
       CHANNEL_LABELS[item.payChannel] ?? item.payChannel,
       item.remark || ''
-    ])
-  }
-  sheet.eachRow((row, rowNumber) => {
-    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      cell.font = { name: 'Arial', size: 11, bold: rowNumber === 1, color: { argb: 'FF1F2937' } }
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowNumber === 1 ? 'FFEAF0F8' : rowNumber % 2 === 0 ? 'FFFFFFFF' : 'FFF7F9FC' } }
-      cell.border = { bottom: { style: 'thin', color: { argb: 'FFD9DEE7' } } }
-      cell.alignment = { vertical: 'middle', wrapText: true }
-      if (rowNumber > 1) cell.numFmt = [8, 10, 11, 12, 13].includes(columnNumber) ? '#,##0.00' : typeof cell.value === 'string' ? '@' : '0'
-    })
+    ]
   })
-  sheet.getRow(1).height = 28
-  const buffer = await workbook.xlsx.writeBuffer()
-  return new Blob([new Uint8Array(buffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  return createExcelBlob('订单列表', columns, rows)
 })
 
 // ------------------------------------------------------------------ 反馈管理（v15）
