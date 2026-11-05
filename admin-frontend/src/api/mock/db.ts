@@ -92,6 +92,8 @@ export interface MockOrder {
   discountAmount: number
   remainingCredits: number
   durationMonths: number
+  durationDays?: number
+  expiresAt?: string | null
   last7DaysUsage: number
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: 'ONLINE' | 'MANUAL' | 'GIFT'
@@ -387,6 +389,7 @@ function buildOrders(users: MockUser[]): MockOrder[] {
       discountAmount: orderDiscountAmount(i),
       remainingCredits: orderRemainingCredits(i),
       durationMonths: orderDurationMonths(planId),
+      expiresAt: paidAt ? fmt(dayjs(paidAt).add(orderDurationMonths(planId), 'month')) : null,
       last7DaysUsage: orderLast7DaysUsage(i),
       payChannel,
       status,
@@ -703,8 +706,10 @@ if (storedVersion < 11) {
     db.orders.unshift({
       id: mid, orderNo: `ORD2026${String(10000000 + mid)}`, source: 'MANUAL', userId: manualUser.id,
       planId: manualPlan.id, planName: manualPlan.name, amount: Number(manualPlan.price), goodsAmount: Number(manualPlan.price), discountAmount: 0,
-      remainingCredits: 5000, durationMonths: Math.max(1, Math.round(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
+      remainingCredits: 5000, durationMonths: Number(manualPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
       payChannel: 'OFFLINE', status: 'PAID', remark: '线下对公转账，人工核实到账后录入',
+      durationDays: Number(manualPlan.durationDays),
+      expiresAt: Number(manualPlan.durationDays) === 0 ? null : fmt(dayjs(mat).add(Number(manualPlan.durationDays), 'day')),
       paidAt: mat, createdAt: mat,
       transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + mid)}`, type: 'PAY', payChannel: 'OFFLINE', amount: Number(manualPlan.price), status: 'SUCCESS', createdAt: mat }]
     })
@@ -718,6 +723,7 @@ if (storedVersion < 11) {
       planId: giftPlan.id, planName: giftPlan.name, amount: 0, goodsAmount: 0, discountAmount: 0,
       remainingCredits: 1000, durationMonths: Number(giftPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), last7DaysUsage: 0,
       payChannel: 'OFFLINE', status: 'PAID', remark: '新客体验赠送',
+      expiresAt: Number(giftPlan.durationDays) === 0 ? null : fmt(dayjs(gat).add(Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), 'month')),
       paidAt: gat, createdAt: gat, transactions: []
     })
   }
@@ -766,6 +772,18 @@ if (storedVersion < 17) {
   db.creditPackages ||= seedCreditPackages()
   db.billingSettings ||= seedBillingSettings()
 }
+// v17 订单到期增量迁移：仅补缺失字段，历史月数按日历月演示回填，不读取当前套餐。
+db.orders.forEach((order) => {
+  if (Object.prototype.hasOwnProperty.call(order, 'expiresAt')) return
+  if (order.status !== 'PAID') {
+    order.expiresAt = null
+  } else if (order.durationMonths === 0 || order.durationDays === 0) {
+    order.expiresAt = null
+  } else if (order.paidAt && dayjs(order.paidAt).isValid()) {
+    if (Number.isFinite(order.durationDays) && Number(order.durationDays) > 0) order.expiresAt = fmt(dayjs(order.paidAt).add(Number(order.durationDays), 'day'))
+    else if (Number.isInteger(order.durationMonths) && order.durationMonths > 0) order.expiresAt = fmt(dayjs(order.paidAt).add(order.durationMonths, 'month'))
+  }
+})
 // v17 幂等兜底：套餐版本快照集合任何路径漏初始化时补空对象（防旧库直跳或数据损坏）
 db.planVersions ||= {}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit

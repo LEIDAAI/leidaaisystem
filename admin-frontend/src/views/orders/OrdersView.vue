@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import ProTable from '@/components/ProTable.vue'
@@ -8,11 +8,14 @@ import { createGiftOrder, createManualOrder, exportOrders, listOrders, updateOrd
 import { listConfig } from '@/api/config'
 import type { ConfigItem } from '@/api/config'
 import type { OrderItem, OrderQuery, ProTableHandle } from '@/api/types'
-import { formatAmount, formatDateTime } from '@/utils/format'
+import { formatAmount, formatDateTime, formatOrderExpiry } from '@/utils/format'
 import { promptText } from '@/utils/feedback'
 import { useAuthStore } from '@/stores/auth'
 import OrderDetailDrawer from './OrderDetailDrawer.vue'
 
+const now = ref(Date.now())
+const expiryTimer = window.setInterval(() => { now.value = Date.now() }, 60_000)
+onUnmounted(() => window.clearInterval(expiryTimer))
 const auth = useAuthStore()
 const tableRef = ref<ProTableHandle | null>(null)
 
@@ -283,6 +286,9 @@ async function submitGift() {
 
         <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="userId" label="用户ID" width="80" />
+        <el-table-column label="用户手机号" width="140">
+          <template #default="{ row }">{{ row.phone || '—' }}</template>
+        </el-table-column>
         <el-table-column prop="wechatNickname" label="微信昵称" min-width="120" show-overflow-tooltip />
         <el-table-column prop="planName" label="套餐" width="90" />
         <el-table-column label="订单来源" width="100">
@@ -290,6 +296,11 @@ async function submitGift() {
             <el-tag :type="ORDER_SOURCE_TAG_TYPES[row.source] ?? 'info'" size="small" disable-transitions>
               {{ ORDER_SOURCE_LABELS[row.source] ?? row.source }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期状态" width="150">
+          <template #default="{ row }">
+            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="剩余积分" width="100">
@@ -321,6 +332,9 @@ async function submitGift() {
         <el-table-column label="下单时间" width="160">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
+        <el-table-column label="到期时间" width="180">
+          <template #default="{ row }">{{ formatOrderExpiry(row, now).time }}</template>
+        </el-table-column>
         <el-table-column label="渠道" width="100">
           <template #default="{ row }">{{ CHANNEL_LABELS[row.payChannel] ?? row.payChannel }}</template>
         </el-table-column>
@@ -338,7 +352,7 @@ async function submitGift() {
       </ProTable>
     </div>
 
-    <OrderDetailDrawer v-model="detailVisible" :order-id="detailOrderId" />
+    <OrderDetailDrawer v-model="detailVisible" :order-id="detailOrderId" :now="now" />
 
     <el-dialog v-model="manualVisible" title="创建手工订单" width="460px">
       <el-form label-width="100px" @submit.prevent>

@@ -1,4 +1,5 @@
 import dayjs from 'dayjs'
+import { formatOrderExpiry } from '../../utils/format'
 import { registerConfigHandlers, validateEntitlements } from './config-handlers'
 import { registerOperationsHandlers } from './operations-handlers'
 import { registerWorkspaceHandlers } from './workspace-handlers'
@@ -136,11 +137,12 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   return {
     ...rest,
+    phone: user?.phone || '—',
     wechatNickname: user ? (user.wechatNickname || '-') : '-'
   }
 }
@@ -566,6 +568,8 @@ route('POST', '/orders/manual', (ctx) => {
     discountAmount: 0,
     remainingCredits: Math.round(credits),
     durationMonths: Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
+    durationDays: Number(plan.durationDays ?? 30),
+    expiresAt: Number(plan.durationDays) === 0 ? null : dayjs(at).add(Number(plan.durationDays ?? 30), 'day').format('YYYY-MM-DD HH:mm:ss'),
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
@@ -616,6 +620,7 @@ route('POST', '/orders/gift', (ctx) => {
     discountAmount: 0,
     remainingCredits: Math.round(credits),
     durationMonths: isLifetime ? 0 : durationMonths,
+    expiresAt: isLifetime ? null : dayjs(at).add(durationMonths, 'month').format('YYYY-MM-DD HH:mm:ss'),
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
@@ -642,15 +647,18 @@ route('PUT', '/orders/:id/remark', (ctx) => {
 route('GET', '/orders/export', (ctx) => {
   assertPerm(ctx, 'order:export')
   const list = filterOrders(ctx)
-  const header = '订单号,用户ID,微信昵称,套餐,订单来源,剩余积分,套餐时长,近7日消耗,商品金额,优惠金额,实付金额,状态,支付时间,下单时间,支付渠道,备注'
+  const now = Date.now()
+  const header = '订单号,用户ID,用户手机号,微信昵称,套餐,订单来源,到期状态,剩余积分,套餐时长,近7日消耗,商品金额,优惠金额,实付金额,状态,支付时间,下单时间,到期时间,支付渠道,备注'
   const rows = list.map((o) => {
     const item = toOrderItem(o)
     return [
       item.orderNo,
       item.userId,
+      item.phone,
       item.wechatNickname,
       item.planName,
       ORDER_SOURCE_LABELS[item.source] ?? item.source,
+      formatOrderExpiry(item, now).text,
       item.remainingCredits,
       item.durationMonths === 0 ? '长期有效' : `${item.durationMonths}个月`,
       item.last7DaysUsage,
@@ -660,6 +668,7 @@ route('GET', '/orders/export', (ctx) => {
       ORDER_STATUS_LABELS[item.status] ?? item.status,
       item.paidAt ?? '',
       item.createdAt,
+      formatOrderExpiry(item, now).time,
       CHANNEL_LABELS[item.payChannel] ?? item.payChannel,
       item.remark || ''
     ].map(value => {

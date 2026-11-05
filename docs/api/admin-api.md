@@ -128,14 +128,23 @@
 
 | 方法 | 路径 | 权限点 | 说明 |
 |---|---|---|---|
-| GET | /orders | order:view | 参数 `orderNo`、`userId`、`status`(PENDING/PAID/REFUNDED/CLOSED)、`payChannel`(WECHAT/ALIPAY)、`start`/`end`、分页 |
+| GET | /orders | order:view | 参数 `orderNo`、`userId`、`status`(PENDING/PAID/CLOSED)、`payChannel`(WECHAT/ALIPAY/OFFLINE)、`start`/`end`、分页 |
 | GET | /orders/{id} | order:view | 详情，含支付流水列表 |
-| POST | /orders/{id}/refund | order:refund | `{reason, amount}` 全额退则 amount 传订单金额；渠道失败返回 `code=422, msg=渠道错误信息` |
+| POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐、非负有限积分/金额；允许 0 元；生成 PAID/OFFLINE 订单及成功支付流水 |
+| POST | /orders/gift | order:create | `{phone, planId, durationMonths, credits, remark?}`；启用赠送套餐，有限时长 1–36 整数月，长期固定 0；金额 0，无支付流水；备注最多 200 字 |
 | PUT | /orders/{id}/remark | order:remark | `{remark}` 备注（留痕） |
-| GET | /orders/export | order:export | 同列表参数，返回 CSV 流（`Content-Disposition: attachment`） |
+| GET | /orders/export | order:export | 同列表筛选，导出全部命中项；Mock 返回 `{filename,content}`，前端下载 CSV；真实后端待实现 Blob 契约 |
 
-### 订单项
-`{id, orderNo, userId, userNickname, planId, planName, amount, payChannel, status, remark, paidAt, refundedAt, createdAt}`
+### 订单项（R4，2026-11-05）
+`{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMonths, durationDays?, expiresAt?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
+
+- `phone` 由 `userId` 关联当前用户手机号，保留原脱敏格式，查无显示 `—`；不保存订单手机号快照。
+- `expiresAt` 为订单级明确到期时间（`yyyy-MM-dd HH:mm:ss`，dayjs 同现有时间约定解析），长期有效明确为 `null`；可选以兼容旧接口，缺失或非法值显示 `—`，不可据此推断长期有效。`durationDays` 为新手工订单创建时套餐精确天数快照，不随套餐变更。
+- 新手工订单：以 `paidAt + durationDays 天` 计算 `expiresAt`，不先转换月数；套餐 0 天为长期有效。新赠送订单：以 `paidAt + 用户实际选择的 durationMonths 日历月` 计算，月底按目标月份末日收敛；长期有效固定 0 月、`expiresAt=null`。
+- PAID 且明确长期标记（0 月或 0 天）并且 `expiresAt=null`：到期状态/时间均为「长期有效」。PENDING/CLOSED：状态「未生效」、时间 `—`。PAID 有限到期：`now < expiresAt` 显示「未到期 ceil((expiresAt-now)/86400000)天」，否则「已到期 ceil((now-expiresAt)/86400000)天」；相等为已到期 0 天。
+- 列表/详情/CSV 共用 `formatOrderExpiry`；页面单一时钟每分钟刷新并在卸载时清理，CSV 一次导出固定同一个 now。严格插列：微信昵称前为用户手机号、订单来源后为到期状态、下单时间后为到期时间。
+- Mock v17 非破坏性幂等补齐：仅对无自有 `expiresAt` 字段的历史订单回填，保留现存值（包括 null/非法值）；历史仅月数时用历史 `paidAt + durationMonths 日历月` 作演示回填，不读当前套餐覆盖历史；无有效支付时间或时长保持缺失。新种子同样含订单到期字段。
+- 创建订单与审计已实现；订单到期展示不代表用户权益发放，手工/赠送仍不回写用户套餐、用户到期时间或积分权益（TC-39）。独立前台订单仍为原演示能力。
 
 ---
 

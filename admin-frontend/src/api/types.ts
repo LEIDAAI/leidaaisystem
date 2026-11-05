@@ -35,6 +35,9 @@ export interface OrderItem {
   goodsAmount: number; discountAmount: number
   remainingCredits: number; durationMonths: number; last7DaysUsage: number
   payChannel: string; status: string; remark: string
+  phone?: string
+  expiresAt?: string | null
+  durationDays?: number
   paidAt: string | null; createdAt: string
 }
 export interface PayTransaction { id: number; txnNo: string; type: string; payChannel: string; amount: number; status: string; createdAt: string }

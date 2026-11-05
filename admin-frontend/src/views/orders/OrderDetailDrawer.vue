@@ -4,11 +4,12 @@ import { computed, ref, watch } from 'vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { getOrderDetail } from '@/api/order'
 import type { OrderDetail } from '@/api/types'
-import { formatAmount, formatDateTime, orDash } from '@/utils/format'
+import { formatAmount, formatDateTime, formatOrderExpiry, orDash } from '@/utils/format'
 
 interface Props {
   modelValue: boolean
   orderId: number | null
+  now: number
 }
 
 const props = defineProps<Props>()
@@ -51,9 +52,11 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           <el-descriptions-item label="状态">
             <StatusTag kind="order" :value="detail.status" />
           </el-descriptions-item>
+          <el-descriptions-item label="用户手机号">{{ detail.phone || '—' }}</el-descriptions-item>
           <el-descriptions-item label="微信昵称">{{ detail.wechatNickname }}（ID: {{ detail.userId }}）</el-descriptions-item>
           <el-descriptions-item label="套餐">{{ detail.planName }}</el-descriptions-item>
           <el-descriptions-item label="订单来源">{{ ORDER_SOURCE_LABELS[detail.source] ?? detail.source }}</el-descriptions-item>
+          <el-descriptions-item label="到期状态"><el-tag :type="formatOrderExpiry(detail, now).type" size="small">{{ formatOrderExpiry(detail, now).text }}</el-tag></el-descriptions-item>
           <el-descriptions-item label="剩余积分">{{ detail.remainingCredits }}</el-descriptions-item>
           <el-descriptions-item label="套餐时长">{{ detail.durationMonths === 0 ? '长期有效' : `${detail.durationMonths}个月` }}</el-descriptions-item>
           <el-descriptions-item label="近7日消耗">{{ detail.last7DaysUsage }}</el-descriptions-item>
@@ -62,6 +65,7 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           <el-descriptions-item label="实付金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
           <el-descriptions-item label="支付时间">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
           <el-descriptions-item label="下单时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
+          <el-descriptions-item label="到期时间">{{ formatOrderExpiry(detail, now).time }}</el-descriptions-item>
           <el-descriptions-item label="支付渠道">{{ CHANNEL_LABELS[detail.payChannel] ?? detail.payChannel }}</el-descriptions-item>
           <el-descriptions-item label="备注">{{ orDash(detail.remark) }}</el-descriptions-item>
         </el-descriptions>
