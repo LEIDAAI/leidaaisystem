@@ -85,7 +85,6 @@ async function handleRemark(row: OrderItem) {
   tableRef.value?.refresh()
 }
 
-const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
 /** v11 订单来源中文标签与标签色 */
 const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
 const ORDER_SOURCE_TAG_TYPES: Record<string, 'info' | 'warning' | 'success'> = { ONLINE: 'info', MANUAL: 'warning', GIFT: 'success' }
@@ -334,9 +333,6 @@ async function submitGift() {
         </el-table-column>
         <el-table-column label="到期时间" width="180">
           <template #default="{ row }">{{ formatOrderExpiry(row, now).time }}</template>
-        </el-table-column>
-        <el-table-column label="渠道" width="100">
-          <template #default="{ row }">{{ CHANNEL_LABELS[row.payChannel] ?? row.payChannel }}</template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.remark || '-' }}</template>
