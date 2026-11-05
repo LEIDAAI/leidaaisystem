@@ -1,9 +1,9 @@
 import { db, nextMockId, nowStr, stampStr, permissionCodesOf } from './db'
-import { CAPABILITY_KEYS, defaultCapabilities, redact, detectPlatforms } from './extension-data'
+import { CAPABILITY_KEYS, defaultCapabilities, redact, detectPlatforms, seedBillingSettings } from './extension-data'
 import type { LlmModelRow } from './extension-data'
 import { simulatePreviewChat, type PreviewDraftLike } from './preview-engine'
 import { normalizeFrontendPerms, PLATFORMS, hostOf } from '../config'
-import type { ConfigItem, ConfigKind, ConfigVersion, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario } from '../config'
+import type { BillingSettings, ConfigItem, ConfigKind, ConfigVersion, CreditPackage, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario } from '../config'
 
 export interface Context { params: Record<string,string>; query: Record<string,unknown>; body: unknown; adminId: number; token: string }
 export interface Services {
@@ -59,7 +59,13 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   /** 供导入/克隆复用的按模块保存入口 */
   const saveFns: Partial<Record<'plan'|'expert'|'skill'|'mcp', (ctx:Context)=>ConfigItem>> = {}
   /** v5：版本快照公共字段（版本名称留空自动生成 yyyyMMddHHmmss；操作人取当前管理员） */
-  const versionMeta = (ctx:Context, body:unknown)=>({ versionName:String((body as Record<string,unknown>)?.versionName || '').trim() || stampStr(), operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown' })
+  const versionMeta = (ctx:Context, body:unknown, store?:Record<string, ConfigVersion[]>, itemId?:number|string)=>{
+    const custom=String((body as Record<string,unknown>)?.versionName || '').trim()
+    let versionName=custom || stampStr()
+    // 自动生成的 yyyyMMddHHmmss 同秒多次保存会重名：追加 -N 序号；用户自填名称仍由唯一性校验 422
+    if(!custom && store && itemId!==undefined) { const base=versionName; for(let n=2;(store[String(itemId)]||[]).some(v=>v.versionName===versionName);n++) versionName=`${base}-${n}` }
+    return { versionName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown' }
+  }
   /** v5：同资源内版本名称唯一校验（重复 422，保存与恢复共用） */
   const assertVersionNameUnique = (store: Record<string, ConfigVersion[]> | undefined, itemId: number|string, versionName: string): void => {
     if((store?.[String(itemId)] || []).some(v=>v.versionName===versionName)) fail(`版本名称「${versionName}」在该资源的历史版本中已存在，请更换`)
@@ -73,7 +79,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','frontendPerms','planType','credits']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
       for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
       item.name=String(item.name).trim();item.code=String(item.code).trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
@@ -100,7 +106,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
           if(!Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('赠送套餐有效天数须为 0（长期有效）或正整数')
           item.credits=0
         } else {
-          if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<1) fail('价格须非负，有效天数须正整数')
+          if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('价格须非负，有效天数须为 0（长期有效）或正整数')
           // v12：常规套餐 AI 积分（可选，非负整数，缺省 0；创建手工订单时默认带出）
           const credits=Number(item.credits||0)
           if(!Number.isInteger(credits) || credits<0) fail('AI 积分须为非负整数')
@@ -110,6 +116,35 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         item.entitlements=derivePlanEntitlements(item.id)
         // v8：套餐前台权限归一化（缺失键默认允许，仅接受布尔）
         item.frontendPerms=normalizeFrontendPerms(item.frontendPerms)
+        // v17：套餐营销/积分运营字段校验与归一化（可选字段 trim 后空串/空数组归一为 undefined，缺省值补默认）
+        item.tagline=String(item.tagline ?? '').trim() || undefined
+        item.badge=String(item.badge ?? '').trim() || undefined
+        if(item.features!==undefined) {
+          if(!Array.isArray(item.features) || item.features.some(f=>typeof f!=='string')) fail('核心卖点须为字符串数组')
+          const feats=item.features.map(f=>f.trim()).filter(Boolean)
+          if(feats.length>20) fail('核心卖点最多 20 条')
+          item.features=feats.length?feats:undefined
+        }
+        if(item.billingCycles!==undefined) {
+          if(!Array.isArray(item.billingCycles) || item.billingCycles.length>2) fail('计费周期最多配置月付/年付两档')
+          const cycles=new Set<string>()
+          for(const c of item.billingCycles) {
+            if(!c || typeof c!=='object' || !['MONTHLY','YEARLY'].includes(c.cycle)) fail('计费周期类型须为 MONTHLY/YEARLY')
+            if(cycles.has(c.cycle)) fail('月付/年付计费周期不能重复配置')
+            cycles.add(c.cycle)
+            if(!Number.isFinite(Number(c.price)) || Number(c.price)<0) fail('计费周期售价须为不小于 0 的数字')
+            if(c.originalPrice!==undefined && (!(Number(c.originalPrice)>0) || Number(c.originalPrice)<=Number(c.price))) fail('计费周期划线价须大于 0 且大于该档售价')
+          }
+          item.billingCycles=item.billingCycles.length?item.billingCycles:undefined
+        }
+        const sort=Number(item.sort ?? 0)
+        if(!Number.isInteger(sort) || sort<0) fail('排序须为非负整数')
+        item.sort=sort
+        // v17：积分发放模式（GIFT 赠送套餐强制一次性发放）与积分有效期策略（CUSTOM_DAYS 须填正整数天数，其余清空）
+        item.grantMode=item.planType==='GIFT'?'ONCE':(item.grantMode==='MONTHLY'?'MONTHLY':'ONCE')
+        item.creditExpiry=item.creditExpiry==='MONTH_RESET'||item.creditExpiry==='CUSTOM_DAYS'?item.creditExpiry:'NEVER'
+        if(item.creditExpiry==='CUSTOM_DAYS') { if(!Number.isInteger(item.creditValidityDays) || Number(item.creditValidityDays)<1) fail('自定义积分有效期须填写正整数天数') }
+        else item.creditValidityDays=undefined
       }
       if(module==='expert') {
         if(!String(item.systemPrompt||'').trim()) fail('系统提示词不能为空')
@@ -205,7 +240,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const before=old?snapshot(old):null
       touch(item)
       // v5：导入（skipVersion 标记，非持久化字段）不产生版本记录；保存前校验同资源内版本名称唯一（重复 422）
-      const vMeta = versionMeta(ctx,ctx.body)
+      const vMeta = versionMeta(ctx,ctx.body, module==='expert'?db.expertVersions:module==='skill'?db.skillVersions:module==='mcp'?db.mcpVersions:module==='plan'?db.planVersions:undefined, item.id)
       const skipVersion = Boolean((input as Record<string,unknown>).skipVersion)
       if(module==='expert' && item.isDefault) items.filter(e=>e.id!==item.id && e.isDefault).forEach(e=>{ const prev=snapshot(e);e.isDefault=false;touch(e);audit(ctx.adminId,'expert.default','expert',e.id,prev,e) })
       if(old) Object.assign(old,item); else items.push(item)
@@ -227,6 +262,13 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!skipVersion) {
           assertVersionNameUnique(db.mcpVersions,item.id,vMeta.versionName)
           ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
+        }
+      }
+      if(module==='plan') {
+        // v17：套餐配置变更生成快照（含营销/计费字段），支持历史/差异/恢复
+        if(!skipVersion) {
+          assertVersionNameUnique(db.planVersions,item.id,vMeta.versionName)
+          ;(db.planVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
         }
       }
       // v5：审计 JSON 含 platforms（业务字段）与 versionName（本次发布版本名；skipVersion 无版本记录时省略）
@@ -457,7 +499,6 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     fail(`模型探测失败。${errors.join('；')}。${hint}`, 422)
   })
 
-  route('PUT','/plans/:id/entitlements',ctx=>{ perm(ctx,'plan:edit');const p=find(db.plans,ctx.params.id);const entries=validateEntitlements(ctx.body,ErrorType);const before=snapshot(p);p.entitlements=entries;touch(p);audit(ctx.adminId,'plan.entitlements','plan',p.id,before,p);return publicItem(p) })
   route('PUT','/experts/:id/default',ctx=>{ perm(ctx,'expert:edit');const item=find(db.experts,ctx.params.id);if(item.status!==1) fail('停用专家不能设为默认');for(const e of db.experts){ if(Boolean(e.isDefault)!==(e.id===item.id)){const before=snapshot(e);e.isDefault=e.id===item.id;touch(e);audit(ctx.adminId,'expert.default','expert',e.id,before,e)}};return publicItem(item) })
   route('GET','/experts/:id/prompt-versions',ctx=>{perm(ctx,'expert:view');find(db.experts,ctx.params.id);return (db.promptHistory[ctx.params.id] || []).map(h=>({ ...h, systemPrompt:String(redact(h.systemPrompt)) }))})
 
@@ -520,6 +561,28 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     audit(ctx.adminId,'skill.version.restore','skill',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
   })
 
+  // -------------------------------------------------- 套餐版本历史（v17 补齐：营销/计费字段快照，恢复生成新版本）
+  const PLAN_RESTORE_FIELDS = ['code','name','status','platforms','price','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays'] as readonly (keyof ConfigItem)[]
+  route('GET','/plans/:id/versions',ctx=>{perm(ctx,'plan:view');const item=find(db.plans,ctx.params.id);return (db.planVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
+  route('POST','/plans/:id/restore',ctx=>{
+    perm(ctx,'plan:edit');const item=find(db.plans,ctx.params.id)
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const hist=(db.planVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
+    if(!hist) { throw new ErrorType(404,'版本不存在') }
+    const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
+    for(const key of PLAN_RESTORE_FIELDS) if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]})
+    // 恢复后与保存语义对齐：权益按资源侧可见性重新派生、前台权限归一化（悬空引用自动剔除，不阻断恢复）
+    item.entitlements=derivePlanEntitlements(item.id)
+    item.frontendPerms=normalizeFrontendPerms(item.frontendPerms)
+    touch(item)
+    let restoredName=restoreNameOf(input,hist)
+    // v17：版本名称唯一——自填名称重复直接 422；自动生成的「恢复自 …」重名时追加 -N 序号
+    if(String(input.versionName || '').trim()) assertVersionNameUnique(db.planVersions,item.id,restoredName)
+    else { let n=2; while((db.planVersions[String(item.id)] || []).some(v=>v.versionName===restoredName)) restoredName=`${restoredName}-${n++}` }
+    ;(db.planVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
+    audit(ctx.adminId,'plan.version.restore','plan',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
+  })
+
   // -------------------------------------------------- MCP 版本历史（v5 补齐：连接配置与工具绑定快照，恢复生成新版本）
   const MCP_RESTORE_FIELDS = ['code','name','status','platforms','connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'] as readonly (keyof ConfigItem)[]
   route('GET','/mcp/servers/:id/versions',ctx=>{perm(ctx,'mcp:view');const item=find(db.servers,ctx.params.id);return (db.mcpVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
@@ -534,6 +597,57 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const restoredName=restoreNameOf(input,hist)
     ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
     audit(ctx.adminId,'mcp.version.restore','mcp',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
+  })
+
+  // -------------------------------------------------- v17：积分加油包商品 + 全局计费设置（复用套餐权限）
+  const saveCreditPackage = (ctx:Context)=>{
+    perm(ctx,'plan:edit')
+    const old=ctx.params.id?db.creditPackages.find(p=>p.id===Number(ctx.params.id)) || fail('加油包不存在',404):undefined
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const name=String(input.name || '').trim()
+    if(!name) fail('加油包名称必填')
+    const credits=Number(input.credits ?? 0)
+    if(!Number.isInteger(credits) || credits<=0) fail('积分数量须为大于 0 的整数')
+    const bonusCredits=Number(input.bonusCredits ?? 0)
+    if(!Number.isInteger(bonusCredits) || bonusCredits<0) fail('赠送积分须为非负整数')
+    const price=Number(input.price ?? 0)
+    if(!Number.isFinite(price) || price<0) fail('售价须为不小于 0 的数字')
+    const originalPrice=input.originalPrice===undefined?undefined:Number(input.originalPrice)
+    if(originalPrice!==undefined && (!(originalPrice>0) || originalPrice<=price)) fail('划线价须为大于 0 且大于售价的数字')
+    const badge=String(input.badge || '').trim()
+    const sort=Number(input.sort ?? 0)
+    if(!Number.isInteger(sort) || sort<0) fail('排序须为非负整数')
+    const status=input.status===undefined?(old?.status ?? 1):(input.status===0?0:1)
+    if(![0,1].includes(status)) fail('状态无效')
+    const remark=String(input.remark || '').trim()
+    if(remark.length>200) fail('备注最多 200 字')
+    const item:CreditPackage= old
+      ? { ...old, name, credits, bonusCredits, price, originalPrice, badge:badge||undefined, sort, status:status as 0|1, remark:remark||undefined, updatedAt:nowStr() }
+      : { id:nextMockId(), name, credits, bonusCredits, price, originalPrice, badge:badge||undefined, sort, status:status as 0|1, remark:remark||undefined, createdAt:nowStr(), updatedAt:nowStr() }
+    if(old) Object.assign(old,item); else db.creditPackages.push(item)
+    audit(ctx.adminId,`credit-package.${old?'update':'create'}`,'credit_package',item.id,old||null,item);return item
+  }
+  route('GET','/credit-packages',ctx=>{perm(ctx,'plan:view');return [...db.creditPackages].sort((a,b)=>a.sort-b.sort || a.id-b.id)})
+  route('POST','/credit-packages',saveCreditPackage);route('PUT','/credit-packages/:id',saveCreditPackage)
+  route('DELETE','/credit-packages/:id',ctx=>{perm(ctx,'plan:edit');const item=db.creditPackages.find(p=>p.id===Number(ctx.params.id)) || fail('加油包不存在',404);db.creditPackages.splice(db.creditPackages.indexOf(item),1);audit(ctx.adminId,'credit-package.delete','credit_package',item.id,item,null);return null})
+
+  route('GET','/billing-settings',ctx=>{perm(ctx,'plan:view');if(!db.billingSettings) db.billingSettings=seedBillingSettings();return db.billingSettings})
+  route('PUT','/billing-settings',ctx=>{
+    perm(ctx,'plan:edit')
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const before=db.billingSettings?{ ...db.billingSettings }:null
+    const registerBonus=Number(input.registerBonus)
+    if(!Number.isInteger(registerBonus) || registerBonus<0) fail('注册赠送积分须为非负整数')
+    if(!['FULL_PRICE','PRORATED'].includes(String(input.upgradePolicy))) fail('升级计费策略无效（FULL_PRICE/PRORATED）')
+    const slider=(input.creditSlider && typeof input.creditSlider==='object' && !Array.isArray(input.creditSlider)?input.creditSlider:{}) as Record<string,unknown>
+    if(typeof slider.enabled!=='boolean') fail('积分滑杆开关须为布尔值')
+    const min=Number(slider.min);const max=Number(slider.max);const step=Number(slider.step)
+    if(![min,max,step].every(v=>Number.isInteger(v) && v>0) || min>=max) fail('滑杆 min/max/step 须为正整数且 min 小于 max')
+    const unitPrice=Number(slider.unitPrice)
+    if(!Number.isFinite(unitPrice) || unitPrice<=0) fail('积分单价须为大于 0 的数字')
+    const item: BillingSettings = { registerBonus, upgradePolicy:String(input.upgradePolicy) as BillingSettings['upgradePolicy'], creditSlider:{ enabled:slider.enabled===true, min, max, step, unitPrice } }
+    db.billingSettings=item
+    audit(ctx.adminId,'billing-settings.update','billing_settings',0,before,item);return db.billingSettings
   })
 
   // -------------------------------------------------- 导出 / 导入 / 克隆（预设迁移，凭据脱敏）
@@ -569,7 +683,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   // -------------------------------------------------- 技能统计 / MCP 工具与连接
   route('GET','/skills/:id/stats',ctx=>{perm(ctx,'skill:view');const item=find(db.skills,ctx.params.id);const calls=db.skillCalls.filter(c=>c.skillId===item.id && Date.now()-Date.parse(c.createdAt)<=30*86400000);return { calls7:calls.filter(c=>Date.now()-Date.parse(c.createdAt)<=7*86400000).length,calls30:calls.length,successRate:calls.length?calls.filter(c=>c.success).length/calls.length:0,source:'Mock 本地调用记录' }})
   route('GET','/mcp/tools',ctx=>{if(!['mcp:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);return db.tools})
-  route('PUT','/mcp/tools/:id/enabled',ctx=>{perm(ctx,'mcp:edit');const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404);const enabled=(ctx.body as Record<string,unknown>).enabled;if(typeof enabled!=='boolean') fail('enabled须为布尔值');const before={...tool};const server=db.servers.find(s=>s.id===tool.serverId)!;const input=(ctx.body || {}) as Record<string,unknown>;const vMeta=versionMeta(ctx,input);assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName);tool.enabled=enabled as boolean;touch(server);(db.mcpVersions[String(server.id)] ||= []).push({version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:snapshot(server)});audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,tool);return tool})
+  route('PUT','/mcp/tools/:id/enabled',ctx=>{perm(ctx,'mcp:edit');const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404);const enabled=(ctx.body as Record<string,unknown>).enabled;if(typeof enabled!=='boolean') fail('enabled须为布尔值');const before={...tool};const server=db.servers.find(s=>s.id===tool.serverId)!;const input=(ctx.body || {}) as Record<string,unknown>;const vMeta=versionMeta(ctx,input,db.mcpVersions,server.id);assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName);tool.enabled=enabled as boolean;touch(server);(db.mcpVersions[String(server.id)] ||= []).push({version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:snapshot(server)});audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,tool);return tool})
   route('POST','/mcp/servers/:id/discover',ctx=>{
     perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id)
     if(item.status!==1) fail('请先启用服务')

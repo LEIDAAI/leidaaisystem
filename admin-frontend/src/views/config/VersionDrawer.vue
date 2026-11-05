@@ -12,7 +12,7 @@ import VersionConfirmDialog from './VersionConfirmDialog.vue'
  * 点击卡片在右侧预览该版本快照（技能为 SKILL.md 正文，专家/MCP 为 JSON），可切换「对比上一版」行级 diff；
  * 底部「还原为此版本」走版本确认框，恢复以新版本形式写入，不覆盖历史。
  */
-const props = defineProps<{ modelValue: boolean; kind: 'experts' | 'skills' | 'mcp/servers'; item: ConfigItem | null; canEdit: boolean }>()
+const props = defineProps<{ modelValue: boolean; kind: 'experts' | 'skills' | 'mcp/servers' | 'plans'; item: ConfigItem | null; canEdit: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; restored: [] }>()
 const versions = ref<ConfigVersion[]>([])
 const loading = ref(false)
@@ -33,7 +33,7 @@ const prevSnap = computed(() => (selectedIndex.value >= 0 ? sorted.value[selecte
 const isLatest = computed(() => !!selected.value && sorted.value[0]?.version === selected.value.version)
 const canCompare = computed(() => !!selected.value && !!prevSnap.value)
 const previewTitle = computed(() =>
-  props.kind === 'skills' ? 'SKILL.md 快照预览' : props.kind === 'mcp/servers' ? '连接配置快照预览（凭据已按服务端策略脱敏）' : '全量配置快照预览（凭据/提示词已按服务端策略脱敏）'
+  props.kind === 'skills' ? 'SKILL.md 快照预览' : props.kind === 'mcp/servers' ? '连接配置快照预览（凭据已按服务端策略脱敏）' : props.kind === 'plans' ? '套餐配置快照预览（全量 JSON）' : '全量配置快照预览（凭据/提示词已按服务端策略脱敏）'
 )
 const snapText = (v?: ConfigVersion | null): string => {
   if (!v) return ''

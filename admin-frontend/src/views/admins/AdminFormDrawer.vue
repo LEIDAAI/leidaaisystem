@@ -71,7 +71,8 @@ async function handleSave() {
       })
       ElMessage.success('新增成功')
     }
-    await useAuthStore().refreshSession()
+    // 保存已成功；会话刷新失败（如 token 恰好过期）不应吞掉成功状态，单独提示
+    try { await useAuthStore().refreshSession() } catch { ElMessage.warning('保存成功，但会话刷新失败，请重新登录后查看最新权限') }
     visible.value = false
     emit('success')
   } catch {

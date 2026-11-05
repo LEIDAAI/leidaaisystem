@@ -12,7 +12,7 @@
  * v10：元信息新增「所属场景」——下拉选历史场景 / 输入新名称自动注册进场景库（归属首个所选平台），对齐前台平台→场景两级。
  * 交互约定：禁止点空白关闭；关闭按钮先询问；边编辑边自动保存（skipVersion 不进版本历史，首次发布后启用）。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowLeft, CaretRight, CircleCheck, Close, Document, Folder, FolderOpened, Plus } from '@element-plus/icons-vue'
 import YuqueEditor from '@/components/yuque/YuqueEditor.vue'
@@ -543,6 +543,16 @@ function onPublishClick(): void {
   }
   versionDialog.value = true
 }
+
+/** Ctrl+S 快捷发布：顶栏按钮已提示快捷键，这里补上实际监听并拦截浏览器默认保存 */
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return
+  if (!props.modelValue || !props.canEdit || saving.value) return
+  e.preventDefault()
+  onPublishClick()
+}
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 async function save(v: { versionName: string; note: string }): Promise<void> {
   saving.value = true

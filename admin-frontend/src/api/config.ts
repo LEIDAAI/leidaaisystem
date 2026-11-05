@@ -99,6 +99,23 @@ export interface ConfigItem {
   credits?: number
   /** 套餐前台权限（v8）：控制该套餐用户在前台工作台能否创建/查看 套餐、技能、MCP；未配置视为全部允许 */
   frontendPerms?: FrontendPerms
+  // ---- 套餐营销/计费扩展（v17，仅套餐配置）----
+  /** 套餐宣传语（卡片副标题，可选） */
+  tagline?: string
+  /** 卡片角标（如「最受欢迎」，缺省无角标） */
+  badge?: string
+  /** 核心卖点清单（营销展示，最多 20 条） */
+  features?: string[]
+  /** 月付/年付计费周期报价（GIFT 赠送套餐不配置） */
+  billingCycles?: Array<{ cycle: 'MONTHLY' | 'YEARLY'; price: number; originalPrice?: number; label?: string }>
+  /** 展示排序（非负整数，小值靠前，缺省 0） */
+  sort?: number
+  /** AI 积分发放模式（v17）：ONCE 购买一次性发放 / MONTHLY 按月发放；赠送套餐强制 ONCE */
+  grantMode?: 'ONCE' | 'MONTHLY'
+  /** 积分有效期策略：NEVER 永久 / MONTH_RESET 每月重置 / CUSTOM_DAYS 自定义天数 */
+  creditExpiry?: 'NEVER' | 'MONTH_RESET' | 'CUSTOM_DAYS'
+  /** 自定义有效期天数（creditExpiry=CUSTOM_DAYS 时必填的正整数） */
+  creditValidityDays?: number
   // ---- 专家（助手预设）字段（附录 12.1）----
   description?: string; avatarUrl?: string; baseModel?: string; systemPrompt?: string
   skillIds?: number[]; mcpServerIds?: number[]; knowledgeBaseIds?: number[]; suggestedQuestions?: string[]
@@ -208,16 +225,46 @@ export const listKnowledgeFiles = (kbId: number) => get<KnowledgeFile[]>(`/knowl
 export const saveKnowledgeFile = (kbId: number, file: Partial<KnowledgeFile> & { id?: number }) =>
   file.id ? put<KnowledgeFile>(`/knowledge-bases/${kbId}/files/${file.id}`, file) : post<KnowledgeFile>(`/knowledge-bases/${kbId}/files`, file)
 export const deleteKnowledgeFile = (kbId: number, fileId: number) => del(`/knowledge-bases/${kbId}/files/${fileId}`)
+
+// ---------------------------------------------------------------- 套餐营销/计费扩展（v17：积分加油包商品 + 全局计费设置）
+/** 积分加油包商品（C 端充值卡片） */
+export interface CreditPackage {
+  id: number
+  name: string
+  credits: number
+  bonusCredits: number
+  price: number
+  originalPrice?: number
+  badge?: string
+  sort: number
+  status: 0 | 1
+  remark?: string
+  createdAt: string
+  updatedAt: string
+}
+/** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆） */
+export interface BillingSettings {
+  registerBonus: number
+  upgradePolicy: 'FULL_PRICE' | 'PRORATED'
+  creditSlider: { enabled: boolean; min: number; max: number; step: number; unitPrice: number }
+}
+export const listCreditPackages = () => get<CreditPackage[]>('/credit-packages')
+/** 保存积分加油包：有 id 走 PUT 更新，无 id 走 POST 新建；返回保存后的对象 */
+export const saveCreditPackage = (item: Partial<CreditPackage> & { id?: number }) => item.id ? put<CreditPackage>(`/credit-packages/${item.id}`, item) : post<CreditPackage>('/credit-packages', item)
+export const deleteCreditPackage = (id: number) => del(`/credit-packages/${id}`)
+export const getBillingSettings = () => get<BillingSettings>('/billing-settings')
+/** 保存全局计费设置（整体覆盖式 PUT），返回保存后的对象 */
+export const saveBillingSettings = (body: Partial<BillingSettings>) => put<BillingSettings>('/billing-settings', body)
 /** 旧版提示词版本（保留兼容）；新版请使用 configVersions */
 export const promptVersions = (id: number) => get<Array<{ version: number; systemPrompt: string; createdAt: string }>>(`/experts/${id}/prompt-versions`)
 export const skillStats = (id: number) => get<{ calls7: number; calls30: number; successRate: number; source: string }>(`/skills/${id}/stats`)
 
-// ---------------------------------------------------------------- 版本历史（专家全量 / 技能 SKILL.md / MCP 连接配置）
+// ---------------------------------------------------------------- 版本历史（专家全量 / 技能 SKILL.md / MCP 连接配置 / v17 套餐）
 export interface ConfigVersion { version: number; versionName?: string; operator?: string; note: string; createdAt: string; snapshot: ConfigItem }
 /** 版本名称：保存（发布）与恢复前由版本确认框生成（默认 yyyyMMddHHmmss），随载荷提交 */
-export const configVersions = (kind: 'experts' | 'skills' | 'mcp/servers', id: number) => get<ConfigVersion[]>(`/${kind}/${id}/versions`)
+export const configVersions = (kind: 'plans' | 'experts' | 'skills' | 'mcp/servers', id: number) => get<ConfigVersion[]>(`/${kind}/${id}/versions`)
 /** 恢复版本：同样走版本确认框生成新版本名（留空由服务端生成「恢复自 <源版本名>」） */
-export const restoreConfigVersion = (kind: 'experts' | 'skills' | 'mcp/servers', id: number, version: number, versionName?: string, note?: string) => post<ConfigItem>(`/${kind}/${id}/restore`, { version, versionName, note })
+export const restoreConfigVersion = (kind: 'plans' | 'experts' | 'skills' | 'mcp/servers', id: number, version: number, versionName?: string, note?: string) => post<ConfigItem>(`/${kind}/${id}/restore`, { version, versionName, note })
 
 // ---------------------------------------------------------------- 模型管理（基础 LLM 模型注册，v5）
 /** GET /models 为分页契约：keyword（名称/编码模糊）/ status / domain（接入地址 host）服务端筛选 + page/pageSize 分页；domains 为全量域名清单（筛选项） */

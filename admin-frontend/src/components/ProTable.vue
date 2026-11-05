@@ -24,10 +24,15 @@ const page = ref(1)
 const size = ref(props.pageSize)
 let extraParams: Record<string, unknown> = {}
 
+/** 竞态守卫：仅接受最新一次 load 的响应，快速翻页/切换筛选时丢弃过期数据 */
+let loadSeq = 0
+
 async function load(): Promise<void> {
+  const cur = ++loadSeq
   loading.value = true
   try {
     const data = await props.fetcher({ page: page.value, pageSize: size.value, ...extraParams })
+    if (cur !== loadSeq) return
     rows.value = data.list
     total.value = data.total
     if (page.value > 1 && rows.value.length === 0) {
@@ -35,10 +40,12 @@ async function load(): Promise<void> {
       await load()
     }
   } catch {
-    rows.value = []
-    total.value = 0
+    if (cur === loadSeq) {
+      rows.value = []
+      total.value = 0
+    }
   } finally {
-    loading.value = false
+    if (cur === loadSeq) loading.value = false
   }
 }
 

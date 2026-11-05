@@ -17,17 +17,22 @@ import { ApiError } from '@/api/request'
 import {
   listConfig, listKnowledgeBases, saveKnowledgeBase, deleteKnowledgeBase, setKnowledgeBaseStatus,
   listKnowledgeFiles, saveKnowledgeFile, deleteKnowledgeFile,
-  PLATFORMS, platformMeta, type ConfigItem, type KnowledgeBase, type KnowledgeFile, type PlatformType, type VisibilityConfig
+  PLATFORMS, platformMeta, type ConfigItem, type KnowledgeBase, type KnowledgeFile, type PlatformType
 } from '@/api/config'
 import { formatSize } from '@/api/files'
 import { ensureScenario, ensureScenarios, orderedScenarioOptions, scenarioList } from '@/utils/scenarios'
 import { USE_MOCK } from '@/utils/constants'
 import { formatDateTime } from '@/utils/format'
 import { createSeqGuard } from '@/utils/race'
+import { visTagOf } from '@/utils/visibility'
+import { useTableMaxHeight } from '@/composables/useTableMax'
 import TiptapDocEditor from '@/components/tiptap/TiptapDocEditor.vue'
 import { contentToHtml } from '@/utils/docContent'
 
 const auth = useAuthStore()
+
+/** 列表限高：视口自适应、列表内部滚动（顶部工具条保持可见） */
+const { max: rowsMax, bind: bindRows } = useTableMaxHeight(24)
 const canEdit = computed(() => auth.hasPerm('knowledge:edit'))
 
 // -------------------------------------------------------------- 视图状态
@@ -37,13 +42,7 @@ const current = ref<KnowledgeBase | null>(null)
 function platMetaOf(p?: string): { label: string; color: string; bg: string; border: string } {
   return p ? platformMeta(p) : { label: '通用', color: '#909399', bg: '#f4f4f5', border: '#e9e9eb' }
 }
-/** 前端可见性标签（v14 三段设置，与专家/MCP 同款；旧数据缺省 visibility 时按 access 回退） */
-function visTagOf(v: VisibilityConfig | undefined, access?: string): { label: string; type: 'success' | 'primary' | 'warning' } {
-  const eff = v || (access === 'PRIVATE' ? { type: 'PRIVATE' as const, planIds: [] } : { type: 'PUBLIC' as const, planIds: [] })
-  if (eff.type === 'PUBLIC') return { label: '全员可见', type: 'success' }
-  if (eff.type === 'PLAN') return { label: `指定套餐（${eff.planIds?.length || 0} 个）`, type: 'primary' }
-  return { label: '内部隐藏', type: 'warning' }
-}
+/** 前端可见性标签（v14 三段设置，与专家/MCP 同款；旧数据缺省 visibility 时按 access 回退）—— 实现统一抽至 utils/visibility */
 
 // -------------------------------------------------------------- 列表视图
 const items = ref<KnowledgeBase[]>([])
@@ -359,7 +358,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
       <el-button v-if="canEdit" type="primary" @click="edit()">创建知识库</el-button>
     </div>
 
-    <div v-loading="loading" class="rows">
+    <div v-loading="loading" class="rows" :style="rowsMax ? { maxHeight: `${rowsMax}px`, overflowY: 'auto' } : undefined" :ref="bindRows">
       <div v-for="row in filtered" :key="row.id" class="row" @click="openDetail(row)">
         <div class="row-icon" :class="{ off: row.status !== 1 }">{{ (row.name || '?').slice(0, 1).toUpperCase() }}</div>
         <div class="row-main">

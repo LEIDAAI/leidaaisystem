@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 雷达AI 管理后台 favicon：深蓝底 + 雷达扫描环 -->
+  <rect width="64" height="64" rx="14" fill="#1e3a8a"/>
+  <circle cx="32" cy="34" r="18" fill="none" stroke="#93c5fd" stroke-width="2" opacity="0.9"/>
+  <circle cx="32" cy="34" r="11" fill="none" stroke="#93c5fd" stroke-width="2" opacity="0.65"/>
+  <circle cx="32" cy="34" r="4.5" fill="none" stroke="#93c5fd" stroke-width="2" opacity="0.4"/>
+  <circle cx="32" cy="34" r="2" fill="#fbbf24"/>
+  <path d="M32 34 L48 22 A21 21 0 0 0 40 14 Z" fill="#60a5fa" opacity="0.5"/>
+</svg>

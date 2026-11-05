@@ -4,12 +4,14 @@ import { ElMessage } from 'element-plus'
 
 import ProTable from '@/components/ProTable.vue'
 import StatusTag from '@/components/StatusTag.vue'
+import { useAuthStore } from '@/stores/auth'
 import { deleteAdmin, listAdmins, listRoles, resetAdminPassword, updateAdminStatus } from '@/api/admin'
 import type { AdminItem, AdminQuery, ProTableHandle, RoleItem } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
 import { confirmAction, promptText } from '@/utils/feedback'
 import AdminFormDrawer from './AdminFormDrawer.vue'
 
+const auth = useAuthStore()
 const tableRef = ref<ProTableHandle | null>(null)
 const roles = ref<RoleItem[]>([])
 
@@ -147,7 +149,9 @@ async function handleDelete(row: AdminItem) {
               <el-button v-perm="'admin:edit'" link type="primary" @click="handleResetPassword(row)">
                 重置密码
               </el-button>
+              <!-- 当前登录账号：不能禁用/删除自己，直接隐藏按钮避免点击后才报错 -->
               <el-button
+                v-if="row.id !== auth.admin?.id"
                 v-perm="'admin:edit'"
                 link
                 :type="row.status === 1 ? 'warning' : 'success'"
@@ -155,7 +159,7 @@ async function handleDelete(row: AdminItem) {
               >
                 {{ row.status === 1 ? '禁用' : '启用' }}
               </el-button>
-              <el-button v-perm="'admin:edit'" link type="danger" @click="handleDelete(row)">删除</el-button>
+              <el-button v-if="row.id !== auth.admin?.id" v-perm="'admin:edit'" link type="danger" @click="handleDelete(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>

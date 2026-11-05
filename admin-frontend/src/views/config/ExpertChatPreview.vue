@@ -175,7 +175,7 @@ function clearSession(): void {
     <div class="ecp-head">
       <div class="ecp-title">
         <span>对话预览</span>
-        <el-tag size="small" type="warning" effect="plain">草稿实时生效，无需保存</el-tag>
+        <el-tag size="small" type="warning" effect="plain">当前草稿即前台生效；发布版本才进历史快照</el-tag>
       </div>
       <div class="ecp-chips">
         <el-tag size="small" :type="modelLabel ? 'primary' : 'danger'">模型：{{ modelLabel || '未选择' }}</el-tag>

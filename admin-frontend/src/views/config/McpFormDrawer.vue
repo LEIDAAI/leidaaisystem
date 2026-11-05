@@ -38,10 +38,29 @@ watch(
   { immediate: true }
 )
 
+/** 提交前置校验：必填项 + 参数格式（弹版本确认框之前拦截，避免确认后才报错） */
+function validateDraft(): string | null {
+  if (!String(draft.value.code || '').trim()) return '请填写连接编码'
+  if (!String(draft.value.name || '').trim()) return '请填写名称'
+  if (!draft.value.platforms || !draft.value.platforms.length) return '平台维度至少选择一个'
+  if (draft.value.connType === 'OpenAPI') {
+    if (!String(draft.value.endpoint || '').trim()) return 'OpenAPI 服务地址不能为空'
+  } else if (draft.value.transport === 'STDIO') {
+    if (!String(draft.value.command || '').trim()) return 'STDIO 启动命令不能为空'
+    if (draft.value.argsText !== undefined) {
+      try { const parsed = JSON.parse(draft.value.argsText) as unknown; if (!Array.isArray(parsed)) return '启动参数须为 JSON 字符串数组' } catch { return '启动参数须为合法 JSON（字符串数组）' }
+    }
+  } else if (!String(draft.value.endpoint || '').trim()) return 'MCP 服务地址不能为空'
+  if (draft.value.visibility?.type === 'PLAN' && !(draft.value.visibility.planIds || []).length) return '指定套餐可见时请至少选择一个套餐'
+  return null
+}
+
 /** 保存（发布）：先弹版本确认框（默认时间戳版本名可改），确认后才写库并生成快照 */
 const versionDialog = ref(false)
 function onSaveClick(): void {
   if (!props.canEdit) return
+  const err = validateDraft()
+  if (err) { ElMessage.error(err); return }
   versionDialog.value = true
 }
 

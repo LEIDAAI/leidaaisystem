@@ -9,13 +9,16 @@ import {
   exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
   testModelConnection, listModels, listScenarios, saveScenario, deleteScenario, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
   FRONTEND_PERM_GROUPS, normalizeFrontendPerms,
-  type ConfigItem, type ConfigKind, type Tool, type LlmModel, type PlatformType, type FrontendPerms, type Scenario
+  listCreditPackages, deleteCreditPackage, getBillingSettings,
+  type ConfigItem, type ConfigKind, type CreditPackage, type BillingSettings, type Tool, type LlmModel, type PlatformType, type FrontendPerms, type Scenario
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { formatDateTime } from '@/utils/format'
 import { createSeqGuard } from '@/utils/race'
 import { USE_MOCK } from '@/utils/constants'
 import PlanFormDrawer from './config/PlanFormDrawer.vue'
+import CreditPackageDrawer from './config/CreditPackageDrawer.vue'
+import BillingSettingsForm from './config/BillingSettingsForm.vue'
 import ExpertOrchestrator from './config/ExpertOrchestrator.vue'
 import McpFormDrawer from './config/McpFormDrawer.vue'
 import ModelFormDrawer from './config/ModelFormDrawer.vue'
@@ -30,8 +33,12 @@ const { max: tableMax, bind: bindTable } = useTableMaxHeight(96)
 const route = useRoute()
 const auth = useAuthStore()
 const kind = computed(() => (route.path === '/mcp' ? 'mcp/servers' : route.path.slice(1)) as ConfigKind)
+/** v17 原始路由 kind（无 ConfigKind 断言）：加油包 / 计费设置不在 ConfigKind 联合内，供 load 分流比较 */
+const rawKind = computed(() => (route.path === '/mcp' ? 'mcp/servers' : route.path.slice(1)))
 const module = computed(() => (kind.value === 'mcp/servers' ? 'mcp' : kind.value.slice(0, -1)))
-const canEdit = computed(() => auth.hasPerm(`${module.value}:edit`))
+/** 权限模块映射：加油包 / 计费设置无独立权限点，复用套餐 plan:edit / plan:view */
+const permModule = computed(() => (module.value === 'credit-package' || module.value === 'billing-setting' ? 'plan' : module.value))
+const canEdit = computed(() => auth.hasPerm(`${permModule.value}:edit`))
 
 /** 套餐前台权限概览：关闭项数量与标签（缺失按全开处理） */
 function permsRestrictedCount(perms: FrontendPerms | undefined): number {
@@ -47,6 +54,9 @@ const items = ref<ConfigItem[]>([])
 const tools = ref<Tool[]>([])
 const plans = ref<ConfigItem[]>([])
 const models = ref<LlmModel[]>([])
+/** v17 加油包 / 计费设置：独立数据源，不混入 configItems */
+const creditPackages = ref<CreditPackage[]>([])
+const billingSettings = ref<BillingSettings | null>(null)
 const keyword = ref('')
 const status = ref<number | ''>('')
 /** v6：模型域名筛选（接入地址 host），不同渠道的模型区分开 */
@@ -59,6 +69,9 @@ const loading = ref(false)
 const modelPage = ref(1)
 const modelPageSize = ref(20)
 const modelTotal = ref(0)
+
+/** v17 加油包行数据：顶部筛选条对加油包做本地过滤（名称/备注 + 状态） */
+const packageRows = computed(() => creditPackages.value.filter((p) => (!keyword.value || `${p.name} ${p.remark || ''}`.includes(keyword.value)) && (status.value === '' || p.status === status.value)))
 
 const filtered = computed(() => {
   // 模型模块：keyword/status 由服务端筛选并分页，前端不再二次过滤
@@ -193,6 +206,19 @@ async function load(): Promise<void> {
   const seq = listGuard.next()
   loading.value = true
   try {
+    // v17：加油包 / 计费设置走独立接口与数据源，不混入 configItems
+    if (rawKind.value === 'credit-packages') {
+      const list = await listCreditPackages()
+      if (!listGuard.isCurrent(seq)) return
+      creditPackages.value = list
+      return
+    }
+    if (rawKind.value === 'billing-settings') {
+      const s = await getBillingSettings()
+      if (!listGuard.isCurrent(seq)) return
+      billingSettings.value = s
+      return
+    }
     if (kind.value === 'models') {
       const p = await listModels({ keyword: keyword.value, status: status.value, domain: modelDomain.value, page: modelPage.value, pageSize: modelPageSize.value })
       if (!listGuard.isCurrent(seq)) return // 乱序响应：已有更新的查询在途，丢弃本次结果
@@ -258,8 +284,8 @@ const versionDrawer = ref(false), previewDrawer = ref(false)
 const editItem = ref<Partial<ConfigItem> | null>(null)
 const historyItem = ref<ConfigItem | null>(null)
 const previewItem = ref<ConfigItem | null>(null)
-/** 版本历史 kind：专家/MCP（v5 补齐 MCP 快照历史） */
-const historyKind = computed(() => (module.value === 'mcp' ? 'mcp/servers' : 'experts') as 'experts' | 'skills' | 'mcp/servers')
+/** 版本历史 kind：专家/套餐/MCP（v5 补齐 MCP 快照历史；v17 套餐快照打通） */
+const historyKind = computed(() => (module.value === 'mcp' ? 'mcp/servers' : module.value === 'plan' ? 'plans' : 'experts') as 'experts' | 'skills' | 'mcp/servers' | 'plans')
 
 function blankDraft(): Partial<ConfigItem> {
   if (module.value === 'expert') {
@@ -286,7 +312,33 @@ async function onSaved(): Promise<void> {
   if (module.value === 'plan') plans.value = await listConfig('plans')
 }
 
+// -------------------------------------------------------------- v17 积分加油包：新建 / 编辑 / 删除
+const creditDrawer = ref(false)
+const editPackage = ref<Partial<CreditPackage> | null>(null)
+
+function editCredit(item?: CreditPackage): void {
+  editPackage.value = item ? JSON.parse(JSON.stringify(item)) : { name: '', credits: 500, bonusCredits: 0, price: 0, sort: 0, status: 1 }
+  creditDrawer.value = true
+}
+
+async function removeCredit(item: CreditPackage): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除加油包「${item.name}」？删除后前台不可再购买。`, '确认删除')
+  } catch {
+    return
+  }
+  try {
+    await deleteCreditPackage(item.id)
+  } catch (e) {
+    if (e instanceof ApiError) { ElMessage.error(e.message); return }
+    throw e
+  }
+  ElMessage.success('已删除')
+  await load()
+}
+
 // -------------------------------------------------------------- 删除（409 引用拦截确认）
+/** 删除：首删被引用 409 → 弹引用确认 → 携带 confirmReferences 重试（对齐 Skills/Knowledge 行为） */
 async function remove(item: ConfigItem): Promise<void> {
   try {
     await ElMessageBox.confirm(`删除「${item.name}」？被引用资源将被拦截。`, '确认删除')
@@ -295,9 +347,16 @@ async function remove(item: ConfigItem): Promise<void> {
   }
   try {
     await deleteConfig(kind.value, item.id)
-  } catch {
-    // 409（如模型被专家 base_model 引用）由全局错误提示透出
-    return
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 409) {
+      try {
+        await ElMessageBox.confirm(`${e.message}。确认继续删除？`, '引用确认')
+        await deleteConfig(kind.value, item.id, { confirmReferences: true })
+      } catch { return }
+    } else {
+      // 其余错误（如默认专家删除 422）由全局错误提示透出
+      return
+    }
   }
   ElMessage.success('已删除')
   await load()
@@ -438,8 +497,8 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
   <el-alert v-if="USE_MOCK" title="Mock 配置中心：刷新、工具发现、连接测试及前台预览均为本地模拟，未连接 AgentScope 或真实 MCP 服务。" type="info" :closable="false" style="margin-bottom:16px" />
   <el-card shadow="never">
     <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
-      <el-input v-model="keyword" placeholder="搜索名称 / 编码" clearable style="width:250px" />
-      <el-select v-model="status" placeholder="全部状态" clearable style="width:150px">
+      <el-input v-if="module !== 'billing-setting'" v-model="keyword" placeholder="搜索名称 / 编码" clearable style="width:250px" />
+      <el-select v-if="module !== 'billing-setting'" v-model="status" placeholder="全部状态" clearable style="width:150px">
         <el-option label="启用 / 上架" :value="1" /><el-option label="停用 / 下架" :value="0" />
       </el-select>
       <el-select
@@ -466,7 +525,8 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
       </el-select>
       <el-button @click="load">刷新列表</el-button>
-      <el-button v-if="canEdit" type="primary" @click="edit()">{{ module === 'model' ? '新建 / 接入渠道' : '新建' }}</el-button>
+      <!-- v17：计费设置无新建语义，隐藏；加油包新建按钮文案特判 -->
+      <el-button v-if="canEdit && module !== 'billing-setting'" type="primary" @click="module === 'credit-package' ? editCredit() : edit()">{{ module === 'model' ? '新建 / 接入渠道' : module === 'credit-package' ? '新建加油包' : '新建' }}</el-button>
       <el-button v-if="canEdit && module === 'expert'" @click="importJson()">导入预设 JSON</el-button>
     </div>
     <!-- v14 专家场景分组：一级 Tab（全部 / 未分组 / 各平台）+ 选中平台后的二级场景 Tab；v15 MCP 复用一级平台 Tab（无场景层级） -->
@@ -485,7 +545,8 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         <button v-for="s in scenariosOf(activeTab as PlatformType)" :key="s.id" class="tab-pill small" :class="{ active: activeScenario === s.id }" @click="activeScenario = s.id">{{ s.name }}<span class="tab-count">{{ subCountOf(s.id) }}</span></button>
       </div>
     </div>
-    <el-table v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+    <!-- v17：加油包 / 计费设置模块使用下方独立表格 / 表单，主配置表格不渲染 -->
+    <el-table v-if="module !== 'credit-package' && module !== 'billing-setting'" v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <el-table-column prop="name" label="名称" min-width="170">
         <template #default="{ row }">
           <template v-if="module === 'expert'">
@@ -550,8 +611,25 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'mcp'" label="健康" min-width="150"><template #default="{ row }">{{ row.healthStatus || 'UNKNOWN' }}<br /><small class="muted">{{ row.lastHealthAt }}</small></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="价格" width="90"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">¥{{ row.price }}</span><span v-else class="muted">—</span></template></el-table-column>
-      <el-table-column v-if="module === 'plan'" label="时长" width="95"><template #default="{ row }">{{ row.planType === 'GIFT' && row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="时长" width="95"><template #default="{ row }">{{ row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="积分" width="100"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">{{ row.credits ?? 0 }}</span><br /><small class="muted">已付订单 {{ row.salesCount }}</small></template></el-table-column>
+      <!-- v17 套餐营销/计费模型：排序值 + 营销摘要（角标/标语，tooltip 展示卖点列表） -->
+      <el-table-column v-if="module === 'plan'" label="排序" width="70"><template #default="{ row }">{{ row.sort ?? 0 }}</template></el-table-column>
+      <el-table-column v-if="module === 'plan'" label="营销" min-width="150">
+        <template #default="{ row }">
+          <el-tooltip v-if="row.badge || row.tagline || (row.features || []).length" placement="top">
+            <template #content>
+              <div style="max-width:280px">
+                <div v-if="row.tagline">{{ row.tagline }}</div>
+                <div v-for="f in row.features || []" :key="f">· {{ f }}</div>
+                <div v-if="!(row.features || []).length && !row.tagline">仅角标：{{ row.badge }}</div>
+              </div>
+            </template>
+            <span class="mk-summary"><el-tag v-if="row.badge" size="small" type="warning" effect="plain" style="margin-right:4px">{{ row.badge }}</el-tag>{{ row.tagline || `${(row.features || []).length} 条卖点` }}</span>
+          </el-tooltip>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column v-if="module === 'plan'" label="前台权限" width="150">
         <template #default="{ row }">
           <template v-if="permsRestrictedCount(row.frontendPerms) === 0"><small class="muted">全部开放</small></template>
@@ -592,7 +670,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
               <el-button link type="primary">更多 ▾</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item v-if="module === 'expert' || module === 'mcp'" command="history">版本历史</el-dropdown-item>
+                  <el-dropdown-item v-if="module === 'expert' || module === 'mcp' || module === 'plan'" command="history">版本历史</el-dropdown-item>
                   <el-dropdown-item v-if="module === 'expert' && auth.hasPerm('expert:export')" command="export">导出 JSON</el-dropdown-item>
                   <template v-if="canEdit">
                     <el-dropdown-item v-if="module === 'expert'" command="group">加入场景分组</el-dropdown-item>
@@ -612,6 +690,33 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
         </template>
       </el-table-column>
     </el-table>
+    <!-- v17 积分加油包：独立表格（名称/积分/赠送/价格/角标/排序/状态/操作） -->
+    <el-table v-if="module === 'credit-package'" v-loading="loading" :data="packageRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+      <el-table-column prop="name" label="名称" min-width="150" />
+      <el-table-column label="积分" width="100"><template #default="{ row }">{{ row.credits }}</template></el-table-column>
+      <el-table-column label="赠送积分" width="100"><template #default="{ row }"><span v-if="row.bonusCredits" style="color:#67c23a">+{{ row.bonusCredits }}</span><span v-else class="muted">—</span></template></el-table-column>
+      <el-table-column label="价格" width="130">
+        <template #default="{ row }">
+          <span>¥{{ row.price }}</span>
+          <small v-if="row.originalPrice" class="muted" style="margin-left:6px;text-decoration:line-through">¥{{ row.originalPrice }}</small>
+        </template>
+      </el-table-column>
+      <el-table-column label="角标" width="110"><template #default="{ row }"><el-tag v-if="row.badge" size="small" type="warning" effect="plain">{{ row.badge }}</el-tag><span v-else class="muted">—</span></template></el-table-column>
+      <el-table-column label="排序" width="70"><template #default="{ row }">{{ row.sort ?? 0 }}</template></el-table-column>
+      <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag size="small" :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag></template></el-table-column>
+      <el-table-column label="操作" width="130" fixed="right">
+        <template #default="{ row }">
+          <div class="row-actions">
+            <el-button v-if="canEdit" link type="primary" @click="editCredit(row)">编辑</el-button>
+            <el-button v-if="canEdit" link type="danger" @click="removeCredit(row)">删除</el-button>
+          </div>
+        </template>
+      </el-table-column>
+    </el-table>
+    <!-- v17 计费设置：无表格，仅全局表单 -->
+    <template v-if="module === 'billing-setting'">
+      <BillingSettingsForm :settings="billingSettings" :can-edit="canEdit" @saved="load" />
+    </template>
     <div v-if="module === 'model'" style="display:flex;justify-content:flex-end;margin-top:14px;position:sticky;bottom:0;z-index:20;background:#fff">
       <el-pagination
         v-model:current-page="modelPage"
@@ -634,6 +739,8 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
   </el-card>
 
   <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <!-- v17 积分加油包表单抽屉 -->
+  <CreditPackageDrawer v-model="creditDrawer" :item="editPackage" :can-edit="canEdit" @saved="load" />
   <ExpertOrchestrator v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" :existing-codes="items.map(i => i.code)" @saved="onSaved" />
@@ -708,6 +815,8 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
 </template>
 <style scoped>
 .row-actions { display: flex; align-items: center; white-space: nowrap; }
+/* v17 套餐营销摘要：超出省略（详情见 tooltip） */
+.mk-summary { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 /* v14 分组导航：一级平台 Tab + 二级场景 Tab（胶囊样式，同技能页） */
 .group-tabs { margin: 4px 0 12px; }
 .tab-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

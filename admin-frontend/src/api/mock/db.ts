@@ -1,6 +1,6 @@
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
-import { migrateLegacyConfig, seedExtensions, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
+import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
 
 // =====================================================================
 // Mock 演示数据库：通过 localStorage 保存业务数据与会话。
@@ -503,7 +503,8 @@ const AUDIT_SAMPLES: Array<{
     build: (i) => ({
       objectId: String(2 + (i % 3)),
       before: { name: '运营', permissionIds: [1, 5, 6, 8] },
-      after: { name: '运营', permissionIds: [1, 5, 6, 7, 8, 9, 10] }
+      // 权限 id 必须真实存在于字典（9 已废弃，订单备注为 19），避免前端按 id 反查展示悬空
+      after: { name: '运营', permissionIds: [1, 5, 6, 7, 8, 19, 10] }
     })
   },
   {
@@ -599,7 +600,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(saved.version) && saved.data && typeof saved.data === 'object') {
+    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(saved.version) && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -758,6 +759,15 @@ if (storedVersion < 16) {
     c.title = first.split(/[，。！？；;,.!?：:、]/)[0].trim().slice(0, 24) || `会话 #${c.id}`
   })
 }
+if (storedVersion < 17) {
+  // v17 套餐营销/计费扩展：planVersions 版本快照、creditPackages 加油包商品、billingSettings 计费设置集合兜底
+  // （旧库存量 plans 无营销新字段属正常，不强制回填，保存套餐时按表单增量写入）
+  db.planVersions ||= {}
+  db.creditPackages ||= seedCreditPackages()
+  db.billingSettings ||= seedBillingSettings()
+}
+// v17 幂等兜底：套餐版本快照集合任何路径漏初始化时补空对象（防旧库直跳或数据损坏）
+db.planVersions ||= {}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
 db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
@@ -768,8 +778,8 @@ const PERSIST_VERSION_LIMIT = 20
 /** 配额告警节流：写满后仅提示一次，写入恢复成功后复位 */
 let quotaWarned = false
 
-/** mock token 内嵌签发时间（`mock-token-{adminId}-{issuedAt}`）：过期（2h）条目在持久化前清理，避免 localStorage 无限累积 */
-const MOCK_TOKEN_TTL_MS = 7200_000
+/** mock 登录态 TTL 唯一真源（2h）：handlers 的 expiresIn（秒）与 401 校验均由此换算，避免多处硬编码漂移 */
+export const MOCK_TOKEN_TTL_MS = 7200_000
 function pruneExpiredTokens(): void {
   const now = Date.now()
   for (const tk of [...db.tokens.keys()]) {
@@ -784,19 +794,20 @@ persistMockDB()
 export function persistMockDB(): void {
   try {
     pruneExpiredTokens()
-    const { tokens, permissions: _permissions, auditLogs, expertVersions, skillVersions, mcpVersions, promptHistory, ...data } = db
+    const { tokens, permissions: _permissions, auditLogs, expertVersions, skillVersions, mcpVersions, planVersions, promptHistory, ...data } = db
     const trimMap = <T>(map: Record<string, T[]>): Record<string, T[]> =>
       Object.fromEntries(Object.entries(map).map(([k, v]) => [k, v.slice(-PERSIST_VERSION_LIMIT)]))
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 16,
+        version: 17,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],
           expertVersions: trimMap(expertVersions || {}),
           skillVersions: trimMap(skillVersions || {}),
           mcpVersions: trimMap(mcpVersions || {}),
+          planVersions: trimMap(planVersions || {}),
           promptHistory: trimMap(promptHistory || {})
         },
         tokens: [...tokens],
@@ -844,17 +855,3 @@ export function roleRefsOf(adminId: number): Array<{ id: number; name: string }>
   return db.roles.filter((r) => admin.roleIds.includes(r.id)).map((r) => ({ id: r.id, name: r.name }))
 }
 
-/** 仪表盘演示统计（不涉及契约外接口，仅 mock 模式下由页面直接使用） */
-export function getDashboardStats(): { userTotal: number; userToday: number; orderTotal: number; revenueTotal: number } {
-  const today = NOW.format('YYYY-MM-DD')
-  const userToday = db.users.filter((u) => u.registeredAt.startsWith(today)).length
-  const revenueTotal = db.orders
-    .filter((o) => o.status === 'PAID')
-    .reduce((sum, o) => sum + o.amount, 0)
-  return {
-    userTotal: db.users.length,
-    userToday,
-    orderTotal: db.orders.length,
-    revenueTotal
-  }
-}

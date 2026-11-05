@@ -40,6 +40,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '套餐管理', perm: 'plan:view' }
       },
       {
+        path: 'credit-packages',
+        name: 'credit-packages',
+        component: () => import('@/views/ConfigView.vue'),
+        meta: { title: '积分加油包', perm: 'plan:view' }
+      },
+      {
+        path: 'billing-settings',
+        name: 'billing-settings',
+        component: () => import('@/views/ConfigView.vue'),
+        meta: { title: '计费设置', perm: 'plan:view' }
+      },
+      {
         path: 'experts',
         name: 'experts',
         component: () => import('@/views/ConfigView.vue'),

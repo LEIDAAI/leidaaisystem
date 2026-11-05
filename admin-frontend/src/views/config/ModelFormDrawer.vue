@@ -138,6 +138,10 @@ async function saveBatch(): Promise<void> {
 
 async function save(): Promise<void> {
   if (!props.canEdit) return
+  // 提交前置校验：编码/显示名必填，编码唯一性提前拦截（服务端也会校验）
+  if (!String(draft.value.code || '').trim()) { ElMessage.warning('请填写模型编码'); return }
+  if (!String(draft.value.name || '').trim()) { ElMessage.warning('请填写显示名'); return }
+  if (!isEdit.value && (props.existingCodes || []).includes(String(draft.value.code).trim())) { ElMessage.warning('模型编码已存在，请更换'); return }
   const legacy = draft.value.defaultParams && typeof draft.value.defaultParams === 'object' && !Array.isArray(draft.value.defaultParams) ? draft.value.defaultParams : {}
   const defaultParams: Record<string, unknown> = {
     ...legacy,

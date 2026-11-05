@@ -153,8 +153,8 @@ onMounted(load)
             <div class="kpi-value">{{ card.value }}</div>
             <div class="kpi-sub">
               {{ card.sub }}
-              <span v-if="card.trend > 0" class="kpi-trend up">+{{ card.trend }}</span>
-              <span v-else-if="card.trend < 0" class="kpi-trend down">{{ card.trend }}</span>
+              <el-tag v-if="card.trend > 0" type="success" size="small" effect="light" round class="kpi-trend">+{{ card.trend }}</el-tag>
+              <el-tag v-else-if="card.trend < 0" type="danger" size="small" effect="light" round class="kpi-trend">{{ card.trend }}</el-tag>
             </div>
           </div>
         </div>
@@ -410,9 +410,7 @@ onMounted(load)
 .kpi-label { font-size: 12px; color: #829087; margin-bottom: 4px; }
 .kpi-value { font-size: 26px; font-weight: 700; color: #243d30; line-height: 1.2; }
 .kpi-sub { font-size: 11px; color: #95a49c; margin-top: 4px; display: flex; align-items: center; gap: 6px; }
-.kpi-trend { font-weight: 600; font-size: 11px; padding: 1px 5px; border-radius: 3px; }
-.kpi-trend.up { color: #169b82; background: #ebf7f3; }
-.kpi-trend.down { color: #e06c75; background: #fceced; }
+.kpi-trend { margin-left: 4px; }
 
 /* ── 资源卡片 ── */
 .resource-card {

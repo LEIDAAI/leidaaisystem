@@ -10,6 +10,7 @@ import type { ApiResponse } from '../types'
 import { API_BASE } from '../../utils/constants'
 import {
   db,
+  MOCK_TOKEN_TTL_MS,
   nextMockId,
   nowStr,
   permissionCodesOf,
@@ -174,7 +175,7 @@ route('POST', '/auth/login', (ctx) => {
   const token = `mock-token-${admin.id}-${Date.now()}`
   db.tokens.set(token, admin.id)
   admin.lastLoginAt = nowStr()
-  return { token, expiresIn: 7200, ...sessionPayload(admin) }
+  return { token, expiresIn: MOCK_TOKEN_TTL_MS / 1000, ...sessionPayload(admin) }
 })
 
 route('POST', '/auth/logout', (ctx) => {
@@ -294,7 +295,7 @@ route('DELETE', '/admins/:id', (ctx) => {
 
 // ------------------------------------------------------------------ 角色 / 权限
 route('GET', '/roles', (ctx) => {
-  assertPerm(ctx, 'admin:manage')
+  assertPerm(ctx, 'role:manage')
   return [...db.roles]
     .sort((a, b) => a.id - b.id)
     .map((r) => ({
@@ -422,7 +423,7 @@ route('GET', '/users', (ctx) => {
       region: u.region,
       status: u.status,
       planName: u.planName,
-      chatCount: u.chatCount,
+      chatCount: db.chats.filter((c) => c.userId === u.id).length,
       registeredAt: u.registeredAt,
       lastLoginAt: u.lastLoginAt,
       expireAt: u.planId >= 2 ? dayjs(u.registeredAt).add(1, 'year').format('YYYY-MM-DD HH:mm:ss') : null
@@ -549,7 +550,8 @@ route('POST', '/orders/manual', (ctx) => {
   if ((plan.planType || 'NORMAL') === 'GIFT') throw new MockApiError(422, '手工订单不能选择赠送套餐')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
-  if (!Number.isFinite(amount) || amount <= 0) throw new MockApiError(422, '支付金额必须大于 0')
+  // v17：允许 0 元线下减免单（仅拒绝负数金额）
+  if (!Number.isFinite(amount) || amount < 0) throw new MockApiError(422, '支付金额不能为负数')
   const at = nowStr()
   const id = nextMockId()
   const order: MockOrder = {
@@ -563,7 +565,7 @@ route('POST', '/orders/manual', (ctx) => {
     goodsAmount: amount,
     discountAmount: 0,
     remainingCredits: Math.round(credits),
-    durationMonths: Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
+    durationMonths: Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
@@ -822,7 +824,7 @@ export async function handleMockRequest(config: InternalAxiosRequestConfig): Pro
   if (!isPublic) {
     const adminIdOfToken = token ? db.tokens.get(token) : undefined
     const issuedAt = Number(token.slice(token.lastIndexOf('-') + 1))
-    if (adminIdOfToken === undefined || !issuedAt || Date.now() - issuedAt > 7200_000) return { code: 401, msg: '未登录或登录已过期', data: null }
+    if (adminIdOfToken === undefined || !issuedAt || Date.now() - issuedAt > MOCK_TOKEN_TTL_MS) return { code: 401, msg: '未登录或登录已过期', data: null }
     const admin = db.admins.find((a) => a.id === adminIdOfToken)
     if (!admin || admin.status !== 1) return { code: 401, msg: '账号不可用，请重新登录', data: null }
     adminId = adminIdOfToken

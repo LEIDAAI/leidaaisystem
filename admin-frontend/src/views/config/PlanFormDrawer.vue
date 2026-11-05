@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { listConfig, listKnowledgeBases, saveConfig, type ConfigItem, type FrontendPerms, type KnowledgeBase, type VisibilityConfig, FRONTEND_PERM_GROUPS, normalizeFrontendPerms } from '@/api/config'
+import VersionConfirmDialog from './VersionConfirmDialog.vue'
 
 /** 表单草稿：ConfigItem 业务字段 + 版本名称/变更说明 / 引用确认（服务层审计字段） */
 export type FormDraft = Partial<ConfigItem> & { versionName?: string; note?: string; confirmReferences?: boolean; frontendPerms?: FrontendPerms }
@@ -31,6 +32,16 @@ watch(
       if (draft.value.planType === 'GIFT') draft.value.credits = 0
       else if (draft.value.credits === undefined) draft.value.credits = 10000
       giftDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
+      // 常规套餐时长模式回显：0 = 长期有效，其余 = 按天数（支持自定义任意天数）
+      normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
+      // v17 计费周期回显：拆到月付 / 年付两行（价格留空的行 = 未启用该周期）
+      const mc = (draft.value.billingCycles || []).find((c) => c.cycle === 'MONTHLY')
+      const yc = (draft.value.billingCycles || []).find((c) => c.cycle === 'YEARLY')
+      cycleRows.value = { monthlyPrice: mc?.price, monthlyOriginal: mc?.originalPrice ?? undefined, yearlyPrice: yc?.price, yearlyOriginal: yc?.originalPrice ?? undefined }
+      // v17 新字段默认值：排序 0；积分一次性发放；积分永不过期
+      draft.value.sort ??= 0
+      draft.value.grantMode ??= 'ONCE'
+      draft.value.creditExpiry ??= 'NEVER'
       entOpen.value = []
       void loadEntitlementRefs()
       nextTick(() => formRef.value?.clearValidate())
@@ -41,6 +52,15 @@ watch(
 
 /** v11 赠送套餐时长模式：长期有效（durationDays=0）/ 自定义天数 */
 const giftDurationMode = ref<'lifetime' | 'custom'>('custom')
+/** 常规套餐时长模式：按天数（自定义任意天数）/ 长期有效（durationDays=0） */
+const normalDurationMode = ref<'days' | 'lifetime'>('days')
+/** 快捷天数档位（一键填入自定义天数输入框） */
+const durationPresets = [30, 90, 180, 365]
+watch(normalDurationMode, (mode) => {
+  if (draft.value.planType === 'GIFT') return
+  if (mode === 'lifetime') draft.value.durationDays = 0
+  else if (Number(draft.value.durationDays) === 0) draft.value.durationDays = 30
+})
 
 // 套餐类型切换联动：GIFT 价格锁定 0 元；NORMAL 时长期有效天数回填默认 30 天
 watch(
@@ -49,13 +69,12 @@ watch(
     if (type === 'GIFT') {
       draft.value.price = 0
       draft.value.credits = 0
-      if (Number(draft.value.durationDays) !== 0 && giftDurationMode.value === 'lifetime') {
-        giftDurationMode.value = 'custom'
-        draft.value.durationDays = 30
-      }
+      // 切到赠送：0 天=长期有效保持，否则固定为自定义天数模式
+      giftDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
     } else {
       if (draft.value.credits === undefined) draft.value.credits = 10000
       if (giftDurationMode.value === 'lifetime') draft.value.durationDays = 30
+      normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
     }
   }
 )
@@ -66,6 +85,27 @@ watch(giftDurationMode, (mode) => {
   if (mode === 'lifetime') draft.value.durationDays = 0
   else if (Number(draft.value.durationDays) === 0) draft.value.durationDays = 30
 })
+
+// -------------------------------------------------- v17 营销信息 / 计费周期 / 积分发放
+/** 卖点列表：textarea 一行一条（回显 join('\n')，提交时 split/trim/过滤空行） */
+const featuresText = computed({
+  get: () => (draft.value.features || []).join('\n'),
+  set: (v: string) => { draft.value.features = v.split('\n').map((s) => s.trim()).filter(Boolean) }
+})
+/** 月 / 年付计费周期编辑行：价格留空 = 不启用该周期；划线价可空 */
+const cycleRows = ref<{ monthlyPrice?: number; monthlyOriginal?: number; yearlyPrice?: number; yearlyOriginal?: number }>({})
+
+/** 组装 billingCycles：两个周期价格全为空 → undefined（前台按基础价展示） */
+function buildBillingCycles(): ConfigItem['billingCycles'] {
+  const cycles: NonNullable<ConfigItem['billingCycles']> = []
+  const push = (cycle: 'MONTHLY' | 'YEARLY', price?: number, originalPrice?: number) => {
+    if (price === undefined || price === null) return
+    cycles.push({ cycle, price, ...(originalPrice ? { originalPrice } : {}) })
+  }
+  push('MONTHLY', cycleRows.value.monthlyPrice, cycleRows.value.monthlyOriginal)
+  push('YEARLY', cycleRows.value.yearlyPrice, cycleRows.value.yearlyOriginal)
+  return cycles.length ? cycles : undefined
+}
 
 // -------------------------------------------------- 权益绑定只读展示（v13）
 /** 权益只读行：资源名 + 依据该资源管理页可见性设置的展示标签 */
@@ -123,13 +163,31 @@ function toggleGroup(groupLabel: string, value: boolean): void {
   for (const it of group.items) draft.value.frontendPerms[it.key] = value
 }
 
-async function save(): Promise<void> {
+/** 保存（发布）：先表单校验，再弹版本确认框（默认时间戳版本名可改），确认后才写库并生成快照 */
+const versionDialog = ref(false)
+async function onSaveClick(): Promise<void> {
   if (!props.canEdit) return
   try { await formRef.value?.validate() } catch { return }
+  versionDialog.value = true
+}
+
+async function save(v: { versionName: string; note: string }): Promise<void> {
+  if (!props.canEdit) return
   saving.value = true
   try {
-    await saveConfig('plans', { ...draft.value })
+    const isGift = draft.value.planType === 'GIFT'
+    await saveConfig('plans', {
+      ...draft.value,
+      // v17：赠送套餐不携带营销 / 计费周期 / 积分发放配置（后端亦强制 ONCE / NEVER）
+      tagline: isGift ? undefined : draft.value.tagline,
+      badge: isGift ? undefined : draft.value.badge,
+      features: isGift ? undefined : draft.value.features,
+      billingCycles: isGift ? undefined : buildBillingCycles(),
+      versionName: v.versionName,
+      note: v.note
+    })
     ElMessage.success('套餐已保存，版本 +1，请执行刷新生效')
+    versionDialog.value = false
     emit('saved')
     emit('update:modelValue', false)
   } finally {
@@ -150,13 +208,52 @@ async function save(): Promise<void> {
         </el-radio-group>
         <p class="perm-hint">赠送套餐用于创建赠送订单：价格必须为 0 元，时长支持长期有效或自定义天数；创建后类型不可修改。</p>
       </el-form-item>
+      <!-- v17 营销信息：仅常规套餐（角标 / 标语 / 卖点列表，前台套餐卡片展示） -->
+      <template v-if="draft.planType !== 'GIFT'">
+        <el-divider content-position="left">营销信息</el-divider>
+        <el-form-item label="营销标语"><el-input v-model="draft.tagline" placeholder="一句话卖点，如「最受欢迎的专业版」" maxlength="50" /></el-form-item>
+        <el-form-item label="营销角标"><el-input v-model="draft.badge" placeholder="如「最受欢迎」，留空则不显示" maxlength="10" /></el-form-item>
+        <el-form-item label="卖点列表"><el-input v-model="featuresText" type="textarea" :rows="4" placeholder="一行一条卖点，如：&#10;每月 10000 AI 积分&#10;支持 5 个专家编排" /></el-form-item>
+      </template>
       <el-form-item label="价格（元）">
         <el-input-number v-model="draft.price" :min="0" :precision="2" :disabled="draft.planType === 'GIFT'" />
         <p v-if="draft.planType === 'GIFT'" class="perm-hint">赠送套餐价格固定为 0 元</p>
       </el-form-item>
+      <!-- v17 月 / 年付计费周期：价格留空的周期不启用；全部留空前台按基础价展示 -->
+      <el-form-item v-if="draft.planType !== 'GIFT'" label="计费周期">
+        <div class="cycle-editor">
+          <div class="cycle-row">
+            <span class="cycle-name">月付</span>
+            <el-input-number v-model="cycleRows.monthlyPrice" :min="0" :precision="2" controls-position="right" placeholder="月付价格" />
+            <el-input-number v-model="cycleRows.monthlyOriginal" :min="0" :precision="2" controls-position="right" placeholder="划线价（可空）" />
+          </div>
+          <div class="cycle-row">
+            <span class="cycle-name">年付</span>
+            <el-input-number v-model="cycleRows.yearlyPrice" :min="0" :precision="2" controls-position="right" placeholder="年付价格" />
+            <el-input-number v-model="cycleRows.yearlyOriginal" :min="0" :precision="2" controls-position="right" placeholder="划线价（可空）" />
+          </div>
+          <p class="perm-hint">价格留空表示不启用该计费周期；未配置计费周期时前台按基础价展示。</p>
+        </div>
+      </el-form-item>
       <el-form-item v-if="draft.planType !== 'GIFT'" label="AI 积分">
         <el-input-number v-model="draft.credits" :min="0" :step="1000" :precision="0" />
         <p class="perm-hint">创建手工订单时默认带出该积分数量</p>
+      </el-form-item>
+      <!-- v17 积分发放方式 / 有效期（仅常规套餐；赠送套餐固定一次性 + 永不过期） -->
+      <el-form-item v-if="draft.planType !== 'GIFT'" label="发放方式">
+        <el-radio-group v-model="draft.grantMode">
+          <el-radio value="ONCE">一次性发放</el-radio>
+          <el-radio value="MONTHLY">每月发放</el-radio>
+        </el-radio-group>
+        <p class="perm-hint">一次性发放：订购时积分一次到账；每月发放：按月续发套餐积分。</p>
+      </el-form-item>
+      <el-form-item v-if="draft.planType !== 'GIFT'" label="积分有效期">
+        <el-select v-model="draft.creditExpiry" style="width: 180px">
+          <el-option label="永不过期" value="NEVER" />
+          <el-option label="每月重置" value="MONTH_RESET" />
+          <el-option label="自定义天数" value="CUSTOM_DAYS" />
+        </el-select>
+        <el-input-number v-if="draft.creditExpiry === 'CUSTOM_DAYS'" v-model="draft.creditValidityDays" :min="1" :precision="0" placeholder="天数" style="margin-left: 8px" />
       </el-form-item>
       <el-form-item v-if="draft.planType === 'GIFT'" label="赠送时长">
         <el-radio-group v-model="giftDurationMode">
@@ -165,7 +262,22 @@ async function save(): Promise<void> {
         </el-radio-group>
         <el-input-number v-if="giftDurationMode === 'custom'" v-model="draft.durationDays" :min="1" :precision="0" style="margin-top: 8px" />
       </el-form-item>
-      <el-form-item v-else label="有效天数"><el-input-number v-model="draft.durationDays" :min="1" :precision="0" /></el-form-item>
+      <el-form-item v-else label="套餐时长">
+        <el-radio-group v-model="normalDurationMode">
+          <el-radio value="days">按天数</el-radio>
+          <el-radio value="lifetime">长期有效</el-radio>
+        </el-radio-group>
+        <template v-if="normalDurationMode === 'days'">
+          <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+            <el-input-number v-model="draft.durationDays" :min="1" :precision="0" />
+            <el-button v-for="d in durationPresets" :key="d" size="small" plain @click="draft.durationDays = d">{{ d }}天</el-button>
+          </div>
+          <p class="perm-hint">支持自定义任意天数，或点击快捷档位一键填入</p>
+        </template>
+        <p v-else class="perm-hint">购买后长期有效，订单与前台均显示「长期有效」</p>
+      </el-form-item>
+      <!-- v17 排序：常规与赠送套餐均支持，前台列表按升序展示 -->
+      <el-form-item label="排序"><el-input-number v-model="draft.sort" :min="0" :precision="0" /><p class="perm-hint">前台套餐列表按排序值升序展示</p></el-form-item>
       <el-form-item label="权益绑定">
         <div v-loading="entLoading" class="ent-groups">
           <el-collapse v-model="entOpen" class="ent-collapse">
@@ -211,8 +323,16 @@ async function save(): Promise<void> {
     </el-form>
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
-      <el-button v-if="canEdit" type="primary" :loading="saving" @click="save">保存</el-button>
+      <el-button v-if="canEdit" type="primary" :loading="saving" @click="onSaveClick">保存</el-button>
     </template>
+    <VersionConfirmDialog
+      v-model="versionDialog"
+      title="发布版本确认"
+      description="确认后将写库、版本 +1 并生成套餐快照（含权益与前台权限，进入版本历史）。"
+      async
+      :loading="saving"
+      @confirm="save"
+    />
   </el-drawer>
 </template>
 
@@ -295,5 +415,23 @@ async function save(): Promise<void> {
   margin: 8px 0 0;
   color: #c0c4cc;
   font-size: 12px;
+}
+
+/* v17 月 / 年付计费周期编辑行 */
+.cycle-editor {
+  width: 100%;
+}
+
+.cycle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.cycle-name {
+  flex: 0 0 36px;
+  font-size: 13px;
+  color: #606266;
 }
 </style>

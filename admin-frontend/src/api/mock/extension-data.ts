@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
-import type { ConfigItem, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
+import type { BillingSettings, ConfigItem, CreditPackage, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
 import { PLATFORMS } from '../config'
 
 export interface Chat { id: number; userId: number; expertId: number; /** 会话标题（用户发起时的主题短句，对齐前台会话名） */ title: string; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
@@ -18,6 +18,12 @@ export interface Extensions {
   skillVersions: Record<string, ConfigVersion[]>
   /** MCP 连接配置版本快照（含连接配置与工具绑定）：每次保存生成，可 diff/恢复（v5 补齐） */
   mcpVersions: Record<string, ConfigVersion[]>
+  /** 套餐配置版本快照（v17）：营销/计费字段每次保存生成，可 diff/恢复 */
+  planVersions: Record<string, ConfigVersion[]>
+  /** 积分加油包商品（v17）：C 端充值卡片商品 */
+  creditPackages: CreditPackage[]
+  /** 全局计费设置（v17）：注册赠送积分 / 升级差价策略 / 自定义积分滑杆 */
+  billingSettings: BillingSettings
 }
 
 /** 存储行：在 API 形态基础上额外持有 API Key 明文（仅 mock 存储层，任何接口响应不得返回） */
@@ -109,7 +115,7 @@ export function detectPlatforms(item: Pick<ConfigItem, 'code' | 'name' | 'descri
 }
 
 export function seedExtensions(): Extensions {
-  const base = { status: 1, version: 1, updatedAt: new Date().toISOString(), refreshStatus: 'APPLIED' as const, appliedVersion: 1, refreshMessage: 'Mock 演示配置已生效；未连接 AgentScope' }
+  const base = { status: 1, version: 1, updatedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'), refreshStatus: 'APPLIED' as const, appliedVersion: 1, refreshMessage: 'Mock 演示配置已生效；未连接 AgentScope' }
   // 专家 = 助手预设（附录 12.1）；id 1 对齐 1688选品助手完整示例：7 个绑定技能 + server:gateway + 3 条建议问题
   // v5：baseModel 存模型管理中的模型 code（显示名经模型表解析）；platforms 为平台维度多选（至少一个）
   const experts: ConfigItem[] = [
@@ -524,9 +530,20 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
 | 数据背书 | 「月销 10 万件的秘密」 | 爆款复刻 |`
     }
   ]
+  // v17：套餐营销示例（sort/tagline/badge/features/月年付计费周期）；GIFT 赠送套餐不配置任何营销字段
+  const PLAN_EXTRAS: Array<Partial<ConfigItem>> = [
+    { sort: 1, tagline: '永久免费', features: ['基础 AI 对话', '每日积分额度', '社区支持'] },
+    { sort: 2, tagline: '个人与小团队首选', features: ['全部基础专家', '每月 1 万 AI 积分', '全平台商品分析', '工单支持'], billingCycles: [{ cycle: 'MONTHLY', price: 99 }, { cycle: 'YEARLY', price: 990, originalPrice: 1188 }] },
+    { sort: 3, badge: '最受欢迎', tagline: '进阶选品与全渠道分析', features: ['标准版全部能力', '每月 3 万 AI 积分', '高级数据报表导出', '批量选品与监控', '优先客服响应'], billingCycles: [{ cycle: 'MONTHLY', price: 299 }, { cycle: 'YEARLY', price: 2990, originalPrice: 3588 }] },
+    { sort: 4, tagline: '为团队提供专属算力与服务', features: ['专业版全部能力', '每月 10 万 AI 积分', '团队席位与权限管理', '专属客户成功经理', '私有化部署咨询'], billingCycles: [{ cycle: 'MONTHLY', price: 2999 }] }
+  ]
+  const plans: ConfigItem[] = [
+    ...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, credits:[0,10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const, ...PLAN_EXTRAS[i] })),
+    { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }
+  ]
   return {
     models: seedLlmModels(),
-    plans: [...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, credits:[0,10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const })), { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }],
+    plans,
     experts,
     skills,
     servers,
@@ -558,8 +575,26 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
     skillCalls:Array.from({ length:24 },(_,i) => ({ skillId:i%2+11, success:i%5!==0,createdAt:new Date(Date.now()-i*86400000).toISOString() })),
     expertVersions: Object.fromEntries(experts.map(e => [e.id, [{ version: e.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: e.updatedAt, snapshot: structuredClone(e) }]])),
     skillVersions: Object.fromEntries(skills.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]])),
-    mcpVersions: Object.fromEntries(servers.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]]))
+    mcpVersions: Object.fromEntries(servers.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]])),
+    planVersions: Object.fromEntries(plans.map(p => [p.id, [{ version: p.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: p.updatedAt, snapshot: structuredClone(p) }]])),
+    creditPackages: seedCreditPackages(),
+    billingSettings: seedBillingSettings()
   }
+}
+
+/** v17：积分加油包商品种子（3 档常规在售，status 全 1：体验/常用/专业） */
+export function seedCreditPackages(): CreditPackage[] {
+  const at = dayjs().format('YYYY-MM-DD HH:mm:ss')
+  return [
+    { id: 1, name: '体验包', credits: 500, bonusCredits: 50, price: 45, originalPrice: 60, sort: 1, status: 1, remark: '新用户尝鲜首选，低门槛体验 AI 分析', createdAt: at, updatedAt: at },
+    { id: 2, name: '常用包', credits: 2000, bonusCredits: 300, price: 168, originalPrice: 199, sort: 2, status: 1, remark: '个人日常选品分析主力档', createdAt: at, updatedAt: at },
+    { id: 3, name: '专业包', credits: 8000, bonusCredits: 1500, price: 600, originalPrice: 720, badge: '超值', sort: 3, status: 1, remark: '团队高频分析，赠送积分最多', createdAt: at, updatedAt: at }
+  ]
+}
+
+/** v17：全局计费设置默认值（注册赠送 100 积分；升级差价按全价；开放自定义积分滑杆） */
+export function seedBillingSettings(): BillingSettings {
+  return { registerBonus: 100, upgradePolicy: 'FULL_PRICE', creditSlider: { enabled: true, min: 1000, max: 100000, step: 1000, unitPrice: 0.015 } }
 }
 
 /**

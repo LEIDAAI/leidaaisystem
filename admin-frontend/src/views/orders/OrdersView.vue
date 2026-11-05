@@ -100,13 +100,14 @@ const manualVisible = ref(false)
 const manualSubmitting = ref(false)
 const manualForm = reactive({ phone: '', planId: null as number | null, credits: 0, amount: 0 })
 const manualPlanSelected = computed(() => normalPlans.value.find((p) => p.id === manualForm.planId) || null)
-/** v12 手工订单积分联动：选择套餐后默认带出该套餐配置的 AI 积分（可微调） */
+/** v12 手工订单积分/金额联动：选择套餐后默认带出该套餐配置的 AI 积分与售价（v17，均可微调） */
 watch(
   () => manualForm.planId,
   () => {
     const plan = manualPlanSelected.value
     if (!plan) return
     manualForm.credits = Number(plan.credits ?? 0)
+    manualForm.amount = Number(plan.price ?? 0)
   }
 )
 
@@ -132,8 +133,8 @@ async function submitManual() {
     ElMessage.warning('请选择套餐')
     return
   }
-  if (!(manualForm.amount > 0)) {
-    ElMessage.warning('支付金额必须大于 0')
+  if (manualForm.amount < 0) {
+    ElMessage.warning('支付金额不能为负数')
     return
   }
   if (manualSubmitting.value) return
@@ -280,7 +281,7 @@ async function submitGift() {
           </el-form>
         </template>
 
-        <el-table-column prop="orderNo" label="订单号" min-width="160" />
+        <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="userId" label="用户ID" width="80" />
         <el-table-column prop="wechatNickname" label="微信昵称" min-width="120" show-overflow-tooltip />
         <el-table-column prop="planName" label="套餐" width="90" />
@@ -353,7 +354,11 @@ async function submitGift() {
           <el-input-number v-model="manualForm.credits" :min="0" :step="1000" style="width: 100%" />
         </el-form-item>
         <el-form-item label="支付金额(元)" required>
-          <el-input-number v-model="manualForm.amount" :min="0.01" :precision="2" :step="100" style="width: 100%" />
+          <!-- v17 允许 0 元：线下赠送 / 减免场景 -->
+          <div style="width: 100%">
+            <el-input-number v-model="manualForm.amount" :min="0" :precision="2" :step="100" style="width: 100%" />
+            <p class="muted" style="margin: 6px 0 0; font-size: 12px">0 元表示线下赠送 / 减免</p>
+          </div>
         </el-form-item>
         <el-form-item label=" ">
           <span class="muted">手工订单渠道记为「线下录入」，生成对应支付流水，请核实到账后再操作</span>

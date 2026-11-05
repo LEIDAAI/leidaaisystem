@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useTableMaxHeight } from '@/composables/useTableMax'
 import { listChatUsers,listChats,chatMessages,chatAnalysis,deleteChat,restoreChat,exportChat,type ChatItem,type UserChatRow,type ChatAnalysis,type Message } from '@/api/operations'
@@ -23,8 +23,11 @@ const tableRows=computed(()=>analysis.value ? analysis.value.table.rows.map(r=>O
 async function load(){loading.value=true;try{const data=await listChatUsers(query);if(!data.list.length&&query.page>1){query.page--;await load();return}userRows.value=data.list;total.value=data.total}finally{loading.value=false}}
 async function search(){query.page=1;await load()}
 /** 聚合行的最新对话 → ChatItem（供打开对话详情） */
-function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,title:row.latest.title,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason}}
-async function openUser(row:UserChatRow){view.value='user';curUser.value=row;userChats.value=[];userLoading.value=true;try{const data=await listChats({userId:row.userId,deleted:'all',page:1,pageSize:100});userChats.value=data.list}finally{userLoading.value=false}}
+/** 二级视图分页（服务端真实分页，不再一次拉 100 条） */
+const userQuery=reactive({page:1,pageSize:20}),userTotal=ref(0)
+function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,title:row.latest.title,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason,wechatNickname:row.wechatNickname,phone:row.phone}}
+async function openUser(row:UserChatRow){view.value='user';curUser.value=row;userQuery.page=1;await loadUserChats()}
+async function loadUserChats(){if(!curUser.value)return;userChats.value=[];userLoading.value=true;try{const data=await listChats({userId:curUser.value.userId,deleted:'all',...userQuery});userChats.value=data.list;userTotal.value=data.total}finally{userLoading.value=false}}
 async function openChat(row:ChatItem,idx?:number){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';curChat.value=row;askIdx.value=idx??null;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;detailLoading.value=true;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id,idx===undefined?undefined:idx)]);messages.value=ms;analysis.value=an}finally{detailLoading.value=false}}
 /** 二级行展开：会话ID → 该会话每次用户提问（脱敏），首次展开懒加载 */
 const askCache=ref<Record<number,Message[]>>({}),askLoading=ref<Record<number,boolean>>({})
@@ -35,13 +38,13 @@ const visibleMessages=computed(()=>askBounds.value?messages.value.slice(askBound
 const askContent=computed(()=>askBounds.value?messages.value[askBounds.value[0]]:null)
 function backToList(){view.value='list';load()}
 function backToUser(){if(chatFrom.value==='user'&&curUser.value)openUser(curUser.value);else backToList()}
-async function restore(row:ChatItem){try{await ElMessageBox.confirm(`恢复会话 ${row.id}？恢复后用户可继续该会话`,'确认恢复')}catch{return}await restoreChat(row.id);if(curUser.value)await openUser(curUser.value);await load()}
+async function restore(row:ChatItem){try{await ElMessageBox.confirm(`恢复会话 ${row.id}？恢复后用户可继续该会话`,'确认恢复')}catch{return}await restoreChat(row.id);ElMessage.success('会话已恢复');if(curUser.value)await loadUserChats();await load()}
 /** 三级详情页操作：软删除当前会话（操作后回到上一级并刷新），与二级列表行为一致 */
 async function removeCurrent(){const c=curChat.value;if(!c)return;try{const {value}=await ElMessageBox.prompt('请填写软删除理由，消息会保留以便恢复','软删除',{inputValidator:v=>!!v?.trim() || '必须填写理由'});await deleteChat(c.id,value);if(chatFrom.value==='user'&&curUser.value)await openUser(curUser.value);else backToList()}catch(e){if(e!=='cancel'&&e!=='close')console.error('软删除失败',e)}}
 /** 三级详情页操作：恢复已删除会话（原地刷新状态显示） */
 async function restoreCurrent(){const c=curChat.value;if(!c)return;try{await ElMessageBox.confirm(`恢复会话 ${c.id}？恢复后用户可继续该会话`,'确认恢复')}catch{return}await restoreChat(c.id);curChat.value={...c,deletedAt:null,deleteReason:''}}
 const canDelete=computed(()=>auth.hasPerm('chat:delete')),canRestore=computed(()=>auth.hasPerm('chat:restore')),canExport=computed(()=>auth.hasPerm('chat:export'))
-async function download(row:ChatItem,format:string){const data=await exportChat(row.id,format);const blob=data instanceof Blob?data:new Blob([data.content],{type:format==='json'?'application/json':'text/csv;charset=utf-8'});downloadBlobFile(data instanceof Blob?`chat-${row.id}.${format}`:data.filename,blob)}
+async function download(row:ChatItem,format:string){try{const data=await exportChat(row.id,format);const blob=data instanceof Blob?data:new Blob([data.content],{type:format==='json'?'application/json':'text/csv;charset=utf-8'});downloadBlobFile(data instanceof Blob?`chat-${row.id}.${format}`:data.filename,blob);ElMessage.success('导出成功，已开始下载')}catch(e){console.error('导出失败',e);ElMessage.error('导出失败，请稍后重试')}}
 function downloadReport(){if(!analysis.value||!curChat.value)return;downloadBlobFile(`chat-report-${curChat.value.id}.html`,new Blob([analysis.value.reportHtml],{type:'text/html;charset=utf-8'}))}
 function openReport(){if(!analysis.value)return;const url=URL.createObjectURL(new Blob([analysis.value.reportHtml],{type:'text/html;charset=utf-8'}));window.open(url,'_blank');setTimeout(()=>URL.revokeObjectURL(url),60000)}
 /** 右侧预览面板（对齐前台 AI 对话交互：点击结果卡片 → 右侧标签页预览，可多开） */
@@ -119,6 +122,7 @@ onMounted(load)
     <el-table-column label="状态" width="100"><template #default="{row}">{{row.deletedAt?'已删除':'正常'}}</template></el-table-column>
     <el-table-column label="操作" min-width="215" fixed="right"><template #default="{row}"><div class="cell-ops"><el-button link type="primary" @click="openChat(row)">查看分析</el-button><el-button v-if="row.deletedAt && canRestore" link @click="restore(row)">恢复</el-button><el-dropdown v-if="canExport" @command="(cmd: string | number | object) => download(row, String(cmd))"><el-button link type="primary">导出 ▾</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="json">JSON</el-dropdown-item><el-dropdown-item command="csv">CSV</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
   </el-table>
+  <el-pagination v-model:current-page="userQuery.page" v-model:page-size="userQuery.pageSize" :total="userTotal" layout="total, sizes, prev, pager, next" @current-change="loadUserChats" @size-change="(()=>{userQuery.page=1;loadUserChats()})" style="margin-top:12px;justify-content:flex-end"/>
 </el-card>
 <!-- 视图三：对话详情 —— 左侧分析过程+结果卡片（可点击），右侧预览面板（表格/报告标签，对齐前台 AI 对话） -->
 <el-card v-else shadow="never">

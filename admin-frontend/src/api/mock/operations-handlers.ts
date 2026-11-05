@@ -1,3 +1,4 @@
+import dayjs from 'dayjs'
 import { db, nowStr, permissionCodesOf } from './db'
 import { redact, buildChatAnalysis, buildAskAnalysis } from './extension-data'
 import type { Chat } from './extension-data'
@@ -21,12 +22,13 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
   route('GET','/chats/:id/export',ctx=>{perm(ctx,'chat:export');const c=chat(ctx);const format=String(ctx.query.format || 'json');if(!['json','csv'].includes(format)) throw new ErrorType(422,'仅支持JSON/CSV');const messages=c.messages.map(m=>({...m,content:redact(m.content)}));const cell=(v:unknown)=>{const s=String(v);return `"${(/^[=+@\-\t\r]/.test(s)?"'"+s:s).replace(/"/g,'""')}"`};audit(ctx.adminId,'chat.export','chat',c.id,null,{format,messageCount:messages.length});return {filename:`chat-${c.id}.${format}`,content:format==='json'?JSON.stringify({id:c.id,userId:c.userId,expertId:c.expertId,messages},null,2):['role,content,createdAt',...messages.map(m=>[m.role,m.content,m.createdAt].map(cell).join(','))].join('\n')}})
   route('GET','/dashboard',ctx=>{
     perm(ctx,'dashboard:view')
-    const today=new Date().toISOString().slice(0,10)
+    /* 本地时区日期（toISOString 为 UTC，东八区 0-8 点会落到昨天） */
+    const today=dayjs().format('YYYY-MM-DD')
     const activeChats=db.chats.filter(c=>!c.deletedAt)
     const paidOrders=db.orders.filter(o=>o.status==='PAID')
     /* 七日趋势：基于实际记录统计 + 伪随机补充，让图表有变化 */
     const trend=Array.from({length:7},(_,i)=>{
-      const date=new Date(Date.now()-(6-i)*86400000).toISOString().slice(0,10)
+      const date=dayjs(Date.now()-(6-i)*86400000).format('YYYY-MM-DD')
       const realUsers=db.users.filter(u=>u.registeredAt.startsWith(date)).length
       const realOrders=db.orders.filter(o=>o.createdAt.startsWith(date)).length
       const realChats=db.chats.filter(c=>c.createdAt.startsWith(date)&&!c.deletedAt).length

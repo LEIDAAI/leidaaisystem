@@ -14,7 +14,7 @@ import { get, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, skillStats, exportConfigJson, cloneSkill,
   listScenarios, saveScenario, deleteScenario, PLATFORMS, platformMeta,
-  type ConfigItem, type PlatformType, type Scenario, type VisibilityConfig
+  type ConfigItem, type PlatformType, type Scenario
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
@@ -22,11 +22,16 @@ import { zipFiles } from '@/utils/zip'
 import { BINARY_EXT, parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
 import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
+import { visTagOf } from '@/utils/visibility'
+import { useTableMaxHeight } from '@/composables/useTableMax'
 import SkillEditor from './config/SkillEditor.vue'
 import SkillImportDialog from './config/SkillImportDialog.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
 
 const auth = useAuthStore()
+
+/** 列表限高：视口自适应、列表内部滚动（顶部页签/筛选条保持可见） */
+const { max: rowsMax, bind: bindRows } = useTableMaxHeight(24)
 const canEdit = computed(() => auth.hasPerm('skill:edit'))
 const canExport = computed(() => auth.hasPerm('skill:export'))
 const canClone = computed(() => auth.hasPerm('skill:clone'))
@@ -79,13 +84,7 @@ const activeScenario = ref<number | 'all' | 'unassigned'>('all')
 const scenariosOf = (p: PlatformType): Scenario[] => scenarios.value.filter((s) => s.platformId === p)
 const scenarioById = (id?: number | null): Scenario | undefined => scenarios.value.find((s) => s.id === id)
 
-/** v14：行内可见性标签（缺省视为全员可见，与保存归一化一致） */
-function visTagOf(v: VisibilityConfig | undefined): { label: string; type: 'success' | 'primary' | 'warning' } {
-  const eff = v || { type: 'PUBLIC' as const, planIds: [] }
-  if (eff.type === 'PUBLIC') return { label: '全员可见', type: 'success' }
-  if (eff.type === 'PLAN') return { label: `指定套餐（${eff.planIds?.length || 0} 个）`, type: 'primary' }
-  return { label: '内部隐藏', type: 'warning' }
-}
+/** v14：行内可见性标签（缺省视为全员可见，与保存归一化一致）—— 实现统一抽至 utils/visibility */
 
 function switchTab(tab: string): void {
   activeTab.value = tab
@@ -419,7 +418,7 @@ function boundExpertCount(row: ConfigItem): number {
       </template>
     </div>
 
-    <div v-loading="loading" class="rows">
+    <div v-loading="loading" class="rows" :style="rowsMax ? { maxHeight: `${rowsMax}px`, overflowY: 'auto' } : undefined" :ref="bindRows">
       <div v-for="row in viewRows" :key="row.id" class="row">
         <el-checkbox
           class="row-check"

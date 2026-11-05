@@ -27,7 +27,15 @@ const mockAdapter: AxiosAdapter = async (config: InternalAxiosRequestConfig): Pr
 const http = axios.create({ baseURL: API_BASE, timeout: 15000 })
 if (USE_MOCK) http.defaults.adapter = mockAdapter
 
+/**
+ * 会话失效回调：由 main.ts 注入（清 pinia 内存会话）。
+ * 采用注入而非直接 import auth store，避免 auth ↔ request 循环依赖。
+ */
+let onSessionExpired: (() => void) | null = null
+export function setSessionExpiredHandler(fn: () => void): void { onSessionExpired = fn }
+
 function clearSessionAndRedirect(): void {
+  onSessionExpired?.()
   clearStoredToken()
   // hash 路由：登录页在 /#/login，静态托管下不能改 pathname；携带 redirect 便于登录后回到原页面
   if (!window.location.hash.startsWith('#/login')) {

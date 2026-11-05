@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, ChatLineRound, Collection, Cpu, MagicStick, Reading } from '@element-plus/icons-vue'
+import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, ChatLineRound, Collection, Cpu, MagicStick, Reading, Coin, Money } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -20,6 +20,9 @@ const menus = [
   { path: '/admins', title: '管理员账号', perm: 'admin:manage', icon: Avatar },
   { path: '/roles', title: '角色与权限', perm: 'role:manage', icon: Lock },
   { path: '/plans', title: '套餐管理', perm: 'plan:view', icon: Collection },
+  // v17 计费/营销扩展：加油包与计费设置复用套餐 plan:view 权限点
+  { path: '/credit-packages', title: '积分加油包', perm: 'plan:view', icon: Coin },
+  { path: '/billing-settings', title: '计费设置', perm: 'plan:view', icon: Money },
   { path: '/chats', title: '对话管理', perm: 'chat:view', icon: ChatDotRound },
   { path: '/feedback', title: '反馈管理', perm: 'feedback:view', icon: ChatLineRound }
 ]
