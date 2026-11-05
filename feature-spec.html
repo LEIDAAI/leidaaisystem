@@ -26,7 +26,7 @@
 <div class="eyebrow">店雷达 AI 系统 · 功能交付说明</div>
 <h1>前后台功能说明<br>与测试验收清单</h1>
 <p>面向前端、后端与测试，明确功能行为、配置契约、权限边界、演示数据范围和版本回归依据。本文按 V17 功能清单编排，保持已实现能力与待接入能力的状态区分。<sup><a href="#cite-1">[1]</a></sup></p>
-<div class="meta"><span>版本 V17</span><span class="r2-badge">修订 R2 · 174 项原型说明</span><span>2026-11-05</span><span>前台 7 页</span><span>后台登录 + 15 业务菜单</span><span>权限声明 36 项 / 字典实列 34 项</span><span>88 项编号验收</span></div>
+<div class="meta"><span>版本 V17</span><span class="r2-badge">修订 R3 · 仅封禁用户 · 保留 174 项原型说明</span><span>2026-11-05</span><span>前台 7 页</span><span>后台登录 + 15 业务菜单</span><span>权限声明 36 项 / 字典实列 34 项</span><span>88 项编号验收</span></div>
 </header>
 <nav class="toc" aria-label="功能板块导航">
 <div class="toc-group"><strong>后台功能</strong><ol><li><a href="#pn-A00">登录与会话</a></li><li><a href="#pn-A01">工作概览</a></li><li><a href="#pn-A02">用户管理</a></li><li><a href="#pn-A03">订单管理</a></li><li><a href="#pn-A04">套餐管理</a></li><li><a href="#pn-A05">积分加油包</a></li><li><a href="#pn-A06">计费设置</a></li><li><a href="#pn-A07">专家管理</a></li><li><a href="#pn-A08">技能管理</a></li><li><a href="#pn-A09">MCP 服务</a></li><li><a href="#pn-A10">模型管理</a></li><li><a href="#pn-A11">知识库管理</a></li><li><a href="#pn-A12">对话管理</a></li><li><a href="#pn-A13">反馈管理</a></li><li><a href="#pn-A14">管理员账号</a></li><li><a href="#pn-A15">角色与权限</a></li></ol></div>
@@ -63,7 +63,7 @@
 <h3>A00 · 登录与会话</h3><p><a href="#pn-A00">查看完整原型说明</a></p><p>账号密码登录、刷新恢复会话、登出、登录后跳转原目标页（redirect）；菜单按 <code>meta.perm</code> 过滤。没有 <code>dashboard:view</code> 时，自动落到第一个有权限的页面。</p><p class="note">前端负责守卫、redirect 和菜单；mock 后端负责认证、TTL 与授权校验；测试执行 TC-01～TC-06，覆盖未登录直达、刷新、登出、过期与首个可用页面。</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="后台15业务模块"><table><thead><tr><th>模块 / 权限</th><th>功能范围与规则</th><th>可执行测试要点</th><th>责任划分</th></tr></thead><tbody>
 <tr><td>A01 仪表盘<br><a href="#pn-A01">查看完整原型说明</a><br><code>dashboard:view</code></td><td>用户数、订单数、收入、会话数指标；7 日趋势、套餐分布、专家会话量排行、最近注册用户、最近订单。趋势含伪随机补数。</td><td>与用户/订单列表核对数字口径；无权限不可见；趋势只按演示口径验收。</td><td>前端：指标与图表；mock：汇总/分布；测试：口径、权限，真实统计待替换。</td></tr>
-<tr><td>A02 用户管理<br><a href="#pn-A02">查看完整原型说明</a><br><code>user:view / user:ban / user:entitlement</code></td><td>关键词（手机号/ID）、正常/封禁、注册时间区间筛选与分页；详情 6 Tab：基本资料、套餐权益调整、订单列表、对话统计、对话记录、登录日志。封禁/解封必须填原因并审计；手动改套餐/权益。</td><td>组合筛选、分页、6 Tab；无原因拦截；有原因状态变化与日志；权益调整按钮及接口权限。</td><td>前端：列表/抽屉；mock：筛选、状态、权益和审计；测试：状态回查与权限。</td></tr>
+<tr><td>A02 用户管理<br><a href="#pn-A02">查看完整原型说明</a><br><code>user:view / user:ban / user:entitlement</code></td><td>关键词（手机号/ID）、正常/封禁、注册时间区间筛选与分页；详情 6 Tab：基本资料、套餐权益调整、订单列表、对话统计、对话记录、登录日志。仅封禁（已封禁无解封入口）必须填原因并审计；手动改套餐/权益。</td><td>组合筛选、分页、6 Tab；无原因拦截；有原因状态变化与日志；权益调整按钮及接口权限。</td><td>前端：列表/抽屉；mock：筛选、状态、权益和审计；测试：状态回查与权限。</td></tr>
 <tr><td>A03 订单管理<br><a href="#pn-A03">查看完整原型说明</a><br><code>order:view / order:create / order:remark / order:export</code></td><td>按订单号、用户 ID、待支付/已支付/已关闭、微信/支付宝/线下录入、下单时间筛选；详情含支付流水；备注留审计；手工/赠送创建；当前筛选 CSV 导出。</td><td>核订单号、用户 ID、微信昵称、套餐、线上/手工/赠送三色来源标签、剩余积分、套餐时长（含长期有效）、近 7 日消耗、支付金额。创建规则见第 07 章。</td><td>前端：联动和展示；mock：创建、校验、筛选导出、审计；测试：TC-31～TC-39、TC-84～TC-85。</td></tr>
 <tr><td>A04 套餐管理<br><a href="#pn-A04">查看完整原型说明</a><br><code>plan:view / plan:edit</code></td><td>常规/赠送类型筛选、启用状态开关、时长 N 天/长期有效、版本号；新建编辑分组；保存即发布、版本详情 diff、历史恢复、刷新生效、引用删除保护。完整字段见第 04 章。</td><td>全字段保存回显；创建后编码/类型锁定；常规和赠送长期有效；保存与刷新分开验证；恢复历史后再次刷新。</td><td>前端：表单/版本交互；mock：约束、快照、派生；测试：TC-12～TC-30、TC-40～TC-45、TC-83。</td></tr>
 <tr><td>A05 积分加油包<br><a href="#pn-A05">查看完整原型说明</a><br><code>plan:view / plan:edit</code></td><td>CRUD；名称、积分面额、售价、启用状态、排序；契约字段与套餐一致，启用控制上下架。</td><td>逐字段保存回显、编辑/删除、上下架；不能形成订单，手工订单仅选套餐。</td><td>前端：管理表单；mock：配置持久化；测试：配置行为，订单链路为待开发。</td></tr>
@@ -109,7 +109,7 @@
 <div class="table-wrap" tabindex="0" role="region" aria-label="36权限点字典"><table><thead><tr><th>模块</th><th>权限点（完整字典）</th><th>数量</th><th>适用说明</th></tr></thead><tbody>
 <tr><td>仪表盘</td><td><code>dashboard:view</code></td><td>1</td><td>仪表盘可见与路由访问</td></tr>
 <tr><td>管理员 / 角色 / 审计</td><td><code>admin:manage</code>、<code>admin:edit</code>、<code>role:manage</code>、<code>audit:view</code></td><td>4</td><td>audit:view 对应查询接口，审计页面未上线</td></tr>
-<tr><td>用户</td><td><code>user:view</code>、<code>user:ban</code>、<code>user:entitlement</code></td><td>3</td><td>查看、封禁/解封、权益调整</td></tr>
+<tr><td>用户</td><td><code>user:view</code>、<code>user:ban</code>、<code>user:entitlement</code></td><td>3</td><td>查看、仅封禁（已封禁无解封入口）、权益调整</td></tr>
 <tr><td>订单</td><td><code>order:view</code>、<code>order:create</code>、<code>order:remark</code>、<code>order:export</code></td><td>4</td><td>创建复用于手工和赠送订单</td></tr>
 <tr><td>套餐 / 加油包 / 计费</td><td><code>plan:view</code>、<code>plan:edit</code>、<code>plan:manage</code></td><td>3</td><td>plan:manage 为遗留权限，与 plan:view 等价</td></tr>
 <tr><td>专家</td><td><code>expert:view</code>、<code>expert:edit</code>、<code>expert:export</code></td><td>3</td><td>导入复用 expert:edit</td></tr>
@@ -128,7 +128,7 @@
 <div class="table-wrap" tabindex="0" role="region" aria-label="mock接口能力"><table><thead><tr><th>分组</th><th>能力</th><th>前后端 / 测试约定</th></tr></thead><tbody>
 <tr><td>认证</td><td>登录、会话信息、登出、mock token TTL。</td><td>验证状态恢复、过期与 redirect；TTL 具体值以 mock 当前配置为准。</td></tr>
 <tr><td>管理员 / 角色 / 权限</td><td>管理员 CRUD、启停、重置密码；角色 CRUD、权限字典；登录失败锁定。</td><td>锁定阈值/持续时间未给出，执行时读取当前配置并留证。</td></tr>
-<tr><td>用户</td><td>列表筛选分页、详情、封禁/解封、套餐权益调整。</td><td>必填原因与授权校验，状态/权益保存回查。</td></tr>
+<tr><td>用户</td><td>列表筛选分页、详情、仅封禁（已封禁无解封入口）、套餐权益调整。</td><td>必填原因与授权校验，状态/权益保存回查。</td></tr>
 <tr><td>订单</td><td>筛选分页、含支付流水详情、手工/赠送创建、备注、CSV 导出。</td><td>按当前筛选导出；创建不回写权益与到期。</td></tr>
 <tr><td>配置通用</td><td><code>plans / experts / skills / mcp / models / scenarios / knowledge-bases / credit-packages / billing-settings</code>：CRUD、启停、删除引用保护、版本快照/恢复、刷新生效；部分资源支持导入/导出/克隆。</td><td>scenarios 为配置资源，不增加业务菜单数；导入导出克隆仅对已列明模块验收，不能推广成所有资源均有入口。</td></tr>
 <tr><td>套餐校验</td><td>价格非负；时长 0 或正整数；赠送价格 0、积分 0；权益派生重算。</td><td>同时验证表单与直接调用 mock 的约束。</td></tr>
@@ -254,7 +254,7 @@
 <h4 id="PN-A02-07">原型说明 · PN-A02-07 对话统计</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>会话数、消息数、最后对话时间</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户详情对话统计，user:view。<b>字段：</b>三项汇总只读。</p><ol><li>进入统计页签。</li><li>按该用户本地会话核数。</li></ol><p><b>状态规则：</b>从该用户会话集合派生，最后时间取会话创建时间最大值；此接口未排除软删。<b>异常/边界：</b>与概览未软删口径不同；无会话时间为空。<b>关联页面：</b>对话记录、工作概览。<b>验收依据：</b>handlers chatStats、TC-09。</p></td></tr></tbody></table>
 <h4 id="PN-A02-08">原型说明 · PN-A02-08 对话记录和消息展开</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>用户会话分页与过程结果回看</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户详情对话记录，另需 chat:view。<b>字段：</b>会话列表、往来消息、最后 AI 回复只读，默认每页 10。</p><ol><li>首次切页签按需加载。</li><li>翻页或展开会话获取消息。</li></ol><p><b>状态规则：</b>查询含已删会话；消息按会话缓存。<b>异常/边界：</b>403 提示授权、不随切页签反复请求；其他失败可手动重试，消息失败重新展开。<b>关联页面：</b>对话管理。<b>验收依据：</b>UserDetailDrawer 66～138、TC-09/10。</p></td></tr></tbody></table>
 <h4 id="PN-A02-09">原型说明 · PN-A02-09 登录日志</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>用户登录来源回看</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户详情登录日志，user:view。<b>字段：</b>IP、User-Agent、登录时间只读。</p><ol><li>切登录日志页签。</li><li>核当前用户记录，关闭详情返回。</li></ol><p><b>状态规则：</b>读取用户本地种子日志，不提供编辑。<b>异常/边界：</b>无日志显示空态；不推定前台真实登录已写入。<b>关联页面：</b>基本资料、前台登录。<b>验收依据：</b>UserDetail / handlers loginLogs、TC-09。</p></td></tr></tbody></table>
-<h4 id="PN-A02-10">原型说明 · PN-A02-10 封禁与解封</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>有原因的用户状态切换</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户行封禁/解封，user:ban。<b>字段：</b>目标状态由当前状态反向选择，原因为可填文本。</p><ol><li>发起目标操作，填写原因。</li><li>确认后回查状态及审计。</li></ol><p><b>状态规则：</b>页面原因提示至少 2 字（封禁与解封正则略有不同）；mock 最终只要求 trim 非空；封禁 0、解封 1。<b>异常/边界：</b>空原因拒绝、取消不变更；封禁用户不能创建手工/赠送订单。<b>关联页面：</b>订单创建、审计接口。<b>验收依据：</b>handlers 用户状态、TC-08。</p></td></tr></tbody></table>
+<h4 id="PN-A02-10">原型说明 · PN-A02-10 仅封禁用户</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>有原因的用户封禁</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>正常用户行显示封禁，需 user:ban；已封禁行仅显示详情，无解封入口。<b>字段：</b>banned 固定 true，原因为必填文本。</p><ol><li>对正常用户发起封禁并填写原因。</li><li>确认后回查状态 0 及 user.ban 审计。</li></ol><p><b>状态规则：</b>页面原因提示至少 2 字；mock 最终要求 trim 非空；前端包装运行时拒绝非 true 的 banned，mock 严格校验 banned === true。<b>异常/边界：</b>传 false 或其他值返回 422「仅支持封禁用户」，状态和审计均不变；空原因拒绝、取消不变更；封禁用户不能创建手工/赠送订单。本次仅调整前端与 mock，不新增真实后端实现。<b>关联页面：</b>订单创建、审计接口。<b>验收依据：</b>UsersView、api/user.ts、handlers 用户状态、TC-08。</p></td></tr></tbody></table>
 <details class="prototype-evidence"><summary>实现证据与限制</summary><p>src/views/users/UserDetailDrawer.vue；src/api/types.ts UserDetail / EntitlementPayload；src/api/mock/handlers.ts 396～496；src/api/mock/config-handlers.ts validateEntitlements。清单关键词只写手机号/ID，mock 还匹配邮箱；换套餐入口未在详情组件证实，R2 不宣称已实现。</p></details></div>
 <div class="prototype-module" id="pn-A03"><h3>A03 · 订单管理</h3>
 <h4 id="PN-A03-01">原型说明 · PN-A03-01 查询与分页</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>订单组合筛选</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>订单页，order:view。<b>字段：</b>订单号、用户 ID、三态、微信/支付宝/线下、日期默认空；列表只读。</p><ol><li>填条件点查询或输入框回车。</li><li>切页核命中和总量。</li></ol><p><b>状态规则：</b>订单号包含、用户 ID 精确、日期含端点；状态仅待支付/已支付/已关闭。<b>异常/边界：</b>无退款状态；无结果空表。<b>关联页面：</b>用户、详情。<b>验收依据：</b>OrdersView buildQuery、handlers filterOrders、TC-37/38。</p></td></tr></tbody></table>
@@ -421,7 +421,7 @@
 <tr id="TC-05"><td>TC-05</td><td>失败锁定</td><td>隔离测试账号，已核当前 mock 锁定配置。</td><td>按配置次数连续输错密码，再尝试登录。</td><td>触发配置的登录失败锁定；保留锁定响应证据，不自行指定次数/时长。</td></tr>
 <tr id="TC-06"><td>TC-06</td><td>刷新与数据重置</td><td>已创建一个可识别测试配置。</td><td>普通刷新回查；再在隔离浏览器清站点数据/换浏览器访问。</td><td>普通刷新保留 localStorage 数据；清理/更换后回种子数据，前置数据需重建。</td></tr>
 <tr id="TC-07"><td>TC-07</td><td>仪表盘</td><td>dashboard:view，已记录用户与订单列表数据。</td><td>核指标、最近列表、7 日趋势、套餐分布、专家排行。</td><td>用户/订单等指标与对应列表口径一致；图表与列表展示完整；趋势明确含演示补数。</td></tr>
-<tr id="TC-08"><td>TC-08</td><td>用户筛选与封禁</td><td>user:view/ban，正常用户与封禁用户样本。</td><td>按手机号/ID、状态、注册日期筛选分页；空原因封禁/解封，再填写原因操作。</td><td>筛选分页符合本地数据；空原因拦截；有原因后状态变更，审计留痕。</td></tr>
+<tr id="TC-08"><td>TC-08</td><td>用户筛选与仅封禁</td><td>user:view/ban，正常用户与封禁用户样本。</td><td>按手机号/ID、状态、注册日期筛选分页；正常行空原因封禁，再填写原因操作；检查已封禁行仅详情；直接请求 banned=false 及其他非 true 值。</td><td>筛选分页符合本地数据；正常行保留权限控制的封禁；空原因拦截；有效封禁置 0 并记 user.ban；已封禁无解封入口；非法 banned 返回 422「仅支持封禁用户」，状态和审计不变。仅验证前端与 mock，不宣称真实后端通过。</td></tr>
 <tr id="TC-09"><td>TC-09</td><td>用户详情与权益</td><td>user:view/entitlement，目标用户存在。</td><td>逐开 6 个 Tab；手动调整套餐/权益并回查。</td><td>基本资料、权益、订单、对话统计、对话记录、登录日志可查看；调整持久化并有 before/after 审计。</td></tr>
 <tr id="TC-10"><td>TC-10</td><td>只读双端校验</td><td>viewer 或仅 view 权限测试账号。</td><td>查看各模块，尝试编辑入口并直接调用对应无权 mock 写操作。</td><td>可查看授权数据；编辑按钮不可用/隐藏，写操作被 mock 返回 403。</td></tr>
 <tr id="TC-11"><td>TC-11</td><td>权限矩阵</td><td>role:manage；非超管测试账号。</td><td>创建角色，按字典勾选后保存；以对应账号逐模块验证，必要时重新登录恢复会话。</td><td>权限可按组勾选；核运行时字典与源清单声明 36 / 实列 34 的差额并记录；菜单、路由、操作与实际授权一致；没有 audit 页面不算漏菜单。</td></tr>
@@ -530,6 +530,7 @@
 </tbody></table></div>
 </section>
 <section id="handoff"><h2>12 · 前端、后端、测试协作说明</h2>
+<p class="note">持续同步规则：以后每次更新均同步发布并核验<a href="https://leidaai.github.io/leidaaisystem/">线上应用</a>与<a href="https://leidaai.github.io/leidaaisystem/feature-spec.html">功能原型说明</a>，同步源功能清单、版本回归表和关联原型/验收用例。修订 R3 移除用户解封能力，保留 174 项说明表、88 项编号验收及功能导航；前端与 mock 仅支持封禁，传 false 请求拒绝，不据此宣称新增真实后端实现。</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="交接责任划分"><table><thead><tr><th>责任方</th><th>当前验收职责</th><th>待接入 / 待开发职责</th><th>交付证据</th></tr></thead><tbody>
 <tr><td>前端</td><td>后台表单字段、只读派生、权限入口/守卫、配置版本交互；前台真实/演示来源区分；长期有效显示；原型和文档一致。</td><td>前台 wallet 新契约、年付价丢失、订单时长语义、目录 visibility；真实登录/支付/订单/消耗接入；审计页面。</td><td>全字段回显记录、路由/按钮权限截图、保存与刷新前后截图、前台网络响应。</td></tr>
 <tr><td>后端 / mock 实现</td><td>现有 mock 的字段校验、双端授权、筛选分页、版本快照/恢复、配置刷新、派生重算、引用保护、审计查询；现有真实会员/会话/选品/代理能力。</td><td>真实支付订单闭环、积分台账、反馈奖励入账、加油包订单、订单权益/到期回写、真实经营统计。</td><td>请求/响应、mock 存储前后值、before/after 日志、版本与消费快照差异；敏感信息脱敏。</td></tr>
