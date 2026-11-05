@@ -95,7 +95,7 @@ const plans = ref<ConfigItem[]>([])
 async function loadPlans() {
   plans.value = await listConfig('plans')
 }
-const normalPlans = computed(() => plans.value.filter((p) => (p.planType || 'NORMAL') !== 'GIFT' && p.status === 1))
+const normalPlans = computed(() => plans.value.filter((p) => (p.planType || 'NORMAL') === 'NORMAL' && p.status === 1))
 const giftPlans = computed(() => plans.value.filter((p) => p.planType === 'GIFT' && p.status === 1))
 
 const manualVisible = ref(false)

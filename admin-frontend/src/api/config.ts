@@ -247,7 +247,7 @@ export interface CreditPackage {
 export interface BillingSettings {
   registerBonus: number
   upgradePolicy: 'FULL_PRICE' | 'PRORATED'
-  creditSlider: { enabled: boolean; min: number; max: number; step: number; unitPrice: number }
+  creditSlider: { enabled: boolean; min: number; max: number; step: number; defaultValue: number; unitPrice: number }
 }
 export const listCreditPackages = () => get<CreditPackage[]>('/credit-packages')
 /** 保存积分加油包：有 id 走 PUT 更新，无 id 走 POST 新建；返回保存后的对象 */

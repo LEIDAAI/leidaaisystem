@@ -107,7 +107,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         item.platforms=plats as PlatformType[]
       }
       if(module==='plan') {
-        // v11：套餐类型归一化（GIFT 赠送 / NORMAL 常规；赠送订单只能选 GIFT 套餐）
+        if (input.planType !== undefined && !['NORMAL','GIFT'].includes(input.planType)) fail('会员套餐类型仅支持 NORMAL/GIFT；积分包请使用 credit-packages')
+        if (old && input.planType !== undefined && input.planType !== (old.planType || 'NORMAL')) fail('套餐类型创建后不可修改')
         item.planType=item.planType==='GIFT'?'GIFT':'NORMAL'
         if (input.durationMode === undefined && input.durationDays !== undefined) item.durationMode = input.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
         normalizeDuration(item)
@@ -624,7 +625,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     if(!Number.isInteger(bonusCredits) || bonusCredits<0) fail('赠送积分须为非负整数')
     const price=Number(input.price ?? 0)
     if(!Number.isFinite(price) || price<0) fail('售价须为不小于 0 的数字')
-    const originalPrice=input.originalPrice===undefined?undefined:Number(input.originalPrice)
+    const originalPrice=input.originalPrice===undefined || input.originalPrice===null?undefined:Number(input.originalPrice)
     if(originalPrice!==undefined && (!(originalPrice>0) || originalPrice<=price)) fail('划线价须为大于 0 且大于售价的数字')
     const badge=String(input.badge || '').trim()
     const sort=Number(input.sort ?? 0)
@@ -654,10 +655,14 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const slider=(input.creditSlider && typeof input.creditSlider==='object' && !Array.isArray(input.creditSlider)?input.creditSlider:{}) as Record<string,unknown>
     if(typeof slider.enabled!=='boolean') fail('积分滑杆开关须为布尔值')
     const min=Number(slider.min);const max=Number(slider.max);const step=Number(slider.step)
-    if(![min,max,step].every(v=>Number.isInteger(v) && v>0) || min>=max) fail('滑杆 min/max/step 须为正整数且 min 小于 max')
     const unitPrice=Number(slider.unitPrice)
-    if(!Number.isFinite(unitPrice) || unitPrice<=0) fail('积分单价须为大于 0 的数字')
-    const item: BillingSettings = { registerBonus, upgradePolicy:String(input.upgradePolicy) as BillingSettings['upgradePolicy'], creditSlider:{ enabled:slider.enabled===true, min, max, step, unitPrice } }
+    const defaultValue=Number(slider.defaultValue ?? min)
+    if(slider.enabled) {
+      if(![min,max,step].every(v=>Number.isSafeInteger(v) && v>0) || min>=max || (max-min)%step!==0) fail('滑杆范围须为正整数、min 小于 max，且步长能整除范围差值')
+      if(!Number.isSafeInteger(defaultValue) || defaultValue<min || defaultValue>max || (defaultValue-min)%step!==0) fail('默认积分须在范围内且从下限起按步长对齐')
+      if(!Number.isFinite(unitPrice) || unitPrice<=0) fail('积分单价须为大于 0 的数字')
+    } else if(![min,max,step,defaultValue].every(v=>Number.isSafeInteger(v) && v>=0) || !Number.isFinite(unitPrice) || unitPrice<0) fail('停用滑杆参数须为非负数')
+    const item: BillingSettings = { registerBonus, upgradePolicy:String(input.upgradePolicy) as BillingSettings['upgradePolicy'], creditSlider:{ enabled:slider.enabled===true, min, max, step, defaultValue, unitPrice } }
     db.billingSettings=item
     audit(ctx.adminId,'billing-settings.update','billing_settings',0,before,item);return db.billingSettings
   })

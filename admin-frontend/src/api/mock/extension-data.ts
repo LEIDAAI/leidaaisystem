@@ -594,7 +594,7 @@ export function seedCreditPackages(): CreditPackage[] {
 
 /** v17：全局计费设置默认值（注册赠送 100 积分；升级差价按全价；开放自定义积分滑杆） */
 export function seedBillingSettings(): BillingSettings {
-  return { registerBonus: 100, upgradePolicy: 'FULL_PRICE', creditSlider: { enabled: true, min: 1000, max: 100000, step: 1000, unitPrice: 0.015 } }
+  return { registerBonus: 100, upgradePolicy: 'FULL_PRICE', creditSlider: { enabled: true, min: 1000, max: 100000, step: 1000, defaultValue: 1000, unitPrice: 0.015 } }
 }
 
 /**

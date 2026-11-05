@@ -98,6 +98,17 @@ export function registerWorkspaceHandlers({ route, error: ErrorType }: Services)
     }))
   })
 
+  route('GET', '/api/v1/workspace/credit-packages', () => {
+    const slider = db.billingSettings?.creditSlider
+    return {
+      packages: db.creditPackages.filter(p => p.status === 1).sort((a, b) => a.sort - b.sort || a.id - b.id).map(p => ({
+        id: p.id, name: p.name, credits: p.credits, bonusCredits: p.bonusCredits,
+        price: p.price, originalPrice: p.originalPrice, badge: p.badge, sort: p.sort
+      })),
+      creditSlider: slider?.enabled ? { enabled: true, min: slider.min, max: slider.max, step: slider.step, defaultValue: slider.defaultValue ?? slider.min, unitPrice: slider.unitPrice } : { enabled: false }
+    }
+  })
+
   // 未实现的工作台子路径统一 404，避免落入 admin 契约路由
   route('GET', '/api/v1/workspace/:any', () => fail('工作台接口不存在', 404))
 }

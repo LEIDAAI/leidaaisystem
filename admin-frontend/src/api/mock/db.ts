@@ -792,6 +792,7 @@ if (storedVersion < 17) {
   db.creditPackages ||= seedCreditPackages()
   db.billingSettings ||= seedBillingSettings()
 }
+db.billingSettings.creditSlider.defaultValue ??= db.billingSettings.creditSlider.min
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
 db.users.forEach((user) => {

@@ -16,6 +16,31 @@
 | v0.6 | 2026-10-29 | **专家草稿对话预览**：新增 `POST /experts/preview-chat`（编辑抽屉右侧实时调试，左侧草稿未保存即生效：system_prompt/base_model/model_params.temperature/skill_ids/mcp_server_ids/capabilities/suggested_questions）；响应含 `trace`（matchedSkills/toolCalls/model/latencyMs）；Mock 为演示引擎（确定性仿真 400–900ms 延迟，标注「模拟回复」）；演示专用 `POST /models/{id}/reveal-key`（仅超管）支撑预览面板「真实调用」浏览器直连（OpenAI 兼容，生产走 Java 后端代理，Key 不下发浏览器） |
 | v0.7 | 2026-10-29 | **模型端点自动发现（本次）**：新增 `POST /models/probe`（填接入地址 + API Key 一键拉取端点全部模型列表，新建模型表单「自动发现」使用，选中即回填 code/显示名/供应商）；开发环境经 Vite 本地代理 `/__llm-proxy` 转发绕过浏览器 CORS（Key 仅随请求头透传不落盘），生产由 Java 后端代理实现同契约；演示种子 glm-5.3 切换至内网演示网关 `http://192.168.1.10:8080/v1`（幂等迁移：仅原始 mock 凭据未动过时覆盖），预览「真实调用」直连失败自动经开发代理兜底重试 |
 
+## R10 积分包统一入口与滑块配置预览（2026-11-05）
+
+本修订为后台前端与 localStorage mock 契约，独立前台尚未消费，无真实支付或积分到账联调。新建类型顺序为常规套餐 / 积分包套餐 / 赠送套餐；积分包复用 CreditPackage 与 `/credit-packages`，不向 `/plans` 写 NORMAL 或重复记录。会员套餐历史版本、时长模式保留，类型创建后不可改；`/plans` 仅接受 NORMAL/GIFT，旧缺类型兼容 NORMAL，传 CREDIT_PACKAGE 返回422。手工订单只接受启用 NORMAL，不接入积分包。
+
+| 方法 | 管理端路径 | 权限 | 数据/说明 |
+|---|---|---|---|
+| GET | /credit-packages | plan:view | 按sort、id升序；管理端含停用和内部备注 |
+| POST / PUT | /credit-packages、/credit-packages/{id} | plan:edit | 新建/编辑固定包，独立于plans；无版本或刷新链路 |
+| DELETE | /credit-packages/{id} | plan:edit | 删除固定包，不删会员套餐 |
+| GET / PUT | /billing-settings | plan:view / plan:edit | 同源读取/保存计费设置；滑块快捷弹窗仅合并修改creditSlider，保留其他设置 |
+
+固定包字段：`id,name,credits,bonusCredits,price,originalPrice?,badge?,sort,status,remark?,createdAt,updatedAt`。名称必填、积分正整数、赠送积分非负整数、售价非负、划线价可空且填值须大于售价、排序非负整数、状态0/1、备注最多200字。商品为纯积分，不改变会员等级、会员到期或会员权限；无会员时长/月年付字段。到账与积分有效期仍待购买链路明确接入。
+
+`BillingSettings` 保留 `registerBonus`、`upgradePolicy`；`creditSlider` 为 `{enabled,min,max,step,defaultValue,unitPrice}`。启用时 min/max/step 均为正安全整数且 max>min，`(max-min)%step=0`；defaultValue 为范围内安全整数且 `(defaultValue-min)%step=0`；unitPrice 为正有限数。旧配置或旧调用缺defaultValue时回填min。停用参数允许非负数。无效提交422且不覆盖已有配置。后台预览从defaultValue起，可左右拖到上下限，提高max即可预览超过旧上限；总价 `Math.round(credits*unitPrice*100)/100` 元（展示两位小数）。现行统一单价，不引入前台门槛阶梯折扣，不绑定截图商品价。
+
+### GET /api/v1/workspace/credit-packages（公开只读 mock，待前台接入）
+
+独立于 `/admin/api`，匿名 GET，响应仍包装 `{code,msg,data}`。data 包含 `packages`（仅status=1、sort/id升序）和 `creditSlider`。商品仅白名单 `id,name,credits,bonusCredits,price,originalPrice,badge,sort`，可选字段未配置时省略；内部备注、创建/修改审计字段、注册赠送、升级策略不下发。滑块启用时输出全部滑块字段，停用仅 `{enabled:false}`。没有公共写接口（未注册方法返回404）。
+
+```json
+{"packages":[{"id":1,"name":"示例固定包","credits":1000,"bonusCredits":100,"price":20,"sort":1}],"creditSlider":{"enabled":true,"min":1000,"max":200000,"step":1000,"defaultValue":3000,"unitPrice":0.015}}
+```
+
+示例仅说明字段映射；固定包采用独立售价，自定义采用积分乘单价。独立前台未修改，原有门槛阶梯价未联调。后台预览和目录均不创建订单，不构成会员或支付到账闭环。关联 PN-A04-18/19、PN-A06-05/06、TC-97～104；完整说明见 `docs/feature-spec.html`。
+
 ## 通用约定
 
 - 响应包装：

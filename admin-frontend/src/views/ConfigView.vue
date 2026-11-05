@@ -57,6 +57,8 @@ const models = ref<LlmModel[]>([])
 /** v17 加油包 / 计费设置：独立数据源，不混入 configItems */
 const creditPackages = ref<CreditPackage[]>([])
 const billingSettings = ref<BillingSettings | null>(null)
+const planTypeFilter = ref('')
+const sliderDialog = ref(false)
 const keyword = ref('')
 const status = ref<number | ''>('')
 /** v6：模型域名筛选（接入地址 host），不同渠道的模型区分开 */
@@ -76,7 +78,7 @@ const packageRows = computed(() => creditPackages.value.filter((p) => (!keyword.
 const filtered = computed(() => {
   // 模型模块：keyword/status 由服务端筛选并分页，前端不再二次过滤
   if (module.value === 'model') return items.value
-  return items.value.filter((i) => (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
+  return items.value.filter((i) => (module.value !== 'plan' || !planTypeFilter.value || (i.planType || 'NORMAL') === planTypeFilter.value) && (!keyword.value || `${i.name} ${i.code}`.includes(keyword.value)) && (status.value === '' || i.status === status.value) && (!platformFilter.value.length || (i.platforms || []).some((p) => platformFilter.value.includes(p))))
 })
 
 // -------------------------------------------------------------- v14 专家场景分组（同技能页 v7）：平台 → 场景 两级 Tab 导航，仅专家模块显示
@@ -231,6 +233,12 @@ async function load(): Promise<void> {
       const list = await listConfig(kind.value)
       if (!listGuard.isCurrent(seq)) return
       items.value = list
+      if (kind.value === 'plans') {
+        const [packages, settings] = await Promise.all([listCreditPackages(), getBillingSettings()])
+        if (!listGuard.isCurrent(seq)) return
+        creditPackages.value = packages
+        billingSettings.value = settings
+      }
     }
     if (!listGuard.isCurrent(seq)) return
     if (kind.value === 'mcp/servers') tools.value = await listTools()
@@ -245,7 +253,8 @@ async function load(): Promise<void> {
     if (listGuard.isCurrent(seq)) loading.value = false
   }
 }
-watch(kind, () => { keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; switchTab('all'); void load() }, { immediate: true })
+watch(sliderDialog, async (open) => { if (open) billingSettings.value = await getBillingSettings() })
+watch(kind, () => { planTypeFilter.value = ''; sliderDialog.value = false; keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; switchTab('all'); void load() }, { immediate: true })
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 // 模型模块：status/domain 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
 watch(status, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
@@ -315,6 +324,12 @@ async function onSaved(): Promise<void> {
 // -------------------------------------------------------------- v17 积分加油包：新建 / 编辑 / 删除
 const creditDrawer = ref(false)
 const editPackage = ref<Partial<CreditPackage> | null>(null)
+
+function switchToPlan(type: 'NORMAL' | 'GIFT'): void {
+  creditDrawer.value = false
+  editItem.value = { ...blankDraft(), planType: type }
+  planDrawer.value = true
+}
 
 function editCredit(item?: CreditPackage): void {
   editPackage.value = item ? JSON.parse(JSON.stringify(item)) : { name: '', credits: 500, bonusCredits: 0, price: 0, sort: 0, status: 1 }
@@ -524,6 +539,10 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       >
         <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="PLATFORM_META[p].label" />
       </el-select>
+      <el-select v-if="module === 'plan'" v-model="planTypeFilter" placeholder="全部套餐类型" clearable style="width:170px">
+        <el-option label="常规套餐" value="NORMAL" /><el-option label="积分包套餐" value="CREDIT_PACKAGE" /><el-option label="赠送套餐" value="GIFT" />
+      </el-select>
+      <el-button v-if="module === 'plan' || module === 'credit-package'" @click="sliderDialog = true">自定义积分包 / 滑块设置</el-button>
       <el-button @click="load">刷新列表</el-button>
       <!-- v17：计费设置无新建语义，隐藏；加油包新建按钮文案特判 -->
       <el-button v-if="canEdit && module !== 'billing-setting'" type="primary" @click="module === 'credit-package' ? editCredit() : edit()">{{ module === 'model' ? '新建 / 接入渠道' : module === 'credit-package' ? '新建加油包' : '新建' }}</el-button>
@@ -546,7 +565,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </div>
     </div>
     <!-- v17：加油包 / 计费设置模块使用下方独立表格 / 表单，主配置表格不渲染 -->
-    <el-table v-if="module !== 'credit-package' && module !== 'billing-setting'" v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+    <el-table v-if="module !== 'credit-package' && module !== 'billing-setting' && !(module === 'plan' && planTypeFilter === 'CREDIT_PACKAGE')" v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <el-table-column prop="name" label="名称" min-width="170">
         <template #default="{ row }">
           <template v-if="module === 'expert'">
@@ -691,8 +710,10 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </el-table-column>
     </el-table>
     <!-- v17 积分加油包：独立表格（名称/积分/赠送/价格/角标/排序/状态/操作） -->
-    <el-table v-if="module === 'credit-package'" v-loading="loading" :data="packageRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+    <el-alert v-if="module === 'plan' && (!planTypeFilter || planTypeFilter === 'CREDIT_PACKAGE')" title="积分包套餐（与积分加油包同源）：仅购买积分，不增加会员等级或权限；有效期及前台购买链路待对接。" type="info" :closable="false" style="margin:16px 0" />
+    <el-table v-if="module === 'credit-package' || (module === 'plan' && (!planTypeFilter || planTypeFilter === 'CREDIT_PACKAGE'))" v-loading="loading" :data="packageRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <el-table-column prop="name" label="名称" min-width="150" />
+      <el-table-column label="类型" width="130"><template #default><el-tag size="small">积分包套餐</el-tag></template></el-table-column>
       <el-table-column label="积分" width="100"><template #default="{ row }">{{ row.credits }}</template></el-table-column>
       <el-table-column label="赠送积分" width="100"><template #default="{ row }"><span v-if="row.bonusCredits" style="color:#67c23a">+{{ row.bonusCredits }}</span><span v-else class="muted">—</span></template></el-table-column>
       <el-table-column label="价格" width="130">
@@ -738,9 +759,12 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
     </template>
   </el-card>
 
-  <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <el-dialog v-model="sliderDialog" title="自定义积分包 / 滑块设置" width="760px" destroy-on-close>
+    <BillingSettingsForm v-if="billingSettings" :settings="billingSettings" :can-edit="canEdit" slider-only @saved="load" />
+  </el-dialog>
+  <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" @credit-package="planDrawer = false; editCredit()" />
   <!-- v17 积分加油包表单抽屉 -->
-  <CreditPackageDrawer v-model="creditDrawer" :item="editPackage" :can-edit="canEdit" @saved="load" />
+  <CreditPackageDrawer v-model="creditDrawer" :item="editPackage" :can-edit="canEdit" @saved="load" @plan-type="switchToPlan" @slider-settings="sliderDialog = true" />
   <ExpertOrchestrator v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
   <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" :existing-codes="items.map(i => i.code)" @saved="onSaved" />

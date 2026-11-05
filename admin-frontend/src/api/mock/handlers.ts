@@ -552,7 +552,7 @@ route('POST', '/orders/manual', (ctx) => {
   const u = findUserByPhone(phone)
   const plan = db.plans.find((p) => p.id === planId)
   if (!plan) throw new MockApiError(422, '套餐不存在')
-  if ((plan.planType || 'NORMAL') === 'GIFT') throw new MockApiError(422, '手工订单不能选择赠送套餐')
+  if ((plan.planType || 'NORMAL') !== 'NORMAL') throw new MockApiError(422, '手工订单只能选择常规套餐')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
   if (plan.durationMode === 'MEMBERSHIP') throw new MockApiError(422, '常规套餐不支持会员期内有效')
   const credits = Number(plan.credits ?? 0)

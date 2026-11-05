@@ -5,7 +5,7 @@ import { saveCreditPackage, type CreditPackage } from '../../api/config'
 
 /** 加油包表单抽屉（v17）：积分加油包商品（名称/积分/赠送/价格/角标/排序/状态/备注） */
 const props = defineProps<{ modelValue: boolean; item: Partial<CreditPackage> | null; canEdit: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
+const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: []; 'slider-settings': []; 'plan-type': ['NORMAL' | 'GIFT'] }>()
 const saving = ref(false)
 const draft = ref<Partial<CreditPackage>>({})
 const formRef = ref<FormInstance>()
@@ -63,6 +63,9 @@ async function save(): Promise<void> {
 <template>
   <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑加油包' : '新建加油包'}`" size="520px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
     <el-form ref="formRef" :model="draft" :rules="rules" label-width="110px" :disabled="!canEdit">
+      <el-form-item label="套餐类型"><el-radio-group model-value="CREDIT_PACKAGE" :disabled="!canEdit || Boolean(item?.id)" @change="(value: unknown) => { if (value !== 'CREDIT_PACKAGE') emit('plan-type', value as 'NORMAL' | 'GIFT') }"><el-radio value="NORMAL">常规套餐</el-radio><el-radio value="CREDIT_PACKAGE">积分包套餐</el-radio><el-radio value="GIFT">赠送套餐</el-radio></el-radio-group></el-form-item>
+      <el-alert title="固定积分包，与积分加油包同源；纯积分商品，不改变会员等级、会员到期或权限。积分有效期及到账待购买链路对接。" type="info" :closable="false" style="margin-bottom:16px" />
+      <el-form-item label="自定义积分"><el-button link type="primary" @click="emit('slider-settings')">打开计费设置 / 滑块后台预览</el-button><p class="pkg-hint">固定包按本表价格出售；自定义积分沿计费设置的统一单价计算。</p></el-form-item>
       <el-form-item label="名称" prop="name"><el-input v-model="draft.name" placeholder="如「500 积分加油包」" /></el-form-item>
       <el-form-item label="积分" prop="credits"><el-input-number v-model="draft.credits" :min="1" :step="100" :precision="0" /></el-form-item>
       <el-form-item label="赠送积分" prop="bonusCredits"><el-input-number v-model="draft.bonusCredits" :min="0" :step="50" :precision="0" /></el-form-item>

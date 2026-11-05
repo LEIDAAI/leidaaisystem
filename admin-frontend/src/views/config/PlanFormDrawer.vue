@@ -9,7 +9,7 @@ export type FormDraft = Partial<ConfigItem> & { versionName?: string; note?: str
 
 /** 套餐表单抽屉（P1 逻辑保持不变，仅抽离为独立组件） */
 const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
+const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: []; 'credit-package': [] }>()
 const saving = ref(false)
 const draft = ref<FormDraft>({})
 const formRef = ref<FormInstance>()
@@ -209,8 +209,9 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       <el-form-item label="唯一编码" prop="code"><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="字母数字下划线短横线，创建后不可修改" /></el-form-item>
       <el-form-item label="启用 / 上架"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" /></el-form-item>
       <el-form-item label="套餐类型">
-        <el-radio-group v-model="draft.planType" :disabled="!canEdit || Boolean(item?.id)">
+        <el-radio-group :model-value="draft.planType" :disabled="!canEdit || Boolean(item?.id)" @change="(value: unknown) => value === 'CREDIT_PACKAGE' ? emit('credit-package') : draft.planType = value as 'NORMAL' | 'GIFT'">
           <el-radio value="NORMAL">常规套餐</el-radio>
+          <el-radio value="CREDIT_PACKAGE">积分包套餐</el-radio>
           <el-radio value="GIFT">赠送套餐</el-radio>
         </el-radio-group>
         <p class="perm-hint">赠送套餐用于创建赠送订单：价格必须为 0 元，时长支持长期有效、自定义天数或会员期内有效（随会员续费延续，到期失效）；创建后类型不可修改。</p>
