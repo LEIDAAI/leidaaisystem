@@ -38,7 +38,7 @@
 <p>功能依据为仓库 <code>docs/功能清单.md</code>，样式参考 V3.0.6 AI 积分说明页的绿白配色、1080px 内容版心、吸顶目录和章节表格。<sup><a href="#cite-2">[2]</a></sup>本说明为清单的结构化交付，不构成对线上系统完成情况的额外背书。</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="范围与环境"><table><thead><tr><th>事项</th><th>明确口径</th><th>测试使用方式</th></tr></thead><tbody>
 <tr><td>前台</td><td>C 端共 7 个页面模块；Vue3 + Vite；源码位于独立前台工程，不在当前仓库。</td><td>无 vue-router；通过左侧/顶部导航切换，localStorage 记忆页签；无 URL 深链、无 404 页。</td></tr>
-<tr><td>后台</td><td>仓库 <code>admin-frontend/</code>；Vue3 + Element Plus + vue-router（hash）+ localStorage mock 后端。</td><td>原清单“16 个菜单”按章节计数；实际为<strong>登录/会话 + 15 个业务菜单</strong>，不把登录当作业务菜单。</td></tr>
+<tr><td>后台</td><td>仓库 <code>admin-frontend/</code>；Vue3 + Element Plus + vue-router（hash）+ localStorage mock 后端。</td><td>原清单“16 个菜单”按章节计数；实际为<strong>登录/会话 + 15 个业务菜单</strong>。顶栏不显示 DEMO / API 徽标；页面下方仍说明实际数据模式。</td></tr>
 <tr><td>后台测试身份</td><td>预置 mock 账号 <code>admin / admin123</code> 为超级管理员；预置角色 SUPER_ADMIN、OPS 运营、SUPPORT 客服、viewer 只读。</td><td>预置密码仅用于演示测试；非超管权限测试需配置相应角色账号，清单未给出这些账号的用户名与密码。</td></tr>
 <tr><td>数据存储</td><td>后台 localStorage key 含 <code>v17</code>；清缓存或更换浏览器会重置种子数据。</td><td>先记录角色、版本、订单与用户前置数据；重置后重新构造。原型操作可能改变同浏览器测试数据。</td></tr>
 <tr><td>状态标注</td><td>【真实】后端接口；【演示】硬编码/本地 mock；【模拟】交互不上送服务端；【未对接/待开发】不作为已完成链路。</td><td>演示数据数值与真实业务不一致不单独报缺陷；已知缺陷、待开发项仍保留跟踪，不能当作通过真实业务验收。</td></tr>
