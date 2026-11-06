@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { saveConfig, listConfig, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType } from '@/api/config'
+import { saveConfig, listConfig, PLATFORMS, PLATFORM_META, type ApiOperation, type ConfigItem, type PlatformType } from '@/api/config'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 import type { FormDraft } from './PlanFormDrawer.vue'
 
@@ -13,6 +13,76 @@ const saving = ref(false)
 const draft = ref<McpDraft>({})
 /** v9：套餐清单（PLAN 可见性选择用） */
 const plans = ref<ConfigItem[]>([])
+const manualOperation = ref<ApiOperation>({ method: 'GET', path: '', name: '' })
+const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE']
+
+function operationError(ops: ApiOperation[]): string | null {
+  const names = new Set<string>()
+  const routes = new Set<string>()
+  for (const op of ops) {
+    if (!op.name?.trim() || !op.path?.trim().startsWith('/') || !httpMethods.includes(op.method?.toUpperCase())) return '接口须填写名称、HTTP 方法及以 / 开头的路径'
+    const name = op.name.trim()
+    const route = `${op.method.toUpperCase()} ${op.path.trim()}`
+    if (names.has(name) || routes.has(route)) return `接口名称或方法与路径重复：${name}（${route}）`
+    names.add(name); routes.add(route)
+  }
+  return null
+}
+
+function parseOpenApi(text: string): ApiOperation[] {
+  let doc: Record<string, unknown>
+  try { doc = JSON.parse(text) as Record<string, unknown> } catch { throw new Error('文件不是合法 JSON') }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc) || typeof doc.openapi !== 'string' || !/^3\./.test(doc.openapi)) throw new Error('仅支持 OpenAPI 3.x JSON')
+  if (!doc.paths || typeof doc.paths !== 'object' || Array.isArray(doc.paths) || !Object.keys(doc.paths).length) throw new Error('OpenAPI paths 不能为空')
+  const operations: ApiOperation[] = []
+  for (const [path, methods] of Object.entries(doc.paths as Record<string, unknown>)) {
+    if (!path.startsWith('/') || !methods || typeof methods !== 'object' || Array.isArray(methods)) throw new Error(`无效的接口路径：${path}`)
+    for (const [method, value] of Object.entries(methods as Record<string, unknown>)) {
+      if (!httpMethods.includes(method.toUpperCase())) continue
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${method.toUpperCase()} ${path} 的接口定义无效`)
+      const operation = value as Record<string, unknown>
+      const name = typeof operation.operationId === 'string' && operation.operationId.trim() ? operation.operationId.trim() : `${method.toLowerCase()}_${path.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '')}`
+      operations.push({ name, method: method.toUpperCase(), path, summary: typeof operation.summary === 'string' ? operation.summary : undefined })
+    }
+  }
+  if (!operations.length) throw new Error('paths 中没有 HTTP 接口操作')
+  const err = operationError(operations)
+  if (err) throw new Error(err)
+  return operations
+}
+
+async function importOpenApi(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !props.canEdit) return
+  try {
+    const operations = parseOpenApi(await file.text())
+    draft.value.apiOperations = operations
+    ElMessage.success(`已解析 ${operations.length} 个 API 接口定义，请保存连接后执行「发现工具」`)
+  } catch (e) { ElMessage.error(e instanceof Error ? e.message : '导入失败') }
+}
+
+function changeConnectionType(): void {
+  draft.value.path = ''
+  if (draft.value.connType === 'MCP') {
+    draft.value.apiOperations = []
+    draft.value.transport = 'STREAMABLE_HTTP'
+  } else {
+    draft.value.command = ''
+    draft.value.args = []
+    draft.value.argsText = '[]'
+    draft.value.transport = undefined
+  }
+}
+
+function addOperation(): void {
+  const op = { ...manualOperation.value, name: manualOperation.value.name.trim(), path: manualOperation.value.path.trim() }
+  const err = operationError([...(draft.value.apiOperations || []), op])
+  if (err) { ElMessage.error(err); return }
+  draft.value.apiOperations = [...(draft.value.apiOperations || []), op]
+  manualOperation.value = { method: 'GET', path: '', name: '' }
+}
 
 watch(
   () => [props.modelValue, props.item] as const,
@@ -29,6 +99,8 @@ watch(
     if (!draft.value.platforms.length) draft.value.platforms = ['1688']
     if (!Array.isArray(draft.value.args)) draft.value.args = []
     if (!Array.isArray(draft.value.toolFilter)) draft.value.toolFilter = []
+    if (!Array.isArray(draft.value.apiOperations)) draft.value.apiOperations = []
+    manualOperation.value = { method: 'GET', path: '', name: '' }
     // v9：前台可见性归一化（仅控制 C 端展示，不影响专家调用）
     if (!draft.value.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(draft.value.visibility.type || '')) draft.value.visibility = { type: 'PUBLIC', planIds: [] }
     draft.value.argsText = JSON.stringify(draft.value.args)
@@ -44,7 +116,10 @@ function validateDraft(): string | null {
   if (!String(draft.value.name || '').trim()) return '请填写名称'
   if (!draft.value.platforms || !draft.value.platforms.length) return '平台维度至少选择一个'
   if (draft.value.connType === 'OpenAPI') {
-    if (!String(draft.value.endpoint || '').trim()) return 'OpenAPI 服务地址不能为空'
+    if (!String(draft.value.endpoint || '').trim()) return 'API 服务地址不能为空'
+    if (!draft.value.apiOperations?.length) return '请导入 OpenAPI 文件或手工添加至少一个接口'
+    const err = operationError(draft.value.apiOperations || [])
+    if (err) return err
   } else if (draft.value.transport === 'STDIO') {
     if (!String(draft.value.command || '').trim()) return 'STDIO 启动命令不能为空'
     if (draft.value.argsText !== undefined) {
@@ -69,7 +144,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
   saving.value = true
   try {
     let args: string[] = []
-    if (draft.value.argsText !== undefined) {
+    if (draft.value.connType === 'MCP' && draft.value.transport === 'STDIO' && draft.value.argsText !== undefined) {
       try { args = JSON.parse(draft.value.argsText) as string[] } catch { ElMessage.error('启动参数须为 JSON 字符串数组'); return }
     }
     // 工具过滤：文本域每行（或逗号分隔）一个工具名，留空 = 开放全部
@@ -80,11 +155,12 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       return
     }
     await saveConfig('mcp/servers', {
-      ...draft.value, args, toolFilter,
+      ...draft.value, args: draft.value.connType === 'MCP' ? args : [], toolFilter,
+      apiOperations: draft.value.connType === 'OpenAPI' ? draft.value.apiOperations : [],
       platforms: draft.value.platforms.filter((p) => PLATFORMS.includes(p as PlatformType)),
       versionName: v.versionName, note: v.note
     })
-    ElMessage.success('连接配置已保存，版本 +1（快照已写入版本历史）；凭据已按掩码入库，请执行「连接测试」验证')
+    ElMessage.success(draft.value.connType === 'OpenAPI' ? '连接已保存，API 工具定义可通过「发现工具」同步；调用待后端接入' : 'MCP 连接已保存；「发现工具」为 Mock 示例数据，连接测试也为演示模拟')
     versionDialog.value = false
     emit('saved')
     emit('update:modelValue', false)
@@ -105,9 +181,9 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
         <p class="muted">平台维度多选（至少一个）：专家按平台联动时仅显示有平台交集的连接。</p>
       </el-form-item>
       <el-form-item label="连接类型">
-        <el-radio-group v-model="draft.connType">
-          <el-radio-button value="MCP">MCP（协议发现工具）</el-radio-button>
-          <el-radio-button value="OpenAPI">OpenAPI（schema 解析）</el-radio-button>
+        <el-radio-group v-model="draft.connType" @change="changeConnectionType">
+          <el-radio-button value="MCP">导入 MCP 服务</el-radio-button>
+          <el-radio-button value="OpenAPI">导入 API 接口</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <template v-if="draft.connType === 'MCP'">
@@ -126,10 +202,33 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
           <el-form-item label="启动命令"><el-input v-model="draft.command" placeholder="如 node / python" /></el-form-item>
           <el-form-item label="启动参数"><el-input v-model="draft.argsText" type="textarea" :rows="2" placeholder="JSON 数组，如 [&quot;-y&quot;,&quot;server.js&quot;]" /></el-form-item>
         </template>
+        <p class="muted">登记 MCP HTTP/SSE/STDIO 连接；发现工具和连接测试为 Mock 示例，不会访问 MCP 服务。</p>
       </template>
       <template v-else>
-        <el-form-item label="服务地址"><el-input v-model="draft.endpoint" placeholder="https://..." /></el-form-item>
-        <el-form-item label="Schema 路径"><el-input v-model="draft.path" placeholder="/openapi.json 或 xxx/openapi.json" /></el-form-item>
+        <el-form-item label="服务地址"><el-input v-model="draft.endpoint" placeholder="https://api.example.com" /></el-form-item>
+        <el-form-item label="Schema 路径"><el-input v-model="draft.path" placeholder="可选，仅记录 /openapi.json；不会自动请求" /></el-form-item>
+        <el-form-item label="导入 OpenAPI">
+          <input type="file" accept=".json,application/json" :disabled="!canEdit" @change="importOpenApi" />
+          <p class="muted">仅解析本地 OpenAPI 3.x JSON 的 paths；导入将替换当前接口定义，不保存文件原文。</p>
+        </el-form-item>
+        <el-form-item label="手工添加接口">
+          <div style="display:flex;gap:8px;width:100%">
+            <el-select v-model="manualOperation.method" style="width:115px"><el-option v-for="method in httpMethods" :key="method" :value="method" :label="method" /></el-select>
+            <el-input v-model="manualOperation.path" placeholder="/products/{id}" />
+            <el-input v-model="manualOperation.name" placeholder="接口名称" />
+            <el-button @click="addOperation">添加</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item :label="`接口定义（${draft.apiOperations?.length || 0}）`">
+          <el-table :data="draft.apiOperations || []" size="small" style="width:100%" max-height="220">
+            <el-table-column prop="method" label="方法" width="85" />
+            <el-table-column prop="path" label="路径" min-width="150" />
+            <el-table-column prop="name" label="名称" min-width="150" />
+            <el-table-column prop="summary" label="摘要" min-width="130" />
+            <el-table-column label="操作" width="75"><template #default="{ $index }"><el-button link type="danger" @click="draft.apiOperations?.splice($index, 1)">移除</el-button></template></el-table-column>
+          </el-table>
+          <p class="muted">保存后执行「发现工具」同步定义；仅导入元数据，API 调用待后端接入，连接测试为 Mock 模拟。</p>
+        </el-form-item>
       </template>
       <el-form-item label="鉴权方式">
         <el-select v-model="draft.authConfig!.type" style="width:200px">

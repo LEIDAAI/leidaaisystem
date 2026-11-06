@@ -750,10 +750,13 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       />
     </div>
     <template v-if="module === 'mcp'">
-      <h3>工具清单（工具发现落库，受 tool_filter 过滤）</h3>
+      <h3>工具清单（API 为已导入定义，调用待后端接入；MCP 为发现示意数据）</h3>
       <el-table v-loading="loading" :data="tools" size="small">
         <el-table-column label="所属服务" min-width="150"><template #default="{ row }">{{ items.find((s) => s.id === row.serverId)?.name || row.serverId }}</template></el-table-column>
         <el-table-column prop="name" label="工具" min-width="180" />
+        <el-table-column label="来源" width="135"><template #default="{ row }">{{ row.source === 'API_IMPORT' ? '已导入定义' : 'MCP Mock 示例' }}</template></el-table-column>
+        <el-table-column label="接口" min-width="190"><template #default="{ row }">{{ row.method ? `${row.method} ${row.path}` : '—' }}</template></el-table-column>
+        <el-table-column prop="summary" label="摘要" min-width="140" />
         <el-table-column label="启用" width="90"><template #default="{ row }"><el-switch :model-value="row.enabled" :disabled="!canEdit" @change="askToolChange(row)" /></template></el-table-column>
       </el-table>
     </template>

@@ -88,7 +88,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
       for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
       item.name=String(item.name).trim();item.code=String(item.code).trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
@@ -226,13 +226,26 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         const path=String(item.path||'').trim()
         if(path && !path.startsWith('/')) fail('端点路径须以 / 开头')
         if(item.connType==='MCP') {
+          item.apiOperations=[]
           if(!['STREAMABLE_HTTP','SSE','STDIO'].includes(item.transport || '')) fail('MCP 传输类型无效')
           if(item.transport==='STDIO') { if(!item.command?.trim() || !Array.isArray(item.args) || item.args.some(a=>typeof a!=='string')) fail('STDIO 需要启动命令及字符串参数数组'); item.endpoint=''; item.path='' }
           else { try { const url=new URL(item.endpoint || ''); if(!['http:','https:'].includes(url.protocol) || url.username || url.password) fail('地址必须为HTTP(S)，不允许内嵌鉴权') } catch { fail('HTTP/SSE 地址无效') }; item.command='';item.args=[]; if(!path) item.path='/mcp' }
         } else {
           try { const url=new URL(item.endpoint || ''); if(!['http:','https:'].includes(url.protocol) || url.username || url.password) fail('地址必须为HTTP(S)，不允许内嵌鉴权') } catch { fail('OpenAPI 地址无效') }
-          if(!path) fail('OpenAPI 需要填写 openapi.json 端点路径')
-          item.command='';item.args=[];item.transport=item.transport||'STREAMABLE_HTTP'
+          if(!Array.isArray(item.apiOperations)) fail('API 接口定义须为数组')
+          const operations=item.apiOperations || []
+          if(!operations.length) fail('请导入 OpenAPI 文件或手工添加至少一个接口')
+          const names=new Set<string>();const routes=new Set<string>()
+          for(const op of operations) {
+            if(!op || typeof op.name!=='string' || !op.name.trim() || typeof op.path!=='string' || !op.path.startsWith('/') || !op.path.trim() || typeof op.method!=='string' || !['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','TRACE'].includes(op.method.toUpperCase()) || (op.summary!==undefined && typeof op.summary!=='string')) fail('API 接口须填写有效的名称、HTTP 方法及以 / 开头的路径')
+            op.name=op.name.trim();op.method=op.method.toUpperCase();op.path=op.path.trim()
+            const routeKey=`${op.method} ${op.path}`
+            if(names.has(op.name) || routes.has(routeKey)) fail(`API 接口名称或方法与路径重复：${op.name}（${routeKey}）`)
+            names.add(op.name);routes.add(routeKey)
+          }
+          item.apiOperations=operations.map(op=>({ name:op.name,method:op.method,path:op.path,summary:op.summary?.trim() || undefined }))
+          item.path=path
+          item.command='';item.args=[];item.transport=undefined
         }
         const auth=item.authConfig || { type:'NONE' as const }
         if(!['NONE','BEARER','API_KEY','HEADER'].includes(auth.type)) fail('鉴权类型无效')
@@ -597,7 +610,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   })
 
   // -------------------------------------------------- MCP 版本历史（v5 补齐：连接配置与工具绑定快照，恢复生成新版本）
-  const MCP_RESTORE_FIELDS = ['code','name','status','platforms','connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility'] as readonly (keyof ConfigItem)[]
+  const MCP_RESTORE_FIELDS = ['code','name','status','platforms','connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'] as readonly (keyof ConfigItem)[]
   route('GET','/mcp/servers/:id/versions',ctx=>{perm(ctx,'mcp:view');const item=find(db.servers,ctx.params.id);return (db.mcpVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
   route('POST','/mcp/servers/:id/restore',ctx=>{
     perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id)
@@ -605,7 +618,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const hist=(db.mcpVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
     if(!hist) { throw new ErrorType(404,'版本不存在') }
     const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    for(const key of MCP_RESTORE_FIELDS) if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]})
+    for(const key of MCP_RESTORE_FIELDS) { if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]}); else delete (item as unknown as Record<string,unknown>)[key] }
     touch(item)
     const restoredName=restoreNameOf(input,hist)
     ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
@@ -700,21 +713,36 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   // -------------------------------------------------- 技能统计 / MCP 工具与连接
   route('GET','/skills/:id/stats',ctx=>{perm(ctx,'skill:view');const item=find(db.skills,ctx.params.id);const calls=db.skillCalls.filter(c=>c.skillId===item.id && Date.now()-Date.parse(c.createdAt)<=30*86400000);return { calls7:calls.filter(c=>Date.now()-Date.parse(c.createdAt)<=7*86400000).length,calls30:calls.length,successRate:calls.length?calls.filter(c=>c.success).length/calls.length:0,source:'Mock 本地调用记录' }})
   route('GET','/mcp/tools',ctx=>{if(!['mcp:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);return db.tools})
-  route('PUT','/mcp/tools/:id/enabled',ctx=>{perm(ctx,'mcp:edit');const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404);const enabled=(ctx.body as Record<string,unknown>).enabled;if(typeof enabled!=='boolean') fail('enabled须为布尔值');const before={...tool};const server=db.servers.find(s=>s.id===tool.serverId)!;const input=(ctx.body || {}) as Record<string,unknown>;const vMeta=versionMeta(ctx,input,db.mcpVersions,server.id);assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName);tool.enabled=enabled as boolean;touch(server);(db.mcpVersions[String(server.id)] ||= []).push({version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:snapshot(server)});audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,tool);return tool})
+  route('PUT','/mcp/tools/:id/enabled',ctx=>{perm(ctx,'mcp:edit');const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404);const enabled=(ctx.body as Record<string,unknown>).enabled;if(typeof enabled!=='boolean') fail('enabled须为布尔值');const before={...tool};const server=db.servers.find(s=>s.id===tool.serverId)!;if(enabled && server.connType==='OpenAPI' && !(server.apiOperations||[]).some(op=>op.name===tool.name && (!server.toolFilter?.length || server.toolFilter.includes(op.name)))) fail('接口定义已移除或被过滤，请重新导入并发现工具');const input=(ctx.body || {}) as Record<string,unknown>;const vMeta=versionMeta(ctx,input,db.mcpVersions,server.id);assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName);tool.enabled=enabled as boolean;touch(server);(db.mcpVersions[String(server.id)] ||= []).push({version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:snapshot(server)});audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,tool);return tool})
   route('POST','/mcp/servers/:id/discover',ctx=>{
     perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id)
     if(item.status!==1) fail('请先启用服务')
-    // 工具发现按 conn_type 返回不同工具集；MCP 再按服务编码预置各平台工具名（Mock 固定数据，无网络调用）
-    const OPENAPI_TOOLS=['list_operations','get_schema','invoke_operation','health_ping']
-    const PLATFORM_TOOLS:Record<string,string[]>={ amazon:['amazon_bsr_ranking','amazon_sales_estimate','amazon_reviews_fetch'], ozon:['ozon_category_filter','ozon_product_search','ozon_price_history'], temu:['temu_product_search','temu_price_trend','temu_reviews'], echotik:['echotik_video_search','echotik_influencer_ranklist','echotik_live_list'], tiktok:['tiktok_shop_ranking','tiktok_video_search'], ali:['ali_product_search','ali_keyword_trend','ali_shop_rank','ali_billboard_list'], dld:['ali_product_search','ali_keyword_trend','ali_shop_rank','ali_billboard_list'] }
-    let sampleNames:string[]
-    if(item.connType==='OpenAPI') sampleNames=OPENAPI_TOOLS
-    else { const key=Object.keys(PLATFORM_TOOLS).find(k=>String(item.code).toLowerCase().includes(k)); sampleNames=key?PLATFORM_TOOLS[key]:['product_search','product_detail','keyword_trend','seller_search','category_tree'] }
     const filter=(item.toolFilter||[]).filter(t=>t.trim())
-    const names=filter.length?sampleNames.filter(n=>filter.includes(n)):sampleNames
-    for(const name of names) if(!db.tools.some(t=>t.serverId===item.id && t.name===name)) db.tools.push({ id:nextMockId(), serverId:item.id, name, enabled:true })
-    touch(item)
-    audit(ctx.adminId,'mcp.discover','mcp',item.id,null,{ generated:names, connType:item.connType, toolFilter:filter.length?filter:'全部', source:'Mock 固定示例工具，按 connType 区分工具集并受 tool_filter 过滤，无网络调用' })
+    if(item.connType==='OpenAPI') {
+      const operations=(item.apiOperations||[]).filter(op=>!filter.length || filter.includes(op.name))
+      const names=new Set(operations.map(op=>op.name))
+      for(const tool of db.tools.filter(t=>t.serverId===item.id)) {
+        if(!names.has(tool.name)) { tool.enabled=false;continue }
+        const op=operations.find(o=>o.name===tool.name)!
+        Object.assign(tool,{ method:op.method,path:op.path,summary:op.summary,source:'API_IMPORT' as const })
+      }
+      for(const op of operations) if(!db.tools.some(t=>t.serverId===item.id && t.name===op.name)) db.tools.push({ id:nextMockId(),serverId:item.id,name:op.name,enabled:true,method:op.method,path:op.path,summary:op.summary,source:'API_IMPORT' })
+      touch(item)
+      audit(ctx.adminId,'mcp.discover','mcp',item.id,null,{ generated:[...names],source:'已导入 API 定义；未调用用户 API' })
+    } else {
+      const PLATFORM_TOOLS:Record<string,string[]>={ amazon:['amazon_bsr_ranking','amazon_sales_estimate','amazon_reviews_fetch'], ozon:['ozon_category_filter','ozon_product_search','ozon_price_history'], temu:['temu_product_search','temu_price_trend','temu_reviews'], echotik:['echotik_video_search','echotik_influencer_ranklist','echotik_live_list'], tiktok:['tiktok_shop_ranking','tiktok_video_search'], ali:['ali_product_search','ali_keyword_trend','ali_shop_rank','ali_billboard_list'], dld:['ali_product_search','ali_keyword_trend','ali_shop_rank','ali_billboard_list'] }
+      const key=Object.keys(PLATFORM_TOOLS).find(k=>String(item.code).toLowerCase().includes(k))
+      const sampleNames=key?PLATFORM_TOOLS[key]:['product_search','product_detail','keyword_trend','seller_search','category_tree']
+      const names=filter.length?sampleNames.filter(n=>filter.includes(n)):sampleNames
+      for(const tool of db.tools.filter(t=>t.serverId===item.id && t.source==='API_IMPORT')) tool.enabled=false
+      for(const name of names) {
+        const existing=db.tools.find(t=>t.serverId===item.id && t.name===name)
+        if(existing?.source==='API_IMPORT') Object.assign(existing,{ enabled:true,source:'MCP_MOCK' as const,method:undefined,path:undefined,summary:undefined })
+        else if(!existing) db.tools.push({ id:nextMockId(), serverId:item.id, name, enabled:true, source:'MCP_MOCK' })
+      }
+      touch(item)
+      audit(ctx.adminId,'mcp.discover','mcp',item.id,null,{ generated:names,source:'MCP Mock 示例工具，无网络调用' })
+    }
     return db.tools.filter(t=>t.serverId===item.id)
   })
   route('POST','/mcp/servers/:id/health-check',ctx=>{perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id);item.healthStatus=item.status===1?'HEALTHY':'UNAVAILABLE';item.lastHealthAt=nowStr();item.healthDetail='Mock 模拟检查，未请求真实服务';audit(ctx.adminId,'mcp.health','mcp',item.id,null,{healthStatus:item.healthStatus});return publicItem(item)})

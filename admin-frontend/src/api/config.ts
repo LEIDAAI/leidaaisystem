@@ -44,6 +44,7 @@ export interface VisibilityConfig { type: 'PUBLIC' | 'PLAN' | 'PRIVATE'; planIds
 export interface SkillFile { name: string; content: string }
 /** MCP/OpenAPI 鉴权配置（凭据界面掩码，永不回显明文） */
 export interface AuthConfig { type: 'NONE' | 'BEARER' | 'API_KEY' | 'HEADER'; headerName?: string; credential?: string }
+export interface ApiOperation { name: string; method: string; path: string; summary?: string }
 /**
  * 平台维度（专家/技能/MCP 通用，v5）：多选 JSON 数组，至少一个；
  * AMAZON 显示「亚马逊」；无「通用」单值（覆盖全平台=多选全部，见设计文档附录 12.5）
@@ -150,6 +151,7 @@ export interface ConfigItem {
   connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[]
   transport?: 'STREAMABLE_HTTP' | 'SSE' | 'STDIO'; endpoint?: string; command?: string; args?: string[]
   authConfig?: AuthConfig
+  apiOperations?: ApiOperation[]
   healthStatus?: string; lastHealthAt?: string; healthDetail?: string
   // ---- 平台维度（v5，专家/技能/MCP 通用）：多选数组，至少一个 ----
   platforms?: PlatformType[]
@@ -161,7 +163,7 @@ export interface ConfigItem {
   intro?: string; modelParams?: Record<string, unknown>; mcpToolIds?: number[]
   paramSchema?: Record<string, unknown>; execConfig?: Record<string, unknown>
 }
-export interface Tool { id: number; serverId: number; name: string; enabled: boolean }
+export interface Tool { id: number; serverId: number; name: string; enabled: boolean; method?: string; path?: string; summary?: string; source?: 'API_IMPORT' | 'MCP_MOCK' }
 /** 场景（技能分组维度之一，平台下的细分场景） */
 export interface Scenario {
   id: number
