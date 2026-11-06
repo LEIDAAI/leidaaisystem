@@ -129,7 +129,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  document.title = to.meta.title ? `${to.meta.title} - 店雷达后台管理系统` : '店雷达后台管理系统'
+  document.title = to.meta.title ? `${to.meta.title} - 店雷达管理系统` : '店雷达管理系统'
   const auth = useAuthStore()
   // 会话恢复仅在首次（restore 内部已去重）；不再每次导航刷 /me，避免网络抖动被误踢下线
   if (!to.meta.public) await auth.restore()

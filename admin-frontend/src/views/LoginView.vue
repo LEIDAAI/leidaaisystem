@@ -38,13 +38,13 @@ function fill(account: typeof accounts[number]) { form.username = account.userna
 <template>
   <div class="login-page">
     <section class="login-story">
-      <div class="login-brand"><svg width="39" height="39" viewBox="0 0 40 40" role="img" aria-label="店雷达后台管理系统"><rect x="6" y="7" width="28" height="21" rx="5" fill="none" stroke="#00b96b" stroke-width="4"/><circle cx="20" cy="17.5" r="4.5" fill="#f7ba2a"/><rect x="11" y="32" width="18" height="4.5" rx="2.25" fill="#00b96b"/></svg>店雷达后台管理系统</div>
-      <div class="story-copy"><div class="story-eyebrow">ADMINISTRATION WORKSPACE</div><h1>有序管理，<br>让业务清晰可见。</h1><p>用户、订单与团队权限，<br>在一个工作台中高效协同。</p><div class="story-line"></div><small>店雷达后台管理系统</small></div>
+      <div class="login-brand"><svg width="39" height="39" viewBox="0 0 40 40" role="img" aria-label="店雷达管理系统"><rect x="6" y="7" width="28" height="21" rx="5" fill="none" stroke="#00b96b" stroke-width="4"/><circle cx="20" cy="17.5" r="4.5" fill="#f7ba2a"/><rect x="11" y="32" width="18" height="4.5" rx="2.25" fill="#00b96b"/></svg>店雷达管理系统</div>
+      <div class="story-copy"><div class="story-eyebrow">ADMINISTRATION WORKSPACE</div><h1>有序管理，<br>让业务清晰可见。</h1><p>用户、订单与团队权限，<br>在一个工作台中高效协同。</p><div class="story-line"></div><small>店雷达管理系统</small></div>
       <div class="radar-art" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
-      <div class="story-footer">LEIDAAI <span>专注每一个重要决策</span></div>
+      <div class="story-footer">店雷达管理系统 <span>专注每一个重要决策</span></div>
     </section>
     <section class="login-panel"><div class="login-card">
-      <span class="login-badge">{{ USE_MOCK ? '演示工作空间' : '管理工作空间' }}</span><h2>欢迎回来</h2><p class="login-subtitle">使用管理员账号登录店雷达后台管理系统</p>
+      <span class="login-badge">{{ USE_MOCK ? '演示工作空间' : '管理工作空间' }}</span><h2>欢迎回来</h2><p class="login-subtitle">使用管理员账号登录店雷达管理系统</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="error-alert" />
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" size="large" @submit.prevent="handleSubmit">
         <el-form-item label="管理员账号" prop="username"><el-input v-model="form.username" placeholder="请输入账号" autocomplete="username" /></el-form-item>
@@ -52,7 +52,7 @@ function fill(account: typeof accounts[number]) { form.username = account.userna
         <el-button native-type="submit" type="primary" class="login-submit" size="large" :loading="loading">登录工作台 →</el-button>
       </el-form>
       <div v-if="USE_MOCK" class="demo-accounts"><div class="demo-title">演示账号 <span>点击填入，密码将真实校验</span></div><button v-for="account in accounts" :key="account.username" @click="fill(account)" :title="account.hint"><span>{{ account.label }}</span><code>{{ account.username }} / {{ account.password }}</code></button><p>演示模式 · 未接后端<br>数据保存在当前浏览器，请勿使用真实密码或敏感信息。</p></div>
-    </div><div class="login-footer">© {{ new Date().getFullYear() }} 店雷达后台管理系统</div></section>
+    </div><div class="login-footer">© {{ new Date().getFullYear() }} 店雷达管理系统</div></section>
   </div>
 </template>
 
