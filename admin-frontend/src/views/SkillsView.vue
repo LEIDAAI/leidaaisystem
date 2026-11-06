@@ -2,7 +2,7 @@
 /**
  * 技能管理页（v7，Open WebUI 式）：
  * 搜索 + 行式列表（勾选/图标/名称/描述/平台/绑定助手数/状态开关/更新时间/操作）；
- * 右上「创建」下拉五项：创建技能 / 导入文件（JSON·ZIP，解析预览批量导入）/ 从文件夹导入 / 导出 ZIP（勾选）/ 导出 JSON（勾选）。
+ * 右上独立提供创建、导入、导出、场景管理入口；导入支持文件/文件夹，导出支持勾选项 ZIP/JSON。
  * 编辑进入全屏 SkillEditor（文件树 + 编辑|预览 + 自动保存）；停用/删除遇 409 引用确认后携带 confirmReferences 重试。
  * v7 分组：上方 Tab 切换（全部 / 未分组 / 各平台，平台下再切场景）；「加入场景分组」改为下拉框选择；右上「场景管理」维护平台下的场景。
  */
@@ -204,7 +204,7 @@ async function edit(item?: ConfigItem): Promise<void> {
   editorVisible.value = true
 }
 
-// -------------------------------------------------------------- 创建下拉（六项）
+// -------------------------------------------------------------- 工具栏操作
 const importInput = ref<HTMLInputElement | null>(null)
 const folderInput = ref<HTMLInputElement | null>(null)
 
@@ -375,21 +375,26 @@ function boundExpertCount(row: ConfigItem): number {
       <el-input v-model="keyword" placeholder="搜索名称 / 编码 / 描述" clearable style="width:260px" />
       <el-button @click="load">刷新列表</el-button>
       <div class="spacer" />
-      <el-dropdown v-if="canEdit || canExport" trigger="click" @command="onCreate">
-        <el-button type="primary">
-          创建 <el-icon style="margin-left:4px"><svg viewBox="0 0 1024 1024" width="12" height="12"><path fill="currentColor" d="M831.872 340.864 512 652.672 192.128 340.864a30.592 30.592 0 0 0-42.752 0 29.12 29.12 0 0 0 0 41.6L489.664 714.24a32 32 0 0 0 44.672 0l340.288-331.712a29.12 29.12 0 0 0 0-41.728 30.592 30.592 0 0 0-42.752 0z"/></svg></el-icon>
-        </el-button>
+      <el-button v-if="canEdit" type="primary" @click="onCreate('create')">创建技能</el-button>
+      <el-dropdown v-if="canEdit" trigger="click" @command="onCreate">
+        <el-button>导入 ▾</el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item v-if="canEdit" command="create">创建技能</el-dropdown-item>
-            <el-dropdown-item v-if="canEdit" command="import-file">导入文件（JSON / ZIP）</el-dropdown-item>
-            <el-dropdown-item v-if="canEdit" command="import-folder">从文件夹导入</el-dropdown-item>
-            <el-dropdown-item v-if="canExport" command="export-zip" divided>导出 ZIP（勾选 {{ selected.length }}）</el-dropdown-item>
-            <el-dropdown-item v-if="canExport" command="export-json">导出 JSON（勾选 {{ selected.length }}）</el-dropdown-item>
-            <el-dropdown-item v-if="canEdit" command="manage-scenarios" divided>场景管理</el-dropdown-item>
+            <el-dropdown-item command="import-file">导入文件（JSON / ZIP）</el-dropdown-item>
+            <el-dropdown-item command="import-folder">从文件夹导入</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
+      <el-dropdown v-if="canExport" trigger="click" @command="onCreate">
+        <el-button>导出（已勾选 {{ selected.length }}）▾</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="export-zip">导出 ZIP（勾选 {{ selected.length }}）</el-dropdown-item>
+            <el-dropdown-item command="export-json">导出 JSON（勾选 {{ selected.length }}）</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-button v-if="canEdit" @click="onCreate('manage-scenarios')">场景管理</el-button>
     </div>
 
     <!-- v7 分组导航：一级 Tab（全部 / 未分组 / 各平台）+ 选中平台后的二级场景 Tab -->
@@ -400,7 +405,6 @@ function boundExpertCount(row: ConfigItem): number {
         <button v-for="p in PLATFORMS" :key="p" class="tab-pill" :class="{ active: activeTab === p }" @click="switchTab(p)">
           <span class="tab-dot" :style="{ background: platMetaOf(p).color }" />{{ platMetaOf(p).label }}<span class="tab-count">{{ countOf(p) }}</span>
         </button>
-        <el-button v-if="canEdit" class="tab-manage" link type="primary" size="small" @click="sceneDlg = true">场景管理</el-button>
       </div>
       <div v-if="activeTab !== 'all' && activeTab !== 'ungrouped'" class="tab-row sub">
         <button class="tab-pill small" :class="{ active: activeScenario === 'all' }" @click="activeScenario = 'all'">全部场景<span class="tab-count">{{ subCountOf('all') }}</span></button>
@@ -414,7 +418,7 @@ function boundExpertCount(row: ConfigItem): number {
       <template v-if="selected.length">
         <span class="sel-count">已勾选 {{ selected.length }} 项</span>
         <el-button link type="primary" size="small" @click="selected = []">清空</el-button>
-        <span class="sel-hint">勾选后可通过右上「创建」菜单导出 ZIP / JSON</span>
+        <span class="sel-hint">勾选后可通过右上「导出」按钮选择 ZIP / JSON</span>
       </template>
     </div>
 
@@ -533,7 +537,7 @@ function boundExpertCount(row: ConfigItem): number {
   </el-dialog>
 </template>
 <style scoped>
-.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
 .toolbar .spacer { flex: 1; }
 .rows { display: flex; flex-direction: column; }
 .row { display: flex; align-items: center; gap: 14px; padding: 12px 8px; border-bottom: 1px solid var(--el-border-color-extra-light); }
@@ -559,7 +563,6 @@ function boundExpertCount(row: ConfigItem): number {
 .tab-pill.small.active { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
 .tab-count { font-size: 11px; opacity: 0.75; }
 .tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
-.tab-manage { margin-left: auto; }
 .group-target { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 10px; }
 .group-panels { display: flex; gap: 0; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; overflow: hidden; min-height: 280px; max-height: 360px; }
 .group-panel { display: flex; flex-direction: column; }
