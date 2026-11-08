@@ -186,14 +186,18 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; assetsFrozen: boolean } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; assetsFrozen: boolean; quoteExpired?: boolean } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   const membership = o.durationMode === 'MEMBERSHIP' ? readMockMembership(user) : undefined
+  // 报价有效期标记（场景 24）：过期待支付单提示"报价已过期，请关闭重下"
+  const quoteExpireAt = o.quoteExpireAt ? dayjs(o.quoteExpireAt).valueOf() : NaN
+  const quoteExpired = o.status === 'PENDING' && Number.isFinite(quoteExpireAt) && quoteExpireAt <= Date.now()
   return {
     ...rest,
     expiresAt: readMockOrderExpiry(o, user),
     assetsFrozen: user?.status === 0,
+    ...(quoteExpired ? { quoteExpired: true } : {}),
     ...(membership ? { membership, expiresAt: membership.expiresAt, durationMonths: null, durationDays: undefined } : {}),
     phone: user?.phone || '—',
     wechatNickname: user ? (user.wechatNickname || '-') : '-'
@@ -646,20 +650,34 @@ route('POST', '/orders/manual', (ctx) => {
   if ((plan.planType || 'NORMAL') !== 'NORMAL') throw new MockApiError(422, '手工订单只能选择常规套餐')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
   if (plan.durationMode === 'MEMBERSHIP') throw new MockApiError(422, '常规套餐不支持会员期内有效')
+  // v21 计费周期：默认 MONTHLY 兼容旧调用；YEARLY 须已配置年付周期价。时长按周期写入（年=365 天）。
+  const cycle = b.cycle === undefined ? 'MONTHLY' : b.cycle
+  if (cycle !== 'MONTHLY' && cycle !== 'YEARLY') throw new MockApiError(422, '计费周期须为 MONTHLY 或 YEARLY')
+  const cycleConf = cycle === 'YEARLY' ? plan.billingCycles?.find((c) => c.cycle === 'YEARLY' && Number.isFinite(Number(c.price))) : undefined
+  if (cycle === 'YEARLY' && !cycleConf) throw new MockApiError(422, '该套餐未配置年付周期，请先在套餐管理添加')
+  // 首购价：仅当套餐配置了对应周期（或月付基础）首购价且 useFirstPurchase 显式声明时生效；
+  // 是否"真实首购"由交易服务核定，这里按操作员申报记录到审计。
+  const useFirstPurchase = b.useFirstPurchase === true
+  const confFirst = cycleConf?.firstPurchasePrice
+  const baseFirst = cycle === 'MONTHLY' && typeof plan.firstPurchasePrice === 'number' ? plan.firstPurchasePrice : undefined
+  const firstPrice = typeof confFirst === 'number' ? confFirst : baseFirst
+  if (useFirstPurchase && typeof firstPrice !== 'number') throw new MockApiError(422, '该套餐未配置首购价，不能按首购价结算')
   const credits = Number(plan.credits ?? 0)
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
   const durationMode = plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS')
-  const durationDays = durationMode === 'LIFETIME' ? 0 : plan.durationDays ?? 30
+  const durationDays = durationMode === 'LIFETIME' ? 0 : cycle === 'YEARLY' ? 365 : plan.durationDays ?? 30
   if (!Number.isSafeInteger(durationDays) || durationDays < 0 || (durationMode !== 'LIFETIME' && durationDays === 0)) throw new MockApiError(422, '套餐有效天数无效')
   const at = nowStr()
   const id = nextMockId()
+  const orderNo = `ORD2026${String(10000000 + id)}`
   const order: MockOrder = {
     id,
-    orderNo: `ORD2026${String(10000000 + id)}`,
+    orderNo,
     source: 'MANUAL',
     userId: u.id,
     planId: plan.id,
-    planName: plan.name,
+    planName: cycle === 'YEARLY' ? `${plan.name}（年付）` : plan.name,
+    orderCategory: 'FIRST_PURCHASE',
     amount,
     goodsAmount: amount,
     discountAmount: 0,
@@ -671,13 +689,20 @@ route('POST', '/orders/manual', (ctx) => {
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
-    remark: '线下对公转账，人工核实到账后录入',
+    remark: useFirstPurchase
+      ? `线下录入（${cycle === 'YEARLY' ? '年付' : '月付'}，按首购价结算）`
+      : `线下对公转账，人工核实到账后录入${cycle === 'YEARLY' ? '（年付）' : ''}`,
     paidAt: at,
     createdAt: at,
     transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + id)}`, type: 'PAY', payChannel: 'OFFLINE', amount, status: 'SUCCESS', createdAt: at }]
   }
   db.orders.unshift(order)
-  recordAudit(ctx.adminId, 'order.create.manual', 'order', order.orderNo, null, { phone, planId, credits, amount })
+  recordAudit(ctx.adminId, 'order.create.manual', 'order', orderNo, null, {
+    phone, planId, credits, amount, cycle,
+    useFirstPurchase,
+    firstPriceDeclared: useFirstPurchase ? firstPrice : null,
+    durationDays
+  })
   return null
 })
 
@@ -749,6 +774,11 @@ route('PUT', '/orders/:id/price', (ctx) => {
   if (o.source !== 'ONLINE' || o.status !== 'PENDING' || o.paidAt || o.transactions.length > 0) {
     throw new MockApiError(409, '仅线上待支付且未产生支付流水的订单可改价')
   }
+  // 报价有效期（规则场景 24）：过期的待支付单不可改价，应关闭后重新报价
+  if (o.quoteExpireAt) {
+    const qe = dayjs(o.quoteExpireAt).valueOf()
+    if (Number.isFinite(qe) && qe <= Date.now()) throw new MockApiError(409, '该订单报价已过期，请关闭订单后重新创建（场景 24）')
+  }
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const amount = b.amount
   const expectedAmount = b.expectedAmount
@@ -762,6 +792,8 @@ route('PUT', '/orders/:id/price', (ctx) => {
   const before = { amount: o.amount, goodsAmount: o.goodsAmount, discountAmount: o.discountAmount }
   o.amount = amount
   o.discountAmount = Math.round((o.goodsAmount - amount) * 100) / 100
+  // 改价原因落订单本体：详情/导出直接可见，审计仍保留完整 before/after
+  o.priceChangeReason = reason
   recordAudit(ctx.adminId, 'order.price', 'order', o.orderNo, before, { amount: o.amount, goodsAmount: o.goodsAmount, discountAmount: o.discountAmount, reason })
   return null
 })
@@ -780,12 +812,13 @@ route('GET', '/orders/export', async (ctx) => {
   assertPerm(ctx, 'order:export')
   const list = filterOrders(ctx)
   const now = Date.now()
-  const headers = ['订单号', '用户ID', '用户手机号', '微信昵称', '套餐', '订单来源', '到期状态', '剩余积分', '套餐时长', '近7日消耗', '商品金额', '优惠金额', '实付金额', '状态', '支付时间', '下单时间', '到期时间', '支付渠道', '备注']
-  const widths = [28, 12, 18, 22, 22, 14, 20, 16, 16, 16, 16, 16, 16, 14, 25, 25, 25, 14, 40]
+  const headers = ['订单号', '用户ID', '用户手机号', '微信昵称', '套餐', '订单来源', '购买动作', '到期状态', '剩余积分', '套餐时长', '近7日消耗', '商品金额', '优惠金额', '实付金额', '状态', '改价原因', '支付时间', '下单时间', '到期时间', '支付渠道', '备注']
+  const widths = [28, 12, 18, 22, 22, 14, 14, 20, 16, 16, 16, 16, 16, 16, 14, 30, 25, 25, 25, 14, 40]
   const columns: ExcelColumn[] = headers.map((header, index) => ({
     header, width: widths[index]!,
-    kind: [10, 11, 12].includes(index) ? 'money' : [1, 7, 9].includes(index) ? 'integer' : [14, 15].includes(index) ? 'datetime' : 'text'
+    kind: [11, 12, 13].includes(index) ? 'money' : [1, 8, 10].includes(index) ? 'integer' : [15, 17, 18].includes(index) ? 'datetime' : 'text'
   }))
+  const ORDER_CATEGORY_EXPORT_LABELS: Record<string, string> = { FIRST_PURCHASE: '首次购买', RENEW: '同档续费', UPGRADE: '升级', SWITCH: '降级/换周期切换', PACK: '增购积分包' }
   const rows = list.map(o => {
     const item = toOrderItem(o)
     const expiry = formatOrderExpiry(item, now)
@@ -796,6 +829,7 @@ route('GET', '/orders/export', async (ctx) => {
       item.wechatNickname,
       item.planName,
       ORDER_SOURCE_LABELS[item.source] ?? item.source,
+      item.orderCategory ? (ORDER_CATEGORY_EXPORT_LABELS[item.orderCategory] ?? item.orderCategory) : '',
       expiry.text,
       item.remainingCredits,
       formatOrderDuration(item),
@@ -804,6 +838,7 @@ route('GET', '/orders/export', async (ctx) => {
       item.discountAmount,
       item.amount,
       ORDER_STATUS_LABELS[item.status] ?? item.status,
+      item.priceChangeReason || '',
       item.paidAt ?? '',
       item.createdAt,
       item.expiresAt && expiry.time !== '—' ? excelDateTime(item.expiresAt) : expiry.time,

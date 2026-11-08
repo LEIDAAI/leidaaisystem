@@ -140,17 +140,35 @@ const giftPlans = computed(() => plans.value.filter((p) => p.planType === 'GIFT'
 
 const manualVisible = ref(false)
 const manualSubmitting = ref(false)
-const manualForm = reactive({ phone: '', planId: null as number | null, credits: 0, amount: null as number | null | undefined })
+/** v21 手工单支持月/年周期：金额默认带对应周期售价或首购价（首购价配置时优先），时长按周期写入 */
+const manualForm = reactive({ phone: '', planId: null as number | null, cycle: 'MONTHLY' as 'MONTHLY' | 'YEARLY', useFirstPurchase: false, credits: 0, amount: null as number | null | undefined })
 const manualPlanSelected = computed(() => normalPlans.value.find((p) => p.id === manualForm.planId) || null)
-/** R6 手工订单积分锁定为当前套餐积分，金额默认带出售价且可调整 */
+const manualCycleMeta = computed(() => {
+  const plan = manualPlanSelected.value
+  const cycle = manualForm.cycle
+  const configured = plan?.billingCycles?.find((c) => c.cycle === cycle)
+  const hasCycle = Boolean(configured && Number.isFinite(Number(configured.price)))
+  const listPrice = hasCycle ? Number(configured!.price) : cycle === 'MONTHLY' ? Number(plan?.price ?? 0) : Number(plan?.price ?? 0) * 12
+  const first = configured?.firstPurchasePrice
+  const firstPrice = typeof first === 'number' ? first : cycle === 'MONTHLY' && typeof plan?.firstPurchasePrice === 'number' ? plan.firstPurchasePrice : undefined
+  const hasFirst = typeof firstPrice === 'number'
+  // 周期时长：月付按套餐基础天数，年付按 365 天（与规则文档场景 15/23 的"年=365×24h"口径一致）
+  const baseDays = Number(plan?.durationDays ?? 30) || 30
+  const durationDays = cycle === 'YEARLY' ? 365 : baseDays
+  return { hasCycle, listPrice, hasFirst, firstPrice: hasFirst ? firstPrice : undefined, durationDays }
+})
+/** 金额联动：优先首购价（可勾选关闭），否则周期售价；仅当用户未手动改过金额时自动带出 */
+const manualAmountTouched = ref(false)
 watch(
-  manualPlanSelected,
-  (plan) => {
-    manualForm.credits = Number(plan?.credits ?? 0)
-    manualForm.amount = plan?.price ?? null
+  () => [manualForm.planId, manualForm.cycle, manualForm.useFirstPurchase] as const,
+  () => {
+    const meta = manualCycleMeta.value
+    manualForm.credits = Number(manualPlanSelected.value?.credits ?? 0)
+    if (!manualAmountTouched.value) manualForm.amount = manualForm.useFirstPurchase && meta.hasFirst ? meta.firstPrice : meta.listPrice
   },
   { flush: 'sync' }
 )
+watch(() => manualForm.amount, () => { manualAmountTouched.value = true })
 
 async function openManual() {
   await loadPlans()
@@ -160,8 +178,11 @@ async function openManual() {
   }
   manualForm.phone = ''
   manualForm.planId = null
+  manualForm.cycle = 'MONTHLY'
+  manualForm.useFirstPurchase = false
   manualForm.credits = 0
   manualForm.amount = null
+  manualAmountTouched.value = false
   manualVisible.value = true
 }
 
@@ -184,6 +205,8 @@ async function submitManual() {
     await createManualOrder({
       phone: manualForm.phone.trim(),
       planId: manualPlanSelected.value.id,
+      cycle: manualForm.cycle,
+      useFirstPurchase: manualForm.useFirstPurchase,
       credits: Number(manualPlanSelected.value.credits ?? 0),
       amount: manualForm.amount
     })
@@ -418,13 +441,23 @@ async function submitGift() {
         </el-form-item>
         <el-form-item label="选择套餐" required>
           <el-select v-model="manualForm.planId" placeholder="请选择套餐" style="width: 100%">
-            <el-option v-for="p in normalPlans" :key="p.id" :label="`${p.name}（¥${p.price ?? 0}）`" :value="p.id" />
+            <el-option v-for="p in normalPlans" :key="p.id" :label="`${p.name}（¥${p.price ?? 0}/月${p.billingCycles?.some(c => c.cycle === 'YEARLY') ? ` · ¥${p.billingCycles.find(c => c.cycle === 'YEARLY')!.price}/年` : ''}）`" :value="p.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="计费周期" required>
+          <el-radio-group v-model="manualForm.cycle">
+            <el-radio-button value="MONTHLY">月付</el-radio-button>
+            <el-radio-button value="YEARLY" :disabled="!manualPlanSelected?.billingCycles?.some(c => c.cycle === 'YEARLY' && Number.isFinite(Number(c.price)))">年付</el-radio-button>
+          </el-radio-group>
+          <p v-if="manualForm.cycle === 'YEARLY' && !manualPlanSelected?.billingCycles?.some(c => c.cycle === 'YEARLY')" class="muted" style="margin: 6px 0 0; font-size: 12px">该套餐未配置年付周期，请先在套餐管理添加</p>
+        </el-form-item>
+        <el-form-item v-if="manualCycleMeta.hasFirst" label="首购价">
+          <el-checkbox v-model="manualForm.useFirstPurchase">按首购价 ¥{{ manualCycleMeta.firstPrice }} 结算（该用户首次购买本套餐时适用）</el-checkbox>
         </el-form-item>
         <el-form-item label="AI积分" required>
           <div style="width: 100%">
             <el-input-number v-model="manualForm.credits" :min="0" :step="1000" disabled style="width: 100%" />
-            <p class="muted" style="margin: 6px 0 0; font-size: 12px">积分来自当前套餐，不可修改；支付金额可调整</p>
+            <p class="muted" style="margin: 6px 0 0; font-size: 12px">积分来自当前套餐，不可修改；支付金额可调整；时长按 {{ manualForm.cycle === 'YEARLY' ? '365 天' : `${manualCycleMeta.durationDays} 天` }} 记录</p>
           </div>
         </el-form-item>
         <el-form-item label="支付金额(元)" required>

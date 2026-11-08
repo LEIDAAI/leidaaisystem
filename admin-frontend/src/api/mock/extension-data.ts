@@ -535,8 +535,8 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
   // v17：套餐营销示例（sort/tagline/badge/features/月年付计费周期）；GIFT 赠送套餐不配置任何营销字段
   const commonFeatures = ['全部 AI 专家与技能', '全平台商品分析', '数据报表导出', '批量选品与监控']
   const PLAN_EXTRAS: Array<Partial<ConfigItem>> = [
-    { sort: 1, tagline: '每月 1 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 99 }, { cycle: 'YEARLY', price: 990, originalPrice: 1188 }] },
-    { sort: 2, badge: '最受欢迎', tagline: '每月 3 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 299 }, { cycle: 'YEARLY', price: 2990, originalPrice: 3588 }] },
+    { sort: 1, tagline: '每月 1 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 99 }, { cycle: 'YEARLY', price: 990 }] },
+    { sort: 2, badge: '最受欢迎', tagline: '每月 3 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 299 }, { cycle: 'YEARLY', price: 2990 }] },
     { sort: 3, tagline: '每月 10 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 2999 }] }
   ]
   const plans: ConfigItem[] = ['标准版','高级版','旗舰版'].map((name,i) => ({ ...base, id:i+2, code:`plan_${i+2}`, name, price:[99,299,2999][i], durationDays:30, credits:[10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const, ...PLAN_EXTRAS[i] }))
@@ -581,19 +581,25 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
   }
 }
 
-/** v17：积分加油包商品种子（3 档常规在售，status 全 1：体验/常用/专业） */
+/** v17：积分加油包商品种子（3 档常规在售，status 全 1：体验/常用/专业）。
+ * 规则 v0.2 拍板：无真实原价依据不配置划线价（originalPrice 留空），接入真实原价后再维护。 */
 export function seedCreditPackages(): CreditPackage[] {
   const at = dayjs().format('YYYY-MM-DD HH:mm:ss')
   return [
-    { id: 1, name: '体验包', credits: 500, bonusCredits: 0, price: 45, originalPrice: 60, sort: 1, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
-    { id: 2, name: '常用包', credits: 2000, bonusCredits: 0, price: 168, originalPrice: 199, sort: 2, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
-    { id: 3, name: '专业包', credits: 8000, bonusCredits: 0, price: 600, originalPrice: 720, badge: '超值', sort: 3, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at }
+    { id: 1, name: '体验包', credits: 500, bonusCredits: 0, price: 45, originalPrice: undefined, sort: 1, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
+    { id: 2, name: '常用包', credits: 2000, bonusCredits: 0, price: 168, originalPrice: undefined, sort: 2, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
+    { id: 3, name: '专业包', credits: 8000, bonusCredits: 0, price: 600, originalPrice: undefined, badge: '超值', sort: 3, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at }
   ]
 }
 
-/** v17：全局计费设置默认值（注册赠送 100 积分；升级差价按全价；开放自定义积分滑杆） */
+/** v17：全局计费设置默认值（注册赠送 100 积分；升级差价按实付价折算；自定义积分滑杆）。
+ * v21 阶梯单价对齐前台拍板口径：3 万 0.015 / 4 万 0.0115 / 5 万起 0.0095 元/积分，总价随数量单调不减。 */
 export function seedBillingSettings(): BillingSettings {
-  return { registerBonus: 100, upgradePolicy: 'FULL_PRICE', creditSlider: { enabled: true, min: 1000, max: 100000, step: 1000, defaultValue: 1000, unitPrice: 0.015 } }
+  return {
+    registerBonus: 100,
+    upgradePolicy: 'PRORATED',
+    creditSlider: { enabled: true, min: 1000, max: 100000, step: 1000, defaultValue: 1000, unitPrice: 0.015, tiers: [{ min: 1000, rate: 0.015 }, { min: 40000, rate: 0.0115 }, { min: 50000, rate: 0.0095 }] }
+  }
 }
 
 /**

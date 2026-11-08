@@ -53,6 +53,7 @@ watch(() => [props.modelValue, props.orderId], () => { void loadDetail() }, { im
 const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
 /** v11 订单来源中文标签 */
 const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
+const ORDER_CATEGORY_LABELS: Record<string, string> = { FIRST_PURCHASE: '首次购买', RENEW: '同档续费', UPGRADE: '升级', SWITCH: '降级/换周期切换', PACK: '增购积分包' }
 
 const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
 </script>
@@ -82,7 +83,12 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           <el-descriptions-item label="到期时间">{{ formatOrderExpiry(detail, now).time }}</el-descriptions-item>
           <el-descriptions-item label="支付渠道">{{ CHANNEL_LABELS[detail.payChannel] ?? detail.payChannel }}</el-descriptions-item>
           <el-descriptions-item label="备注">{{ orDash(detail.remark) }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.orderCategory" label="购买动作">{{ ORDER_CATEGORY_LABELS[detail.orderCategory] ?? detail.orderCategory }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.quoteExpireAt" label="报价有效期">{{ formatDateTime(detail.quoteExpireAt) }}<el-tag v-if="detail.quoteExpired" type="danger" size="small" style="margin-left:6px">已过期，请关闭重下</el-tag></el-descriptions-item>
         </el-descriptions>
+        <el-alert v-if="detail.priceChangeReason" type="warning" :closable="false" style="margin-top:12px" title="本订单经过改价">
+          <p style="margin:4px 0 0">改价原因：{{ detail.priceChangeReason }}（调整后应付 {{ formatAmount(detail.amount) }}，完整前后记录见审计日志）</p>
+        </el-alert>
 
         <div class="block-head">
           <span class="block-title">支付流水</span>

@@ -19,10 +19,11 @@
 | v0.6 | 2026-10-29 | **专家草稿对话预览**：新增 `POST /experts/preview-chat`（编辑抽屉右侧实时调试，左侧草稿未保存即生效：system_prompt/base_model/model_params.temperature/skill_ids/mcp_server_ids/capabilities/suggested_questions）；响应含 `trace`（matchedSkills/toolCalls/model/latencyMs）；Mock 为演示引擎（确定性仿真 400–900ms 延迟，标注「模拟回复」）；演示专用 `POST /models/{id}/reveal-key`（仅超管）支撑预览面板「真实调用」浏览器直连（OpenAI 兼容，生产走 Java 后端代理，Key 不下发浏览器） |
 | v0.7 | 2026-10-29 | **模型端点自动发现（本次）**：新增 `POST /models/probe`（填接入地址 + API Key 一键拉取端点全部模型列表，新建模型表单「自动发现」使用，选中即回填 code/显示名/供应商）；开发环境经 Vite 本地代理 `/__llm-proxy` 转发绕过浏览器 CORS（Key 仅随请求头透传不落盘），生产由 Java 后端代理实现同契约；演示种子 glm-5.3 切换至内网演示网关 `http://192.168.1.10:8080/v1`（幂等迁移：仅原始 mock 凭据未动过时覆盖），预览「真实调用」直连失败自动经开发代理兜底重试 |
 
-## 订单改价与可选首购价格配置（2026-11-07，后台 Mock）
+## 订单改价与可选首购价格配置（2026-11-07，后台 Mock；2026-11-08 v21 增强）
 
-- `PUT /orders/{id}/price`，权限 `order:price`（默认超管、运营；其他角色可由角色管理独立授权）。请求 `{amount:number, expectedAmount:number, reason:string}`；amount 为新应付价，0～订单商品金额，最多两位小数且须改变；reason trim 后必填、最多 200 字；expectedAmount 必须等于当前应付价，否则返回 409 防止覆盖他人修改。仅线上待支付、未记录任何支付流水且未付的订单允许；已支付、关闭、手工、赠送拒绝 409。成功后商品金额不变，`discountAmount = goodsAmount - amount`，审计保存原价、新价与原因；列表/详情/导出读取同一订单字段。当前仅 Mock，真实渠道预下单/二维码必须作废并重建后才能开放改价；0 元订单的免支付履约需交易服务另行定义。
-- 常规套餐 `POST/PUT /plans` 可选 `firstPurchasePrice?: number | null`（仅未配置月/年周期时使用基础首购价），以及 `billingCycles[].firstPurchasePrice?: number`（月付与年付分别配置）。留空不设置，显式 0 元有效，非负、最多两位小数；周期售价留空时该周期及首购价均不保存。赠送套餐无首购价。字段进入套餐版本快照和恢复；现有手工单仍默认正常价。当前仅存配置，不判定首购资格、不生成线上交易报价、不回改已有订单。
+- `PUT /orders/{id}/price`，权限 `order:price`（默认超管、运营；其他角色可由角色管理独立授权）。请求 `{amount:number, expectedAmount:number, reason:string}`；amount 为新应付价，0～订单商品金额，最多两位小数且须改变；reason trim 后必填、最多 200 字；expectedAmount 必须等于当前应付价，否则返回 409 防止覆盖他人修改。仅线上待支付、未记录任何支付流水且未付的订单允许；已支付、关闭、手工、赠送拒绝 409。**v21 新增：待支付订单带 `quoteExpireAt`（报价有效期，种子自创建起 30 分钟演示口径），过期的待支付单改价返回 409"报价已过期，请关闭订单后重新创建"（规则场景 24）；改价原因同时写入订单本体 `priceChangeReason`，详情抽屉展示"本订单经过改价"告警条与原因、列表/导出含"改价原因"列，审计仍保留完整 before/after。**成功后商品金额不变，`discountAmount = goodsAmount - amount`。当前仅 Mock，真实渠道预下单/二维码必须作废并重建后才能开放改价；0 元订单的免支付履约需交易服务另行定义。
+- 常规套餐 `POST/PUT /plans` 可选 `firstPurchasePrice?: number | null`（仅未配置月/年周期时使用基础首购价），以及 `billingCycles[].firstPurchasePrice?: number`（月付与年付分别配置）。留空不设置，显式 0 元有效，非负、最多两位小数；周期售价留空时该周期及首购价均不保存。赠送套餐无首购价。字段进入套餐版本快照和恢复。**v21 起手工订单（`POST /orders/manual`）已消费首购价与月/年周期**（见订单接口表）。仍不判定真实首购资格、不生成线上交易报价、不回改已有订单。
+- **v21 订单模型扩展（为规则 v0.2 与交易服务预留）**：`orderCategory`（FIRST_PURCHASE 首购 / RENEW 同档续费 / UPGRADE 升级 / SWITCH 降级切换 / PACK 增购积分包；线上种子与手工单已写入，历史订单缺省）、`quoteExpireAt`（待支付报价有效期）、`paidPriceSnapshot`（实付价快照含促销价，升级补差按实付折算的场景 33 依赖此字段）、`queuedEffectiveAt`（已预付未来期排队生效时刻与锁定价，场景 32 依赖）。后四者为契约预留：当前仅 orderCategory 与 quoteExpireAt 有写入与展示路径，paidPriceSnapshot/queuedEffectiveAt 待交易服务接入后启用。
 
 ## R10 积分包统一入口与滑块配置预览（2026-11-05）
 
@@ -37,7 +38,7 @@
 
 固定包字段：`id,name,credits,bonusCredits,price,originalPrice?,badge?,sort,status,remark?,createdAt,updatedAt`。名称必填、积分正整数、售价非负、划线价可空且填值须大于售价、排序非负整数、状态0/1、备注最多200字。现行规则为购买不另赠积分：表单提交 `bonusCredits=0`，schema 19 迁移现存包赠分归零并留存旧配置；**当前 Mock 写接口只校验 bonusCredits 为非负整数，仍接受非零值，规则强制尚缺。** 审计 before 在覆盖前深复制，与 after 独立。商品不改变会员等级/期限；仅有效会员可购、积分365天有效且会员到期不清零为已拍板规则，购买、到账、独立批次到期服务仍未接。
 
-`BillingSettings` 保留 `registerBonus`、`upgradePolicy`；UI 固定 `registerBonus=100`、`upgradePolicy=PRORATED`，但当前写接口仍接受其他非负整数赠分及 `FULL_PRICE|PRORATED`，尚未在服务层强制已拍板规则；这些枚举均不执行真实升级报价。`creditSlider` 为 `{enabled,min,max,step,defaultValue,unitPrice}`。启用时 min/max/step 均为正安全整数且 max>min，`(max-min)%step=0`；defaultValue 为范围内安全整数且 `(defaultValue-min)%step=0`；unitPrice 为正有限数。旧配置或旧调用缺defaultValue时回填min。停用参数允许非负数。无效提交422且不覆盖已有配置。后台预览从defaultValue起，可左右拖到上下限，提高max即可预览超过旧上限；总价 `Math.round(credits*unitPrice*100)/100` 元（展示两位小数）。现行统一单价，不引入前台门槛阶梯折扣，不绑定截图商品价。
+`BillingSettings` 保留 `registerBonus`、`upgradePolicy`；UI 固定 `registerBonus=100`、`upgradePolicy=PRORATED`，写接口同样强制（非 100 赠分与 `FULL_PRICE` 均被 422 拦截，理由写明"按已拍板规则"）。这些枚举均不执行真实升级报价。`creditSlider` 为 `{enabled,min,max,step,defaultValue,unitPrice,tiers?}`（v21 新增 `tiers` 阶梯单价）。启用时 min/max/step 均为正安全整数且 max>min，`(max-min)%step=0`；defaultValue 为范围内安全整数且 `(defaultValue-min)%step=0`；单价为正有限数。`tiers` 为升序区间 `[{min,rate}]`：最低档 `min` 须等于滑块下限、各档起购量从下限起按步长对齐、高档 `rate` 不高于低档（量大更优惠）、任意两档总价不得倒挂（`min_i*rate_i` 递增不降），校验失败 422。未传 `tiers` 时按单一区间 `{min,rate:unitPrice}` 兼容生成并回写 `unitPrice=最低档价`；传了 `tiers` 则以阶梯为准并同步 `unitPrice=最低档价`。种子默认对齐前台拍板：`[{1000,0.015},{40000,0.0115},{50000,0.0095}]`（3 万 ¥450 / 4 万 ¥460 / 5 万 ¥475，档位间不倒挂）。旧配置或旧调用缺 defaultValue 时回填 min。停用参数允许非负数。无效提交 422 且不覆盖已有配置。后台预览从 defaultValue 起，命中"≥min 的最高档"单价；总价 `Math.round(credits*rate*100)/100` 元。前台自定义包报价必须消费同一 `tiers`（或后续报价接口），不得再使用本地写死的阶梯。
 
 ### GET /api/v1/workspace/credit-packages（公开只读 mock，待前台接入）
 
@@ -171,7 +172,7 @@
 |---|---|---|---|
 | GET | /orders | order:view | 参数 `orderNo`、`userId`、`status`(PENDING/PAID/CLOSED)、`payChannel`(WECHAT/ALIPAY/OFFLINE)、`start`/`end`、分页 |
 | GET | /orders/{id} | order:view | 详情，含支付流水列表 |
-| POST | /orders/manual | order:create | `{phone, planId, credits, amount}`；正常用户、启用常规套餐；R6 服务端先验证套餐存在、启用且为常规，再读取套餐 credits（含 0），不信任并忽略传入 credits（为兼容现有 payload 保留字段）；套餐积分非负有限；amount必须为原始有限number、非负且最多两位小数，null/空串/缺失/三位小数422，显式0有效；生成Mock PAID/OFFLINE订单及成功流水，不代表真实收款 |
+| POST | /orders/manual | order:create | `{phone, planId, cycle?, useFirstPurchase?, credits, amount}`；正常用户、启用常规套餐；R6 服务端先验证套餐存在、启用且为常规，再读取套餐 credits（含 0），不信任并忽略传入 credits（为兼容现有 payload 保留字段）；套餐积分非负有限；amount必须为原始有限number、非负且最多两位小数，null/空串/缺失/三位小数422，显式0有效。v21 新增 `cycle`（默认 MONTHLY；YEARLY 须套餐已配置年付周期价，否则 422）与 `useFirstPurchase`（须套餐已配置对应周期/月付基础首购价，否则 422；是否真实首购由交易服务核定，此处按申报记录审计）；年付订单 `durationDays=365`、套餐名追加"（年付）"、备注注明首购价申报；生成Mock PAID/OFFLINE订单及成功流水，`orderCategory=FIRST_PURCHASE`，不代表真实收款、不回写用户会员与积分 |
 | POST | /orders/gift | order:create + order:gift（同时） | `{phone,planId,durationMonths,credits,remark}`；启用GIFT，有限1–36整数月（默认ceil(durationDays/30)）、长期0、MEMBERSHIP传null并读会员源；credits非负安全整数；remark为必填特批原因trim后≤200字；金额全0、无支付流水；记录creditBatchType=OPS_EXCEPTION并审计原因/类型，未生成真实积分批次 |
 | PUT | /orders/{id}/remark | order:remark | `{remark}` 备注（留痕） |
 | GET | /orders/export | order:export | R8：同列表筛选，忽略分页导出全部命中项；Mock 在 `{code:0,msg,data}` 的 data 中返回真正 OOXML XLSX Blob，exportBlob 在 mock 模式解包、真实模式按 responseType=blob 接收；前端下载 `orders-时间戳.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；真实后端待按同一二进制契约实现 |

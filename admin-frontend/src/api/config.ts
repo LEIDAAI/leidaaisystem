@@ -251,11 +251,21 @@ export interface CreditPackage {
   createdAt: string
   updatedAt: string
 }
-/** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆） */
+/** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆）
+ * creditSlider.tiers：数量阶梯单价（升序区间，命中"≥min"的最大档）。保持与前台"量大更优惠、总价随数量单调不减"口径一致；
+ * unitPrice 为兼容字段：等于最低档单价；新代码请读 tiers。 */
 export interface BillingSettings {
   registerBonus: number
   upgradePolicy: 'FULL_PRICE' | 'PRORATED'
-  creditSlider: { enabled: boolean; min: number; max: number; step: number; defaultValue: number; unitPrice: number }
+  creditSlider: {
+    enabled: boolean
+    min: number
+    max: number
+    step: number
+    defaultValue: number
+    unitPrice: number
+    tiers?: Array<{ min: number; rate: number }>
+  }
 }
 export const listCreditPackages = () => get<CreditPackage[]>('/credit-packages')
 /** 保存积分加油包：有 id 走 PUT 更新，无 id 走 POST 新建；返回保存后的对象 */

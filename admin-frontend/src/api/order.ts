@@ -20,8 +20,9 @@ export function updateOrderPrice(id: number, amount: number, expectedAmount: num
   return put<null>(`/orders/${id}/price`, { amount, expectedAmount, reason })
 }
 
-/** v11 创建手工订单：手机号 + 常规套餐 + AI 积分 + 支付金额（线下录入） */
-export function createManualOrder(payload: { phone: string; planId: number; credits: number; amount: number }): Promise<null> {
+/** v11 创建手工订单：手机号 + 常规套餐 + AI 积分 + 支付金额（线下录入）。
+ * v21 支持计费周期（默认月付；年付须套餐已配置）与首购价申报（须套餐已配置首购价）。 */
+export function createManualOrder(payload: { phone: string; planId: number; cycle?: 'MONTHLY' | 'YEARLY'; useFirstPurchase?: boolean; credits: number; amount: number }): Promise<null> {
   if (!isValidMoney(payload.amount)) return Promise.reject(new Error('请填写支付金额，支持明确 0 元且最多两位小数'))
   return post<null>('/orders/manual', payload)
 }

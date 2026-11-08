@@ -7,7 +7,7 @@ const props = defineProps<{ settings: BillingSettings | null; canEdit: boolean; 
 const emit = defineEmits<{ saved: [] }>()
 const saving = ref(false)
 const formRef = ref<FormInstance>()
-const draft = ref<BillingSettings>({ registerBonus: 100, upgradePolicy: 'PRORATED', creditSlider: { enabled: false, min: 0, max: 0, step: 0, defaultValue: 0, unitPrice: 0 } })
+const draft = ref<BillingSettings>({ registerBonus: 100, upgradePolicy: 'PRORATED', creditSlider: { enabled: false, min: 0, max: 0, step: 0, defaultValue: 0, unitPrice: 0, tiers: [] } })
 const savedSnapshot = ref('')
 const snapshot = (value: BillingSettings) => JSON.stringify(props.sliderOnly ? value.creditSlider : value)
 const dirty = computed(() => Boolean(savedSnapshot.value) && snapshot(draft.value) !== savedSnapshot.value)
@@ -16,7 +16,31 @@ const sliderValid = computed(() => {
   const { min, max, step, defaultValue, unitPrice } = draft.value.creditSlider
   return [min, max, step].every(v => Number.isSafeInteger(v) && v > 0) && max > min && (max - min) % step === 0 && Number.isSafeInteger(defaultValue) && defaultValue >= min && defaultValue <= max && (defaultValue - min) % step === 0 && Number.isFinite(unitPrice) && unitPrice > 0
 })
-const previewPrice = computed(() => (Math.round(previewCredits.value * draft.value.creditSlider.unitPrice * 100) / 100).toFixed(2))
+/** 阶梯区间：命中"≥min"的最大档单价（与前台 CUSTOM_TIERS 同口径） */
+function tierRateOf(slider: BillingSettings['creditSlider'], credits: number): number {
+  const tiers = [...(slider.tiers || [{ min: slider.min, rate: slider.unitPrice }])].sort((a, b) => a.min - b.min)
+  let rate = tiers[0]?.rate ?? slider.unitPrice
+  for (const t of tiers) { if (credits >= t.min) rate = t.rate }
+  return rate
+}
+const tiersValid = computed(() => {
+  const { min, max, tiers } = draft.value.creditSlider
+  const list = tiers || []
+  if (!list.length) return true
+  if (!list.every(t => Number.isSafeInteger(t.min) && t.min > 0 && Number.isFinite(t.rate) && t.rate > 0)) return false
+  const sorted = [...list].sort((a, b) => a.min - b.min)
+  if (new Set(sorted.map(t => t.min)).size !== sorted.length) return false
+  if (sorted[0].min !== min) return false
+  if (sorted.some(t => (t.min - min) % Math.max(1, draft.value.creditSlider.step) !== 0)) return false
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].rate > sorted[i - 1].rate) return false
+    if (Math.round(sorted[i].min * sorted[i].rate * 100) < Math.round(sorted[i - 1].min * sorted[i - 1].rate * 100)) return false
+  }
+  if (max < sorted[sorted.length - 1].min) return false
+  if (Math.round(max * sorted[sorted.length - 1].rate * 100) < Math.round(sorted[sorted.length - 1].min * sorted[sorted.length - 1].rate * 100)) return false
+  return true
+})
+const previewPrice = computed(() => (Math.round(previewCredits.value * tierRateOf(draft.value.creditSlider, previewCredits.value) * 100) / 100).toFixed(2))
 watch(() => draft.value.creditSlider.defaultValue, (value) => { previewCredits.value = value })
 watch(() => ({ ...draft.value.creditSlider }), ({ min, max, step }) => {
   if (!sliderValid.value) return
@@ -49,6 +73,8 @@ watch(() => props.settings, (settings) => {
   if (!settings || dirty.value) return
   const value: BillingSettings = JSON.parse(JSON.stringify(settings))
   value.creditSlider.defaultValue ??= value.creditSlider.min
+  // 兼容旧数据：无阶梯时按单一区间（unitPrice 为最低档）补齐，保存后升级为 tiers 结构
+  if (!value.creditSlider.tiers?.length) value.creditSlider.tiers = [{ min: value.creditSlider.min, rate: value.creditSlider.unitPrice }]
   savedSnapshot.value = snapshot(value)
   draft.value = { ...value, registerBonus: 100, upgradePolicy: 'PRORATED' }
   previewCredits.value = value.creditSlider.defaultValue
@@ -60,6 +86,10 @@ async function save(): Promise<void> {
   try { await formRef.value?.validate() } catch { return }
   if (draft.value.creditSlider.enabled && !sliderValid.value) {
     ElMessage.warning('请检查滑块范围、步长、默认积分及单价')
+    return
+  }
+  if (draft.value.creditSlider.enabled && !tiersValid.value) {
+    ElMessage.warning('阶梯区间不合法：起购量须对齐下限与步长、高档单价不高于低档、总价随数量单调不减')
     return
   }
   const sent: BillingSettings = JSON.parse(JSON.stringify(draft.value))
@@ -76,6 +106,22 @@ async function save(): Promise<void> {
   } finally {
     saving.value = false
   }
+}
+
+/** 阶梯档增删 */
+function addTier() {
+  const slider = draft.value.creditSlider
+  if (!slider.tiers?.length) slider.tiers = [{ min: slider.min, rate: slider.unitPrice }]
+  const last = [...slider.tiers].sort((a, b) => a.min - b.min)[slider.tiers.length - 1]
+  const step = Math.max(1, slider.step)
+  const nextMin = Math.min(slider.max, (last ? last.min : slider.min) + step * 10)
+  slider.tiers.push({ min: nextMin, rate: last ? last.rate : slider.unitPrice })
+}
+function removeTier(i: number) {
+  const slider = draft.value.creditSlider
+  slider.tiers?.splice(i, 1)
+  if (!slider.tiers?.length) { slider.tiers = [{ min: slider.min, rate: slider.unitPrice }] }
+  else slider.unitPrice = [...slider.tiers].sort((a, b) => a.min - b.min)[0].rate
 }
 </script>
 <template>
@@ -112,7 +158,23 @@ async function save(): Promise<void> {
         <el-form-item label="滑块上限" prop="creditSlider.max"><el-input-number v-model="draft.creditSlider.max" :min="1" :precision="0" /></el-form-item>
         <el-form-item label="滑块步长" prop="creditSlider.step"><el-input-number v-model="draft.creditSlider.step" :min="1" :precision="0" /></el-form-item>
         <el-form-item label="默认积分" prop="creditSlider.defaultValue"><el-input-number v-model="draft.creditSlider.defaultValue" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :precision="0" /><p class="setting-hint">须从下限起按步长对齐；修改后预览回到该积分数。</p></el-form-item>
-        <el-form-item label="积分单价（元）" prop="creditSlider.unitPrice"><el-input-number v-model="draft.creditSlider.unitPrice" :min="0" :precision="4" :step="0.01" /></el-form-item>
+        <el-form-item label="阶梯单价">
+          <div class="tier-editor">
+            <div v-for="(t, i) in draft.creditSlider.tiers" :key="i" class="tier-row">
+              <span class="tier-label">满</span>
+              <el-input-number v-model="t.min" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :step="draft.creditSlider.step" :precision="0" :disabled="!canEdit || saving" controls-position="right" />
+              <span class="tier-label">积分起，单价</span>
+              <el-input-number v-model="t.rate" :min="0.0001" :precision="4" :step="0.001" :disabled="!canEdit || saving" controls-position="right" />
+              <span class="tier-label">元 / 积分</span>
+              <el-button v-if="(draft.creditSlider.tiers?.length ?? 0) > 1" link type="danger" :disabled="!canEdit || saving || t.min === draft.creditSlider.min" @click="removeTier(i)">删除</el-button>
+            </div>
+            <el-button v-if="canEdit && !saving" link type="primary" @click="addTier">+ 添加阶梯档</el-button>
+            <p class="setting-hint">命中规则：达到某档起购量即按该档单价计算（取满足条件的最高档）。高档单价须不高于低档（量大更优惠），任意两档总价不得倒挂；最低档起购量固定为滑块下限。前台自定义包报价将按此阶梯计算。</p>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="draft.creditSlider.enabled && sliderValid && !tiersValid" label=" ">
+          <el-alert title="阶梯区间当前不合法，保存将被拦截：请检查起购量对齐、单价递减与总价单调不减。" type="warning" :closable="false" />
+        </el-form-item>
       </template>
       <el-form-item v-if="draft.creditSlider.enabled && sliderValid" label="拖动预览">
         <div class="slider-preview">
@@ -140,6 +202,9 @@ async function save(): Promise<void> {
 .group-hint { margin-bottom: 18px; }
 .billing-rules { padding-left: 22px; color: #303133; line-height: 1.9; }
 .slider-preview { width: 100%; padding: 0 12px; }
+.tier-editor { width: 100%; }
+.tier-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.tier-label { color: #606266; font-size: 13px; white-space: nowrap; }
 .save-bar { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid #dcdfe6; background: #fff; box-shadow: 0 -4px 12px #00000008; color: #606266; }
 .dirty { color: #9a6700; font-weight: 600; }
 </style>

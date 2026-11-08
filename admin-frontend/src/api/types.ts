@@ -37,6 +37,14 @@ export interface OrderItem {
   id: number; orderNo: string; userId: number; wechatNickname: string; planId: number; planName: string
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: string
+  /** v21 购买动作类型（可缺省）：首购/续费/升级/切换/增购 */
+  orderCategory?: 'FIRST_PURCHASE' | 'RENEW' | 'UPGRADE' | 'SWITCH' | 'PACK'
+  /** v21 改价原因快照（订单详情直接可见，审计另有完整记录） */
+  priceChangeReason?: string
+  /** v21 待支付报价有效期（场景 24） */
+  quoteExpireAt?: string | null
+  /** v21 报价已过期标记（仅待支付单返回） */
+  quoteExpired?: boolean
   /** 实付金额 */
   amount: number
   goodsAmount: number; discountAmount: number

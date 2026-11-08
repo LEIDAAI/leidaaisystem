@@ -187,6 +187,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
             if(!Number.isFinite(Number(c.price)) || Number(c.price)<0) fail('计费周期售价须为不小于 0 的数字')
             if(c.firstPurchasePrice===null) delete c.firstPurchasePrice
             if(c.firstPurchasePrice!==undefined && (typeof c.firstPurchasePrice!=='number' || !Number.isFinite(c.firstPurchasePrice) || c.firstPurchasePrice<0 || Math.abs(c.firstPurchasePrice*100-Math.round(c.firstPurchasePrice*100))>1e-6)) fail('计费周期首购价须为非负金额，最多两位小数')
+            // 规则 v0.2 拍板：无真实原价依据不配置划线价；已有值仍维护大于售价的合法性，前台展示由"真实原价可追溯"开关控制
             if(c.originalPrice!==undefined && (!(Number(c.originalPrice)>0) || Number(c.originalPrice)<=Number(c.price))) fail('计费周期划线价须大于 0 且大于该档售价')
           }
           item.billingCycles=item.billingCycles.length?item.billingCycles:undefined
@@ -663,12 +664,32 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const min=Number(slider.min);const max=Number(slider.max);const step=Number(slider.step)
     const unitPrice=Number(slider.unitPrice)
     const defaultValue=Number(slider.defaultValue ?? min)
+    // v21 阶梯单价：升序区间 tiers（命中"≥min"的最大档），与前台"量大更优惠、总价随数量单调不减"拍板口径一致。
+    // 兼容：未传 tiers 时按单价的单一区间（unitPrice 为最低档）生成；tiers 有值时以 tiers 为准并回写 unitPrice=最低档。
+    let tiersIn: Array<{min:number;rate:number}> | undefined
+    if(Array.isArray(slider.tiers) && slider.tiers.length){
+      tiersIn=slider.tiers.map(t=>({ min:Number((t as Record<string,unknown>).min), rate:Number((t as Record<string,unknown>).rate) }))
+      if(!tiersIn.every(t=>Number.isSafeInteger(t.min) && t.min>0 && Number.isFinite(t.rate) && t.rate>0)) fail('阶梯区间须为正整数起购量与大于 0 的单价')
+      // 区间按 min 升序去重，起购量须落在滑杆范围内且与步长对齐
+      tiersIn.sort((a,b)=>a.min-b.min)
+      if(new Set(tiersIn.map(t=>t.min)).size!==tiersIn.length) fail('阶梯起购量不能重复')
+      if(tiersIn[0]!.min!==min) fail('最低档起购量须等于滑杆下限')
+      if(tiersIn.some(t=>(t.min-min)%step!==0)) fail('阶梯起购量须从下限起按步长对齐')
+      // 单价随档位递减（量大更优惠），且任意两档按各自单价算总价不得倒挂：min2×rate2 ≥ min1×rate1
+      for(let i=1;i<tiersIn.length;i++){
+        if(tiersIn[i]!.rate>tiersIn[i-1]!.rate) fail('高档单价须不高于低档单价（量大更优惠）')
+        if(Math.round(tiersIn[i]!.min*tiersIn[i]!.rate*100) < Math.round(tiersIn[i-1]!.min*tiersIn[i-1]!.rate*100)) fail('阶梯总价须随数量单调不减，请调整档位单价')
+      }
+      if(Math.round(max*tiersIn[tiersIn.length-1]!.rate*100) < Math.round(tiersIn[tiersIn.length-1]!.min*tiersIn[tiersIn.length-1]!.rate*100)) fail('上限总价不得低于最高档起购总价')
+    }
+    const tiers = tiersIn && tiersIn.length ? tiersIn : [{ min, rate: unitPrice }]
+    const effectiveUnitPrice = tiers[0]!.rate
     if(slider.enabled) {
       if(![min,max,step].every(v=>Number.isSafeInteger(v) && v>0) || min>=max || (max-min)%step!==0) fail('滑杆范围须为正整数、min 小于 max，且步长能整除范围差值')
       if(!Number.isSafeInteger(defaultValue) || defaultValue<min || defaultValue>max || (defaultValue-min)%step!==0) fail('默认积分须在范围内且从下限起按步长对齐')
-      if(!Number.isFinite(unitPrice) || unitPrice<=0) fail('积分单价须为大于 0 的数字')
-    } else if(![min,max,step,defaultValue].every(v=>Number.isSafeInteger(v) && v>=0) || !Number.isFinite(unitPrice) || unitPrice<0) fail('停用滑杆参数须为非负数')
-    const item: BillingSettings = { registerBonus, upgradePolicy:String(input.upgradePolicy) as BillingSettings['upgradePolicy'], creditSlider:{ enabled:slider.enabled===true, min, max, step, defaultValue, unitPrice } }
+      if(!Number.isFinite(effectiveUnitPrice) || effectiveUnitPrice<=0) fail('积分单价须为大于 0 的数字')
+    } else if(![min,max,step,defaultValue].every(v=>Number.isSafeInteger(v) && v>=0) || !Number.isFinite(effectiveUnitPrice) || effectiveUnitPrice<0) fail('停用滑杆参数须为非负数')
+    const item: BillingSettings = { registerBonus, upgradePolicy:String(input.upgradePolicy) as BillingSettings['upgradePolicy'], creditSlider:{ enabled:slider.enabled===true, min, max, step, defaultValue, unitPrice:effectiveUnitPrice, tiers } }
     db.billingSettings=item
     audit(ctx.adminId,'billing-settings.update','billing_settings',0,before,item);return db.billingSettings
   })

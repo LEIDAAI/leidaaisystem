@@ -132,6 +132,16 @@ export interface MockOrder {
   last7DaysUsage: number
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: 'ONLINE' | 'MANUAL' | 'GIFT'
+  /** v21 购买动作类型（规则 v0.2 §08）：首购 / 同档续费 / 升级 / 降级切换 / 增购积分包；历史订单与线上种子可缺省 */
+  orderCategory?: 'FIRST_PURCHASE' | 'RENEW' | 'UPGRADE' | 'SWITCH' | 'PACK'
+  /** v21 改价原因快照：与审计互为补充，订单详情直接可见 */
+  priceChangeReason?: string
+  /** v21 待支付报价有效期（规则场景 24）：过期后不可继续支付/改价，须关闭重新报价 */
+  quoteExpireAt?: string | null
+  /** v21 交易服务接入预留：实付价快照（含促销价），升级补差按此价折算（场景 33） */
+  paidPriceSnapshot?: number
+  /** v21 交易服务接入预留：已预付未来期排队（场景 32）——生效时间与付款锁定价 */
+  queuedEffectiveAt?: string | null
   creditBatchType?: 'OPS_EXCEPTION'
   payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
   status: 'PENDING' | 'PAID' | 'CLOSED'
@@ -420,12 +430,15 @@ function buildOrders(users: MockUser[]): MockOrder[] {
       userId,
       planId,
       planName: plan.name,
+      orderCategory: i % 7 === 0 ? 'RENEW' : i % 5 === 0 ? 'PACK' : 'FIRST_PURCHASE',
       amount: plan.price,
       goodsAmount: plan.price + orderDiscountAmount(i),
       discountAmount: orderDiscountAmount(i),
       remainingCredits: orderRemainingCredits(i),
       durationMonths: orderDurationMonths(planId),
       expiresAt: paidAt ? fmt(dayjs(paidAt).add(orderDurationMonths(planId), 'month')) : null,
+      // 待支付单带报价有效期（场景 24）：演示层给 30 分钟，从创建时间起算
+      quoteExpireAt: status === 'PENDING' ? fmt(dayjs(createdAt).add(30, 'minute')) : null,
       last7DaysUsage: orderLast7DaysUsage(i),
       payChannel,
       status,
@@ -905,6 +918,28 @@ if (storedVersion < 20) {
     db.billingSettings.upgradePolicy = 'PRORATED'
   }
 }
+if (storedVersion < 21) {
+  // v21：自定义积分包阶梯单价（对齐前台拍板：3万0.015/4万0.0115/5万0.0095，总价单调不减）；
+  // 存量单价的按单一区间升级；同时清理积分包与套餐周期的演示划线价（无真实原价依据不展示）。
+  if (db.billingSettings) {
+    const s = db.billingSettings.creditSlider
+    if (!s.tiers?.length) s.tiers = [{ min: s.min, rate: s.unitPrice }]
+  }
+  db.creditPackages.forEach(pack => {
+    if (!pack.badge && pack.originalPrice !== undefined && !('demoOriginalKept' in pack)) pack.originalPrice = undefined
+  })
+  db.plans.forEach(plan => {
+    plan.billingCycles?.forEach(c => {
+      if (c.originalPrice !== undefined && c.originalPrice === c.price * 12) c.originalPrice = undefined
+    })
+  })
+  // 订单增量：待支付单补报价有效期（场景 24，自创建起 30 分钟演示口径）；其他订单不动
+  db.orders.forEach(order => {
+    if (order.status === 'PENDING' && !Object.prototype.hasOwnProperty.call(order, 'quoteExpireAt')) {
+      order.quoteExpireAt = order.createdAt ? fmt(dayjs(order.createdAt).add(30, 'minute')) : null
+    }
+  })
+}
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
 db.users.forEach((user) => {
@@ -963,7 +998,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 20,
+        version: 21,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],
