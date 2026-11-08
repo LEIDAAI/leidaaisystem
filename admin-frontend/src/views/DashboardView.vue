@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { beijingTime } from '@/utils/chat-time'
 import { dashboard, type Dashboard } from '@/api/operations'
 import { USE_MOCK } from '@/utils/constants'
 import { User, ShoppingCart, ChatDotRound, Money, TrendCharts, Clock } from '@element-plus/icons-vue'
@@ -15,7 +16,7 @@ const kpiCards = computed(() => {
     { label: '用户总数', value: d.userTotal, sub: `今日 +${d.userToday}`, icon: User, color: '#169b82', bg: '#ebf7f3', trend: d.trend.length >= 2 ? d.trend[d.trend.length - 1].users - d.trend[d.trend.length - 2].users : 0 },
     { label: '订单总数', value: d.orderTotal, sub: `待处理 ${d.orderPending}`, icon: ShoppingCart, color: '#588bd7', bg: '#eef3fb', trend: d.trend.length >= 2 ? d.trend[d.trend.length - 1].orders - d.trend[d.trend.length - 2].orders : 0 },
     { label: 'AI 对话', value: d.chatTotal, sub: `今日 ${d.chatToday} · 消息 ${d.chatMessages}`, icon: ChatDotRound, color: '#dba24c', bg: '#fdf5e8', trend: d.trend.length >= 2 ? d.trend[d.trend.length - 1].chats - d.trend[d.trend.length - 2].chats : 0 },
-    { label: '净收入', value: `¥${d.revenueTotal.toFixed(2)}`, sub: `微信 ${d.orderWechat} · 支付宝 ${d.orderAlipay}`, icon: Money, color: '#e06c75', bg: '#fceced', trend: 0 },
+    { label: '已支付订单金额', value: `¥${d.revenueTotal.toFixed(2)}`, sub: `微信 ${d.orderWechat} · 支付宝 ${d.orderAlipay}`, icon: Money, color: '#e06c75', bg: '#fceced', trend: 0 },
   ]
 })
 
@@ -98,7 +99,7 @@ function onChartMouseMove(e: MouseEvent) {
     return
   }
   
-  const idx = Math.round((mouseX - CHART_LEFT) / trendStep.value)
+  const idx = trendStep.value > 0 ? Math.round((mouseX - CHART_LEFT) / trendStep.value) : 0
   if (idx >= 0 && idx < data.value.trend.length) {
     hoverIdx.value = idx
     hoverX.value = xOf(idx)
@@ -119,14 +120,28 @@ const expertMax = computed(() => Math.max(1, ...(data.value?.chatsByExpert.map(e
 /* ── 状态 helpers ── */
 const orderStatusTag = (s: string) => {
   const map: Record<string, { type: string; text: string }> = { PENDING: { type: 'warning', text: '待支付' }, PAID: { type: 'success', text: '已支付' }, CLOSED: { type: 'info', text: '已关闭' } }
-  return map[s] || { type: 'info', text: s }
+  return map[s] || { type: 'info', text: '状态未知' }
 }
-const payChannelText = (c: string) => c === 'WECHAT' ? '微信' : c === 'ALIPAY' ? '支付宝' : c
-
+const payChannelText = (c: string) => ({ WECHAT: '微信', ALIPAY: '支付宝', OFFLINE: '线下' } as Record<string,string>)[c] || '渠道未知'
+const failed = ref(false)
+let requestVersion = 0
 async function load() {
+  const version = ++requestVersion
   loading.value = true
-  try { data.value = await dashboard() } finally { loading.value = false }
+  failed.value = false
+  hoverIdx.value = null
+  try {
+    const result = await dashboard()
+    if (version !== requestVersion) return
+    hoverIdx.value = null
+    data.value = result
+  } catch {
+    if (version === requestVersion) failed.value = true
+  } finally {
+    if (version === requestVersion) loading.value = false
+  }
 }
+onBeforeUnmount(() => { ++requestVersion })
 onMounted(load)
 </script>
 
@@ -138,9 +153,11 @@ onMounted(load)
         <h2 class="dash-title">控制台总览</h2>
         <p class="dash-subtitle">{{ data?.source || (USE_MOCK ? 'Mock 数据' : '等待API') }}</p>
       </div>
-      <el-button @click="load" :icon="TrendCharts">刷新数据</el-button>
+      <el-button @click="load" :loading="loading" :icon="TrendCharts">刷新数据</el-button>
     </div>
 
+    <el-alert v-if="failed" :title="data ? '刷新失败，当前保留上次成功加载的数据' : '概览加载失败，尚未取得统计数据'" type="error" :closable="false" style="margin-bottom:16px"><el-button link @click="load">重试</el-button></el-alert>
+    <template v-if="data">
     <!-- KPI 卡片 -->
     <el-row :gutter="16" class="kpi-row">
       <el-col v-for="card in kpiCards" :key="card.label" :xs="12" :sm="12" :md="6">
@@ -214,7 +231,7 @@ onMounted(load)
               </div>
             </div>
           </div>
-          <el-empty v-else description="暂无数据" :image-size="60" />
+          <el-empty v-else description="当前没有用户套餐记录" :image-size="60" />
         </div>
       </el-col>
     </el-row>
@@ -353,7 +370,7 @@ onMounted(load)
               </template>
             </el-table-column>
             <el-table-column prop="registeredAt" label="注册时间" min-width="150">
-              <template #default="{ row }">{{ row.registeredAt.replace('T', ' ').slice(0, 16) }}</template>
+              <template #default="{ row }">{{ beijingTime(row.registeredAt) }}</template>
             </el-table-column>
           </el-table>
         </div>
@@ -384,6 +401,8 @@ onMounted(load)
         </div>
       </el-col>
     </el-row>
+    </template>
+    <el-empty v-else-if="!loading && !failed" description="尚未加载概览统计" />
   </div>
 </template>
 

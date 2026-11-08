@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import StatusTag from '@/components/StatusTag.vue'
 import { getFeedbackDetail } from '@/api/feedback'
 import type { FeedbackDetail } from '@/api/types'
-import { formatDateTime, orDash } from '@/utils/format'
+import { orDash } from '@/utils/format'
+import { beijingTime as formatDateTime } from '@/utils/chat-time'
 import { feedbackImageSrc } from '@/utils/feedback'
 
 interface Props {
@@ -25,22 +26,36 @@ const visible = computed({
 const loading = ref(false)
 const detail = ref<FeedbackDetail | null>(null)
 
-watch(visible, async (value) => {
-  if (!value || props.feedbackId === null) return
-  loading.value = true
+const failed = ref(false)
+let requestVersion = 0
+async function loadDetail() {
+  const version = ++requestVersion
+  const id = props.feedbackId
   detail.value = null
+  failed.value = false
+  loading.value = false
+  if (!props.modelValue || id === null) return
+  loading.value = true
   try {
-    detail.value = await getFeedbackDetail(props.feedbackId)
+    const result = await getFeedbackDetail(id)
+    if (version !== requestVersion || !props.modelValue || props.feedbackId !== id) return
+    if (result.id !== id) throw new Error('反馈详情对象不一致')
+    detail.value = result
+  } catch {
+    if (version === requestVersion) failed.value = true
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
-})
+}
+watch(() => [props.modelValue, props.feedbackId] as const, loadDetail, { immediate: true, flush: 'sync' })
+onBeforeUnmount(() => { ++requestVersion })
 </script>
 
 <template>
   <el-drawer v-model="visible" title="反馈详情" size="640px" destroy-on-close>
     <div v-loading="loading">
       <template v-if="detail">
+        <el-alert title="反馈奖励属于独立运营特批积分，不是常规购买赠分；处理权限、特批原因与处理人均须留审计。时间为北京时间（UTC+08:00）。" type="info" :closable="false" style="margin-bottom:12px" />
         <el-descriptions :column="2" border>
           <el-descriptions-item label="编号">{{ detail.fbNo }}</el-descriptions-item>
           <el-descriptions-item label="状态">
@@ -88,7 +103,8 @@ watch(visible, async (value) => {
         </template>
         <el-empty v-else description="未引用对话" :image-size="60" />
       </template>
-      <el-empty v-else-if="!loading" description="暂无数据" />
+      <el-alert v-else-if="failed" title="反馈详情加载失败，尚未取得当前反馈内容" type="error" :closable="false"><el-button link @click="loadDetail">重试</el-button></el-alert>
+      <el-empty v-else-if="!loading" description="请选择要查看的反馈" />
     </div>
   </el-drawer>
 </template>

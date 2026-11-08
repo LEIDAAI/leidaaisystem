@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
+import { captureSession, isSessionCurrent } from '@/utils/token'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 
@@ -50,14 +51,18 @@ const form = reactive({
   permissionIds: [] as number[]
 })
 
-watch(visible, (value) => {
+let formVersion = 0
+onUnmounted(() => { formVersion++ })
+watch([visible, () => props.role?.id], ([value]) => {
+  formVersion++
+  saving.value = false
   if (!value) return
   form.code = props.role?.code ?? ''
   form.name = props.role?.name ?? ''
   form.remark = props.role?.remark ?? ''
   form.permissionIds = props.role ? [...props.role.permissionIds] : []
   void nextTick(() => formRef.value?.clearValidate())
-})
+}, { flush: 'sync' })
 
 const rules: FormRules = {
   code: [{ required: true, message: '请输入角色编码', trigger: 'blur' }],
@@ -95,31 +100,28 @@ function toggleModule(module: PermissionModule, checked: unknown): void {
 }
 
 async function handleSave() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
+  if (saving.value || !visible.value) return
+  const version = formVersion
+  const session = captureSession()
+  const targetId = props.role?.id
+  const payload = { code: form.code.trim(), name: form.name.trim(), remark: form.remark.trim(), permissionIds: [...form.permissionIds] }
   saving.value = true
   try {
-    const payload = {
-      code: form.code.trim(),
-      name: form.name.trim(),
-      remark: form.remark.trim(),
-      permissionIds: form.permissionIds
-    }
-    if (isEdit.value && props.role) {
-      await updateRole(props.role.id, payload)
-      ElMessage.success('保存成功')
-    } else {
-      await createRole(payload)
-      ElMessage.success('新增成功')
-    }
-    // 保存已成功；会话刷新失败（如 token 恰好过期）不应吞掉成功状态，单独提示
-    try { await useAuthStore().refreshSession() } catch { ElMessage.warning('保存成功，但会话刷新失败，请重新登录后查看最新权限') }
+    const valid = await formRef.value?.validate().catch(() => false)
+    if (!valid || version !== formVersion || !isSessionCurrent(session)) return
+    if (targetId !== undefined) await updateRole(targetId, payload)
+    else await createRole(payload)
+    if (!isSessionCurrent(session)) return
+    ElMessage.success(targetId !== undefined ? '保存成功' : '新增成功')
+    try { await useAuthStore().refreshPermissions() }
+    catch { if (isSessionCurrent(session)) ElMessage.warning('保存成功，身份校验失败，请点击重试加载最新权限') }
+    if (version !== formVersion || !isSessionCurrent(session)) return
     visible.value = false
     emit('success')
   } catch {
-    // 错误提示已由 request 拦截器统一展示
+    // 请求错误由拦截器提示，当前草稿保留供重试。
   } finally {
-    saving.value = false
+    if (version === formVersion) saving.value = false
   }
 }
 </script>
@@ -137,7 +139,7 @@ async function handleSave() {
         <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="角色说明（可选）" />
       </el-form-item>
       <el-form-item label="权限点">
-        <el-alert title="P1/P2 权限点仅为字典预留，相应模块尚未实现。" type="info" :closable="false" style="margin-bottom:12px" />
+        <el-alert title="保存后立即校验当前会话；菜单和操作权限同步更新。" type="info" :closable="false" style="margin-bottom:12px" />
         <div class="perm-groups">
           <div v-for="module in permissions" :key="module.module" class="perm-group">
             <div class="perm-group__head">

@@ -5,7 +5,9 @@ import { ElMessage } from 'element-plus'
 import ProTable from '@/components/ProTable.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
-import { deleteAdmin, listAdmins, listRoles, resetAdminPassword, updateAdminStatus } from '@/api/admin'
+import { deleteAdmin, listAdmins, resetAdminPassword, updateAdminStatus } from '@/api/admin'
+import { get } from '@/api/request'
+import { captureSession, isSessionCurrent } from '@/utils/token'
 import type { AdminItem, AdminQuery, ProTableHandle, RoleItem } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
 import { confirmAction, promptText } from '@/utils/feedback'
@@ -34,9 +36,17 @@ function handleReset() {
   handleSearch()
 }
 
-onMounted(async () => {
-  roles.value = await listRoles()
-})
+const rolesLoading = ref(false)
+const rolesError = ref(false)
+async function loadRoleOptions() {
+  if (rolesLoading.value) return
+  rolesLoading.value = true
+  rolesError.value = false
+  try { roles.value = await get<RoleItem[]>('/admin-role-options') }
+  catch { rolesError.value = true }
+  finally { rolesLoading.value = false }
+}
+onMounted(loadRoleOptions)
 
 // -------------------------------------------------- 抽屉
 const drawerVisible = ref(false)
@@ -54,32 +64,35 @@ function openEdit(row: AdminItem) {
 
 // -------------------------------------------------- 行操作
 async function handleToggleStatus(row: AdminItem) {
+  const session = captureSession()
   const next = row.status === 1 ? 0 : 1
   const action = next === 1 ? '启用' : '禁用'
   const confirmed = await confirmAction(`确定要${action}管理员「${row.displayName}」吗？`, `${action}确认`)
-  if (!confirmed) return
+  if (!confirmed || !isSessionCurrent(session)) return
   await updateAdminStatus(row.id, next)
   ElMessage.success(`${action}成功`)
   tableRef.value?.refresh()
 }
 
 async function handleResetPassword(row: AdminItem) {
+  const session = captureSession()
   const value = await promptText(`为管理员「${row.displayName}」设置新密码（至少 6 位）`, '重置密码', {
     inputType: 'password',
     inputPattern: /^.{6,}$/,
     inputErrorMessage: '密码长度至少 6 位'
   })
-  if (value === null) return
+  if (value === null || !isSessionCurrent(session)) return
   await resetAdminPassword(row.id, value)
   ElMessage.success('密码已重置')
 }
 
 async function handleDelete(row: AdminItem) {
+  const session = captureSession()
   const confirmed = await confirmAction(
     `确定要删除管理员「${row.displayName}」吗？删除后不可恢复。`,
     '删除确认'
   )
-  if (!confirmed) return
+  if (!confirmed || !isSessionCurrent(session)) return
   await deleteAdmin(row.id)
   ElMessage.success('删除成功')
   tableRef.value?.refresh()
@@ -166,7 +179,7 @@ async function handleDelete(row: AdminItem) {
       </ProTable>
     </div>
 
-    <AdminFormDrawer v-model="drawerVisible" :admin="editingAdmin" :roles="roles" @success="tableRef?.refresh()" />
+    <AdminFormDrawer v-model="drawerVisible" :admin="editingAdmin" :roles="roles" :roles-loading="rolesLoading" :roles-error="rolesError" @retry-roles="loadRoleOptions" @success="tableRef?.refresh()" />
   </div>
 </template>
 

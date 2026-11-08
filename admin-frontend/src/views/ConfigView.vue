@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { get, post, ApiError } from '@/api/request'
 import {
-  listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool,
+  listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool, setDefaultExpert,
   exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
   testModelConnection, listModels, listScenarios, saveScenario, deleteScenario, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
   FRONTEND_PERM_GROUPS, normalizeFrontendPerms,
@@ -67,6 +67,12 @@ const modelDomains = ref<string[]>([])
 /** v5：平台筛选（专家/技能/MCP；下拉多选，空=全部；命中任一所选平台即显示） */
 const platformFilter = ref<PlatformType[]>([])
 const loading = ref(false)
+const loadError = ref('')
+const resourceEmpty = computed(() => {
+  if (loadError.value) return '资源加载失败，请点击刷新重试'
+  if (keyword.value || status.value !== '' || platformFilter.value.length || activeTab.value !== 'all' || modelDomain.value) return '没有符合当前筛选条件的资源，请调整筛选'
+  return module.value === 'mcp' ? '尚未接入 MCP 服务，请先新建服务，再发现工具' : module.value === 'expert' ? '尚未创建专家，可新建并绑定模型、技能和知识库' : module.value === 'model' ? '尚未接入模型，可通过渠道探测批量添加' : '暂无配置，点击新建开始'
+})
 /** v5：模型管理列表为服务端分页契约（GET /models {total, list}） */
 const modelPage = ref(1)
 const modelPageSize = ref(20)
@@ -207,6 +213,7 @@ const listGuard = createSeqGuard()
 async function load(): Promise<void> {
   const seq = listGuard.next()
   loading.value = true
+  loadError.value = ''
   try {
     // v17：加油包 / 计费设置走独立接口与数据源，不混入 configItems
     if (rawKind.value === 'credit-packages') {
@@ -241,20 +248,35 @@ async function load(): Promise<void> {
       }
     }
     if (!listGuard.isCurrent(seq)) return
-    if (kind.value === 'mcp/servers') tools.value = await listTools()
-    // 专家表单/列表的基础模型下拉数据源：取模型管理全量（pageSize 上限内）
-    if (kind.value === 'experts') models.value = (await listModels({ page: 1, pageSize: 200 })).list
-    // 专家场景分组：加载场景库；已删除场景的二级 Tab 回退到「全部场景」
+    if (kind.value === 'mcp/servers') {
+      const result = await listTools()
+      if (!listGuard.isCurrent(seq)) return
+      tools.value = result
+    }
     if (kind.value === 'experts') {
-      scenarios.value = await listScenarios()
+      const [modelList, sceneList] = await Promise.all([listModels({ page: 1, pageSize: 200 }), listScenarios()])
+      if (!listGuard.isCurrent(seq)) return
+      models.value = modelList.list
+      scenarios.value = sceneList
       if (typeof activeScenario.value === 'number' && !scenarioById(activeScenario.value)) activeScenario.value = 'all'
     }
+  } catch (e) {
+    if (listGuard.isCurrent(seq)) loadError.value = e instanceof Error ? e.message : '资源加载失败'
   } finally {
     if (listGuard.isCurrent(seq)) loading.value = false
   }
 }
-watch(sliderDialog, async (open) => { if (open) billingSettings.value = await getBillingSettings() })
-watch(kind, () => { planTypeFilter.value = ''; sliderDialog.value = false; keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; switchTab('all'); void load() }, { immediate: true })
+watch(sliderDialog, async (open) => {
+  if (!open) return
+  const targetKind = rawKind.value
+  const settings = await getBillingSettings()
+  if (sliderDialog.value && targetKind === rawKind.value) billingSettings.value = settings
+})
+watch(kind, (_next, previous) => {
+  if (previous !== undefined) resetEditors()
+  items.value = []; tools.value = []; models.value = []; creditPackages.value = []; billingSettings.value = null
+  planTypeFilter.value = ''; sliderDialog.value = false; keyword.value = ''; status.value = ''; platformFilter.value = []; modelPage.value = 1; modelDomain.value = ''; switchTab('all'); void load()
+}, { immediate: true })
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 // 模型模块：status/domain 变更立即回第一页重查；keyword 输入防抖 300ms 后重查；其余模块走本地过滤无需重查
 watch(status, () => { if (module.value === 'model') { modelPage.value = 1; void load() } })
@@ -265,7 +287,7 @@ watch(keyword, () => {
   searchTimer = setTimeout(() => { modelPage.value = 1; void load() }, 300)
 })
 // 卸载时清理防抖定时器，避免组件销毁后仍触发 load
-onUnmounted(() => { if (searchTimer) clearTimeout(searchTimer) })
+onUnmounted(() => { if (searchTimer) clearTimeout(searchTimer); listGuard.next(); ++editSeq })
 
 /** 生效状态中文标签（未知枚举值兜底原样显示） */
 const REFRESH_STATUS_LABELS: Record<string, string> = { APPLIED: '已生效', PENDING: '待刷新', FAILED: '刷新失败' }
@@ -305,8 +327,14 @@ function blankDraft(): Partial<ConfigItem> {
   return { code: '', name: '', status: 1, price: 0, durationDays: 30, entitlements: [], planType: 'NORMAL' }
 }
 
+let editSeq = 0
+const expertEditor = ref<InstanceType<typeof ExpertOrchestrator>>()
+const modelEditor = ref<InstanceType<typeof ModelFormDrawer>>()
 async function edit(item?: ConfigItem): Promise<void> {
-  const detail = item ? await get<ConfigItem>(`/${kind.value}/${item.id}`) : blankDraft()
+  const seq = ++editSeq
+  const targetKind = kind.value
+  const detail = item ? await get<ConfigItem>(`/${targetKind}/${item.id}`) : blankDraft()
+  if (seq !== editSeq || targetKind !== kind.value) return
   editItem.value = JSON.parse(JSON.stringify(detail))
   if (module.value === 'expert') {
     // v6：编排页自加载 skills/servers/plans/models，此处只传详情
@@ -414,7 +442,8 @@ async function testModel(item: ConfigItem): Promise<void> {
 }
 
 async function setDefault(item: ConfigItem): Promise<void> {
-  await post(`/experts/${item.id}/default`)
+  await setDefaultExpert(item.id)
+  ElMessage.success(`已将「${item.name}」设为默认专家`)
   await load()
 }
 
@@ -478,7 +507,7 @@ async function importJson(): Promise<void> {
 // -------------------------------------------------------------- MCP：连接测试 / 工具发现 / 健康检查
 async function testConnection(item: ConfigItem): Promise<void> {
   const r = await testMcpConnection(item.id)
-  await ElMessageBox.alert(`${r.healthDetail}（${r.lastHealthAt}）`, `连接测试：${r.healthStatus}`)
+  await ElMessageBox.alert(`${r.healthDetail}（${r.lastHealthAt}）`, `连接测试：${HEALTH_LABELS[r.healthStatus]?.label || '状态待确认'}`)
   await load()
 }
 
@@ -506,11 +535,48 @@ async function toolChange(v: { versionName: string; note: string }): Promise<voi
   }
 }
 
+function resetEditors(): void {
+  ++editSeq
+  if (searchTimer) clearTimeout(searchTimer)
+  planDrawer.value = expertDrawer.value = mcpDrawer.value = modelDrawer.value = creditDrawer.value = false
+  versionDrawer.value = previewDrawer.value = sliderDialog.value = false
+  groupDialog.value = sceneDlg.value = toolVersionDialog.value = false
+  editItem.value = historyItem.value = previewItem.value = null
+  editPackage.value = null
+  groupTarget.value = null
+  toolChangeTarget.value = null
+  sceneName.value = ''; sceneDesc.value = ''; groupPick.value = null
+}
+async function guardModuleLeave(to: { path: string; meta: Record<string, unknown> }): Promise<boolean> {
+  const destination = `前往「${String(to.meta.title || to.path)}」`
+  if (expertDrawer.value && expertEditor.value && !(await expertEditor.value.prepareLeave(destination))) return false
+  if (modelDrawer.value && modelEditor.value && !(await modelEditor.value.prepareLeave(destination))) return false
+  if (planDrawer.value || mcpDrawer.value || creditDrawer.value || sliderDialog.value || groupDialog.value || sceneDlg.value || toolVersionDialog.value || (rawKind.value === 'billing-settings' && canEdit.value)) {
+    try { await ElMessageBox.confirm(`即将${destination}。当前配置表单将关闭，未保存修改会丢失。`, '切换模块确认', { type: 'warning', confirmButtonText: '离开当前模块', cancelButtonText: '继续编辑' }) }
+    catch { return false }
+  }
+  return true
+}
+onBeforeRouteUpdate((to, from) => to.path === from.path ? true : guardModuleLeave(to))
+onBeforeRouteLeave((to) => guardModuleLeave(to))
+const HEALTH_LABELS: Record<string, { label: string; type: 'info' | 'success' | 'warning' | 'danger'; detail: string }> = {
+  UNKNOWN: { label: '未检测', type: 'info', detail: '尚无检测结果，可在更多操作中发起健康检查' },
+  HEALTHY: { label: '健康', type: 'success', detail: '最近一次检测连接正常' },
+  UNHEALTHY: { label: '健康异常', type: 'danger', detail: '最近一次检测发现服务异常，请检查服务或凭据' },
+  UNAVAILABLE: { label: '服务不可用', type: 'danger', detail: '最近一次检测服务不可用，请检查启用状态、地址和凭据' },
+  FAILED: { label: '检测失败', type: 'warning', detail: '检测未能完成，可重试健康检查' },
+  ERROR: { label: '检测失败', type: 'warning', detail: '检测未能完成，可重试健康检查' }
+}
+function healthOf(row: Pick<ConfigItem, 'healthStatus' | 'healthDetail'>): (typeof HEALTH_LABELS)[string] {
+  return HEALTH_LABELS[row.healthStatus || 'UNKNOWN'] || { label: '状态待确认', type: 'info', detail: row.healthDetail || '服务返回了未识别的健康状态，请重新检测' }
+}
 const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指定套餐', PRIVATE: '私有' }
 </script>
 <template>
   <el-alert v-if="USE_MOCK" title="Mock 配置中心：刷新、工具发现、连接测试及前台预览均为本地模拟，未连接 AgentScope 或真实 MCP 服务。" type="info" :closable="false" style="margin-bottom:16px" />
+  <el-alert v-if="loadError" :title="`资源加载失败：${loadError}`" type="error" :closable="false" style="margin-bottom:12px"><el-button link type="primary" @click="load">重新加载</el-button></el-alert>
   <el-card shadow="never">
+    <p v-if="['expert', 'mcp', 'model'].includes(module)" class="muted" style="margin:0 0 12px">当前显示 {{ viewRows.length }} 项 · 启用 {{ viewRows.filter((r) => r.status === 1).length }} 项<span v-if="module === 'expert'"> · 默认专家 {{ items.find((r) => r.isDefault)?.name || '尚未设置' }}</span><span v-if="module === 'mcp'"> · 已发现工具 {{ tools.length }} 个</span></p>
     <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
       <el-input v-if="module !== 'billing-setting'" v-model="keyword" placeholder="搜索名称 / 编码" clearable style="width:250px" />
       <el-select v-if="module !== 'billing-setting'" v-model="status" placeholder="全部状态" clearable style="width:150px">
@@ -565,7 +631,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </div>
     </div>
     <!-- v17：加油包 / 计费设置模块使用下方独立表格 / 表单，主配置表格不渲染 -->
-    <el-table v-if="module !== 'credit-package' && module !== 'billing-setting' && !(module === 'plan' && planTypeFilter === 'CREDIT_PACKAGE')" v-loading="loading" :data="viewRows" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+    <el-table v-if="module !== 'credit-package' && module !== 'billing-setting' && !(module === 'plan' && planTypeFilter === 'CREDIT_PACKAGE')" v-loading="loading" :data="viewRows" :empty-text="resourceEmpty" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
       <el-table-column prop="name" label="名称" min-width="170">
         <template #default="{ row }">
           <template v-if="module === 'expert'">
@@ -601,6 +667,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </el-table-column>
       <el-table-column v-if="module === 'expert'" label="基础模型" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ modelNameOf(row.baseModel) }}</template></el-table-column>
       <el-table-column v-if="module === 'model'" prop="code" label="编码" min-width="130" show-overflow-tooltip><template #default="{ row }"><code>{{ row.code }}</code></template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="供应商模型 ID" min-width="180" show-overflow-tooltip><template #default="{ row }"><code>{{ row.modelId || row.code }}</code></template></el-table-column>
       <el-table-column v-if="module === 'model'" label="供应商" width="120"><template #default="{ row }">{{ row.provider || '-' }}</template></el-table-column>
       <el-table-column v-if="module === 'model'" label="API Key" width="110"><template #default="{ row }">{{ row.apiKeyMasked || '—' }}</template></el-table-column>
       <el-table-column v-if="module === 'model'" label="渠道域名 / 接入地址" min-width="215">
@@ -627,7 +694,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'mcp'" label="传输方式" width="165"><template #default="{ row }"><el-tag v-if="row.connType === 'MCP'" size="small" type="info">{{ row.transport || '-' }}</el-tag><span v-else class="muted">schema 解析</span></template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="工具数" width="75"><template #default="{ row }">{{ tools.filter((t) => t.serverId === row.id).length }}</template></el-table-column>
       <el-table-column v-if="module === 'mcp'" label="地址 / 端点" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.endpoint || row.command }}{{ row.path || '' }}</template></el-table-column>
-      <el-table-column v-if="module === 'mcp'" label="健康" min-width="150"><template #default="{ row }">{{ row.healthStatus || 'UNKNOWN' }}<br /><small class="muted">{{ row.lastHealthAt }}</small></template></el-table-column>
+      <el-table-column v-if="module === 'mcp'" label="健康" min-width="170"><template #default="{ row }"><el-tooltip :content="row.healthDetail || healthOf(row).detail"><el-tag size="small" :type="healthOf(row).type">{{ healthOf(row).label }}</el-tag></el-tooltip><br /><small class="muted">{{ row.lastHealthAt ? formatDateTime(row.lastHealthAt) : '尚无检测记录' }}</small></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.planType === 'GIFT' ? 'success' : 'info'">{{ row.planType === 'GIFT' ? '赠送' : '常规' }}</el-tag></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="价格" width="90"><template #default="{ row }"><span v-if="row.planType !== 'GIFT'">¥{{ row.price }}</span><span v-else class="muted">—</span></template></el-table-column>
       <el-table-column v-if="module === 'plan'" label="时长" min-width="135"><template #default="{ row }">{{ row.durationMode === 'MEMBERSHIP' ? '会员期内有效' : row.durationDays === 0 ? '长期有效' : row.durationDays + '天' }}</template></el-table-column>
@@ -751,7 +818,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
     </div>
     <template v-if="module === 'mcp'">
       <h3>工具清单（API 为已导入定义，调用待后端接入；MCP 为发现示意数据）</h3>
-      <el-table v-loading="loading" :data="tools" size="small">
+      <el-table v-loading="loading" :data="tools" size="small" empty-text="尚未发现工具，请在服务的更多操作中执行工具发现；发现后可逐项启用">
         <el-table-column label="所属服务" min-width="150"><template #default="{ row }">{{ items.find((s) => s.id === row.serverId)?.name || row.serverId }}</template></el-table-column>
         <el-table-column prop="name" label="工具" min-width="180" />
         <el-table-column label="来源" width="135"><template #default="{ row }">{{ row.source === 'API_IMPORT' ? '已导入定义' : 'MCP Mock 示例' }}</template></el-table-column>
@@ -765,12 +832,12 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
   <el-dialog v-model="sliderDialog" title="自定义积分包 / 滑块设置" width="760px" destroy-on-close>
     <BillingSettingsForm v-if="billingSettings" :settings="billingSettings" :can-edit="canEdit" slider-only @saved="load" />
   </el-dialog>
-  <PlanFormDrawer v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" @credit-package="planDrawer = false; editCredit()" />
+  <PlanFormDrawer v-if="planDrawer" v-model="planDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" @credit-package="planDrawer = false; editCredit()" />
   <!-- v17 积分加油包表单抽屉 -->
-  <CreditPackageDrawer v-model="creditDrawer" :item="editPackage" :can-edit="canEdit" @saved="load" @plan-type="switchToPlan" @slider-settings="sliderDialog = true" />
-  <ExpertOrchestrator v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
-  <McpFormDrawer v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
-  <ModelFormDrawer v-model="modelDrawer" :item="editItem" :can-edit="canEdit" :existing-codes="items.map(i => i.code)" @saved="onSaved" />
+  <CreditPackageDrawer v-if="creditDrawer" v-model="creditDrawer" :item="editPackage" :can-edit="canEdit" @saved="load" @plan-type="switchToPlan" @slider-settings="sliderDialog = true" />
+  <ExpertOrchestrator v-if="expertDrawer && module === 'expert'" ref="expertEditor" v-model="expertDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <McpFormDrawer v-if="mcpDrawer && module === 'mcp'" v-model="mcpDrawer" :item="editItem" :can-edit="canEdit" @saved="onSaved" />
+  <ModelFormDrawer v-if="modelDrawer && module === 'model'" ref="modelEditor" v-model="modelDrawer" :item="editItem" :can-edit="canEdit" :existing-codes="items.map(i => i.code)" :existing-models="items" @saved="onSaved" />
   <VersionDrawer v-model="versionDrawer" :kind="historyKind" :item="historyItem" :can-edit="canEdit" @restored="load" />
   <WorkspacePreviewDrawer v-model="previewDrawer" :expert="previewItem" />
   <!-- v5：MCP 工具启停同样走版本确认框（默认时间戳版本名可改 + 变更说明，确认后才写库并生成快照） -->

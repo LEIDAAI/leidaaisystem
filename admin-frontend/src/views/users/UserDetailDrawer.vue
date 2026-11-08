@@ -4,11 +4,11 @@ import { ElMessage } from 'element-plus'
 
 import StatusTag from '@/components/StatusTag.vue'
 import EntitlementEditor from '@/components/EntitlementEditor.vue'
-import { getUserDetail, updateUserEntitlements } from '@/api/user'
+import { getUserDetail, updateUserEntitlements, type UserDetailWithMembership } from '@/api/user'
 import { listChats, chatMessages, type ChatItem, type Message } from '@/api/operations'
 import { ApiError } from '@/api/request'
-import type { EntitlementPayload, UserDetail } from '@/api/types'
-import { formatAmount, formatDateTime, orDash } from '@/utils/format'
+import type { EntitlementPayload } from '@/api/types'
+import { formatAmount, formatDateTime, formatMembership, orDash } from '@/utils/format'
 import { confirmAction } from '@/utils/feedback'
 
 const RESOURCE_TYPE_LABELS: Record<string, string> = {
@@ -39,29 +39,34 @@ const visible = computed({
 })
 
 const loading = ref(false)
-const detail = ref<UserDetail | null>(null)
+const detail = ref<UserDetailWithMembership | null>(null)
 const activeTab = ref('profile')
+const loadError = ref(false)
+let detailReqSeq = 0
 
-watch(visible, async (value) => {
-  if (!value || props.userId === null) return
+function isCurrent(seq: number, id: number): boolean {
+  return seq === detailReqSeq && props.modelValue && props.userId === id
+}
+
+async function loadDetail(): Promise<void> {
+  const id = props.userId
+  if (!props.modelValue || id === null) return
+  const seq = ++detailReqSeq
   loading.value = true
+  loadError.value = false
   detail.value = null
-  editingEntitlements.value = false
-  activeTab.value = 'profile'
-  // 对话记录状态复位（切到「对话记录」Tab 时按需加载）
-  chatList.value = []
-  chatTotal.value = 0
-  chatPage.value = 1
-  chatsDenied.value = false
-  chatsError.value = false
-  msgCache.value = {}
-  msgFailed.value = {}
   try {
-    detail.value = await getUserDetail(props.userId)
+    const result = await getUserDetail(id)
+    if (isCurrent(seq, id)) {
+      if (result.profile.id !== id) throw new Error('用户详情与请求对象不一致')
+      detail.value = result
+    }
+  } catch {
+    if (isCurrent(seq, id)) loadError.value = true
   } finally {
-    loading.value = false
+    if (isCurrent(seq, id)) loading.value = false
   }
-})
+}
 
 // 切到对话记录 Tab 时懒加载会话列表
 watch(activeTab, (tab) => {
@@ -88,25 +93,27 @@ const msgLoadingId = ref<number | null>(null)
 let chatReqSeq = 0
 
 async function loadChats(): Promise<void> {
-  if (props.userId === null) return
+  const id = props.userId
+  if (!props.modelValue || id === null) return
+  const detailSeq = detailReqSeq
   const seq = ++chatReqSeq
   chatsLoading.value = true
   chatsDenied.value = false
   chatsError.value = false
   try {
-    const data = await listChats({ userId: props.userId, page: chatPage.value, pageSize: chatPageSize.value, deleted: 'all' })
-    if (seq !== chatReqSeq) return // 已切换用户/翻页，丢弃过期响应
+    const data = await listChats({ userId: id, page: chatPage.value, pageSize: chatPageSize.value, deleted: 'all' })
+    if (seq !== chatReqSeq || !isCurrent(detailSeq, id)) return // 已切换用户/翻页，丢弃过期响应
     chatList.value = data.list
     chatTotal.value = data.total
   } catch (e) {
-    if (seq !== chatReqSeq) return
+    if (seq !== chatReqSeq || !isCurrent(detailSeq, id)) return
     // 区分权限不足与加载失败：权限不足提示授权，其他失败允许重试
     if (e instanceof ApiError && e.code === 403) chatsDenied.value = true
     else chatsError.value = true
     chatList.value = []
     chatTotal.value = 0
   } finally {
-    if (seq === chatReqSeq) chatsLoading.value = false
+    if (seq === chatReqSeq && isCurrent(detailSeq, id)) chatsLoading.value = false
   }
 }
 
@@ -126,15 +133,20 @@ function onExpandChat(row: ChatItem, expanded: ChatItem[]): void {
 
 /** 加载会话消息：失败不缓存空数组（标记后可重新展开重试） */
 async function loadMessages(row: ChatItem): Promise<void> {
+  const id = props.userId
+  const seq = detailReqSeq
+  if (id === null || !props.modelValue || !chatList.value.some((c) => c.id === row.id)) return
   msgLoadingId.value = row.id
   delete msgFailed.value[row.id]
   try {
-    msgCache.value[row.id] = await chatMessages(row.id)
+    const messages = await chatMessages(row.id)
+    if (isCurrent(seq, id)) msgCache.value[row.id] = messages
   } catch {
+    if (!isCurrent(seq, id)) return
     delete msgCache.value[row.id]
     msgFailed.value[row.id] = true
   } finally {
-    msgLoadingId.value = null
+    if (isCurrent(seq, id) && msgLoadingId.value === row.id) msgLoadingId.value = null
   }
 }
 
@@ -144,7 +156,8 @@ const draftEntitlements = ref<EntitlementPayload[]>([])
 const savingEntitlements = ref(false)
 
 function startEditEntitlements() {
-  const source = detail.value?.entitlements ?? []
+  if (!props.modelValue || loading.value || !detail.value || detail.value.profile.id !== props.userId) return
+  const source = detail.value.entitlements
   draftEntitlements.value = source.map((e) => ({
     resourceType: e.resourceType,
     resourceId: e.resourceId,
@@ -156,7 +169,10 @@ function startEditEntitlements() {
 }
 
 async function saveEntitlements() {
-  if (props.userId === null || savingEntitlements.value) return
+  const id = props.userId
+  const seq = detailReqSeq
+  if (id === null || savingEntitlements.value || !props.modelValue || detail.value?.profile.id !== id || !editingEntitlements.value) return
+  const payload = draftEntitlements.value.map((item) => ({ ...item }))
   const invalid = draftEntitlements.value.some((e) => !Number.isFinite(e.quotaLimit) || e.quotaLimit < 0)
   if (invalid) {
     ElMessage.warning('限额值必须为不小于 0 的数字')
@@ -164,13 +180,15 @@ async function saveEntitlements() {
   }
   savingEntitlements.value = true
   try {
-    await updateUserEntitlements(props.userId, draftEntitlements.value)
+    await updateUserEntitlements(id, payload)
+    emit('changed')
+    if (!isCurrent(seq, id)) return
     ElMessage.success('权益已更新')
     editingEntitlements.value = false
-    detail.value = await getUserDetail(props.userId)
-    emit('changed')
-  } finally {
     savingEntitlements.value = false
+    await loadDetail()
+  } finally {
+    if (isCurrent(seq, id)) savingEntitlements.value = false
   }
 }
 
@@ -179,9 +197,32 @@ async function cancelEditEntitlements() {
     editingEntitlements.value = false
     return
   }
+  const seq = detailReqSeq
   const confirmed = await confirmAction('放弃本次权益修改？', '提示')
-  if (confirmed) editingEntitlements.value = false
+  if (confirmed && seq === detailReqSeq) editingEntitlements.value = false
 }
+
+watch(() => [props.modelValue, props.userId] as const, ([open, id]) => {
+  ++detailReqSeq
+  ++chatReqSeq
+  detail.value = null
+  loading.value = false
+  loadError.value = false
+  editingEntitlements.value = false
+  savingEntitlements.value = false
+  draftEntitlements.value = []
+  activeTab.value = 'profile'
+  chatList.value = []
+  chatTotal.value = 0
+  chatPage.value = 1
+  chatsLoading.value = false
+  chatsDenied.value = false
+  chatsError.value = false
+  msgCache.value = {}
+  msgFailed.value = {}
+  msgLoadingId.value = null
+  if (open && id !== null) void loadDetail()
+}, { immediate: true, flush: 'sync' })
 </script>
 
 <template>
@@ -206,7 +247,8 @@ async function cancelEditEntitlements() {
           <el-descriptions :column="3" border class="block-gap">
             <el-descriptions-item label="套餐">{{ detail.plan.planName }}</el-descriptions-item>
             <el-descriptions-item label="到期时间">
-              {{ detail.plan.expireAt ? formatDateTime(detail.plan.expireAt) : '长期有效' }}
+              <el-tag size="small" :type="formatMembership(detail.plan.membership ?? detail.membership).type">{{ formatMembership(detail.plan.membership ?? detail.membership).text }}</el-tag>
+              <div>{{ formatMembership(detail.plan.membership ?? detail.membership).time }}</div>
             </el-descriptions-item>
             <el-descriptions-item label="个体覆盖">{{ detail.entitlements.length }} 条</el-descriptions-item>
           </el-descriptions>
@@ -222,7 +264,8 @@ async function cancelEditEntitlements() {
             </template>
           </div>
 
-          <el-table v-if="!editingEntitlements" :data="detail.entitlements" border size="small">
+          <el-empty v-if="!editingEntitlements && !detail.entitlements.length" description="无个体覆盖，使用套餐权益" :image-size="64" />
+          <el-table v-else-if="!editingEntitlements" :data="detail.entitlements" border size="small">
             <el-table-column label="资源类型" width="100">
               <template #default="{ row }">{{ RESOURCE_TYPE_LABELS[row.resourceType] ?? row.resourceType }}</template>
             </el-table-column>
@@ -348,7 +391,10 @@ async function cancelEditEntitlements() {
           </el-table>
         </el-tab-pane>
       </el-tabs>
-      <el-empty v-else-if="!loading" description="暂无数据" />
+      <el-alert v-else-if="!loading && loadError" title="用户详情加载失败" type="error" :closable="false">
+        <el-button size="small" @click="loadDetail">重试</el-button>
+      </el-alert>
+      <el-empty v-else-if="!loading" description="请选择要查看的用户" />
     </div>
   </el-drawer>
 </template>
@@ -371,7 +417,7 @@ async function cancelEditEntitlements() {
 
 .hint-text {
   margin-top: 10px;
-  color: #c0c4cc;
+  color: #606266;
   font-size: 12px;
 }
 

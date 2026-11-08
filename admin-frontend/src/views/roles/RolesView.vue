@@ -9,6 +9,13 @@ import type { PermissionModule, ProTableHandle, RoleItem } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
 import { confirmAction } from '@/utils/feedback'
 import RoleFormDrawer from './RoleFormDrawer.vue'
+import { useAuthStore } from '@/stores/auth'
+import { captureSession, isSessionCurrent } from '@/utils/token'
+
+async function refreshPermissions() {
+  try { await useAuthStore().refreshPermissions() }
+  catch { ElMessage.warning('操作成功，身份校验失败，请点击重试加载最新权限') }
+}
 
 const tableRef = ref<ProTableHandle | null>(null)
 const permissions = ref<PermissionModule[]>([])
@@ -28,53 +35,68 @@ async function fetcher(query: { page: number; pageSize: number } & Record<string
   }
 }
 
-onMounted(async () => {
-  permissions.value = await listPermissions()
-})
+const permissionsLoading = ref(false)
+const permissionsError = ref(false)
+async function loadPermissions() {
+  if (permissionsLoading.value) return
+  permissionsLoading.value = true
+  permissionsError.value = false
+  try { permissions.value = await listPermissions() }
+  catch { permissionsError.value = true }
+  finally { permissionsLoading.value = false }
+}
+onMounted(loadPermissions)
 
 const drawerVisible = ref(false)
 const editingRole = ref<RoleItem | null>(null)
 
 function openCreate() {
+  if (permissionsLoading.value || permissionsError.value) return
   editingRole.value = null
   drawerVisible.value = true
 }
 
 function openEdit(row: RoleItem) {
+  if (permissionsLoading.value || permissionsError.value) return
   editingRole.value = row
   drawerVisible.value = true
 }
 
 async function handleToggleStatus(row: RoleItem) {
+  const session = captureSession()
   const next = row.status === 1 ? 0 : 1
   const action = next === 1 ? '启用' : '禁用'
   const confirmed = await confirmAction(`确定要${action}角色「${row.name}」吗？`, `${action}确认`)
-  if (!confirmed) return
+  if (!confirmed || !isSessionCurrent(session)) return
   await updateRoleStatus(row.id, next)
   ElMessage.success(`${action}成功`)
-  tableRef.value?.refresh()
+  await refreshPermissions()
+  if (isSessionCurrent(session)) tableRef.value?.refresh()
 }
 
 async function handleDelete(row: RoleItem) {
+  const session = captureSession()
   const confirmed = await confirmAction(
     `确定要删除角色「${row.name}」吗？已绑定账号的角色将被拒绝删除。`,
     '删除确认'
   )
-  if (!confirmed) return
+  if (!confirmed || !isSessionCurrent(session)) return
   await deleteRole(row.id)
   ElMessage.success('删除成功')
-  tableRef.value?.refresh()
+  await refreshPermissions()
+  if (isSessionCurrent(session)) tableRef.value?.refresh()
 }
 </script>
 
 <template>
   <div class="page">
+    <el-alert v-if="permissionsError" title="权限字典加载失败，请重试后编辑角色" type="error" :closable="false"><el-button link type="primary" @click="loadPermissions">重试</el-button></el-alert>
     <div class="page-card">
       <ProTable ref="tableRef" :fetcher="fetcher">
         <template #filter>
           <div class="filter-bar">
-            <span class="filter-tip">角色权限在下次页面导航或刷新时校验；禁用角色后其权限失效</span>
-            <el-button v-perm="'role:manage'" type="primary" @click="openCreate">新增角色</el-button>
+            <span class="filter-tip">权限变更立即同步；页面导航、返回窗口时重新校验外部变更</span>
+            <el-button v-perm="'role:manage'" type="primary" :disabled="permissionsLoading || permissionsError" @click="openCreate">新增角色</el-button>
           </div>
         </template>
 
@@ -97,7 +119,7 @@ async function handleDelete(row: RoleItem) {
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button v-perm="'role:manage'" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-perm="'role:manage'" link type="primary" :disabled="permissionsLoading || permissionsError" @click="openEdit(row)">编辑</el-button>
               <el-button
                 v-perm="'role:manage'"
                 link

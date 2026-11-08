@@ -6,7 +6,7 @@ import ProTable from '@/components/ProTable.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { listUsers, updateUserStatus } from '@/api/user'
 import type { ProTableHandle, UserItem, UserQuery } from '@/api/types'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, formatMembership } from '@/utils/format'
 import { promptText } from '@/utils/feedback'
 import UserDetailDrawer from './UserDetailDrawer.vue'
 
@@ -47,15 +47,26 @@ function openDetail(row: UserItem) {
   detailVisible.value = true
 }
 
-// -------------------------------------------------- 封禁
+// -------------------------------------------------- 封禁 / 解封（封禁=数据冻结无法登录；解封=恢复登录并顺延会员到期）
 async function handleBan(row: UserItem) {
-  const reason = await promptText(`封禁用户「${row.wechatNickname}」后将无法登录，请填写封禁原因`, '封禁用户', {
+  const reason = await promptText(`封禁用户「${row.wechatNickname}」后无法登录，权益冻结；请填写封禁原因`, '封禁用户', {
     inputPattern: /^.{2,}$/,
     inputErrorMessage: '请填写至少 2 个字的原因'
   })
   if (reason === null) return
   await updateUserStatus(row.id, true, reason.trim())
-  ElMessage.success('已封禁')
+  ElMessage.success('已封禁，会员到期时间将在解封时按冻结时长顺延')
+  tableRef.value?.refresh()
+}
+
+async function handleUnban(row: UserItem) {
+  const reason = await promptText(`解除用户「${row.wechatNickname}」的封禁，恢复登录与权益；请填写解封原因`, '解除封禁', {
+    inputPattern: /^.{2,}$/,
+    inputErrorMessage: '请填写至少 2 个字的原因'
+  })
+  if (reason === null) return
+  await updateUserStatus(row.id, false, reason.trim())
+  ElMessage.success('已解封，会员到期时间已按冻结时长顺延')
   tableRef.value?.refresh()
 }
 
@@ -117,8 +128,11 @@ async function handleBan(row: UserItem) {
         <el-table-column label="注册时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.registeredAt) }}</template>
         </el-table-column>
-        <el-table-column label="到期时间" width="170">
-          <template #default="{ row }">{{ row.expireAt ? formatDateTime(row.expireAt) : '长期有效' }}</template>
+        <el-table-column label="会员状态 / 到期时间" width="190">
+          <template #default="{ row }">
+            <el-tag size="small" :type="formatMembership(row.membership).type">{{ formatMembership(row.membership).text }}</el-tag>
+            <div v-if="row.membership?.status !== 'LIFETIME' && row.membership?.status !== 'NONE'">{{ formatMembership(row.membership).time }}</div>
+          </template>
         </el-table-column>
         <el-table-column label="最后登录时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
@@ -136,6 +150,15 @@ async function handleBan(row: UserItem) {
                 @click="handleBan(row)"
               >
                 封禁
+              </el-button>
+              <el-button
+                v-if="row.status === 0"
+                v-perm="'user:ban'"
+                link
+                type="success"
+                @click="handleUnban(row)"
+              >
+                解封
               </el-button>
             </div>
           </template>

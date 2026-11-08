@@ -1,5 +1,6 @@
 import dayjs from 'dayjs'
 import type { DurationMode, MembershipInfo } from '../types'
+import type { ConfigItem, BillingSettings, CreditPackage } from '../config'
 import { ElMessage } from 'element-plus'
 import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
 
@@ -71,18 +72,34 @@ export interface MockUser {
   /** 持久化演示会员期限；null 表示未知或无会员，不能据此判断终身。 */
   membershipExpireAt: string | null
   membershipIsLifetime?: boolean
+  /** 封禁期间暂停权益时钟；旧订单的原始期限快照保持不变。 */
+  frozenPeriods?: Array<{ startedAt: number; endedAt: number | null }>
 }
 
 /** 唯一 Mock 会员源，只读取显式会员记录；真实会员服务尚未接入。 */
 export function readMockMembership(user: MockUser | undefined, now = Date.now()): MembershipInfo {
   const result = (status: MembershipInfo['status'], expiresAt: string | null = null): MembershipInfo => ({ source: 'MOCK', status, expiresAt, isLifetime: status === 'LIFETIME' })
   if (!user) return result('UNKNOWN')
-  if (user.planId === 1) return result('NONE')
-  if (!PLANS.some((plan) => plan.id === user.planId && plan.price > 0)) return result('UNKNOWN')
+  if (!user.planId || user.planId === 1) return result('NONE')
   if (user.membershipIsLifetime === true) return result('LIFETIME')
   const expiry = user.membershipExpireAt
   if (!expiry || !dayjs(expiry).isValid()) return result('UNKNOWN')
-  return result(dayjs(expiry).valueOf() > now ? 'ACTIVE' : 'EXPIRED', expiry)
+  const frozenAt = user.status === 0 ? user.frozenPeriods?.find(p => p.endedAt === null)?.startedAt : undefined
+  const effectiveNow = frozenAt === undefined ? now : Math.min(now, frozenAt)
+  return result(dayjs(expiry).valueOf() > effectiveNow ? 'ACTIVE' : 'EXPIRED', expiry)
+}
+
+/** 展示冻结后的权益到期日，禁止回写历史订单商品/金额/期限快照。 */
+export function readMockOrderExpiry(order: MockOrder, user: MockUser | undefined, now = Date.now()): string | null | undefined {
+  if (!order.expiresAt || order.status !== 'PAID' || !user?.frozenPeriods?.length) return order.expiresAt
+  let expiry = dayjs(order.expiresAt).valueOf()
+  const paidAt = dayjs(order.paidAt || order.createdAt).valueOf()
+  if (!Number.isFinite(expiry) || !Number.isFinite(paidAt)) return order.expiresAt
+  for (const period of [...user.frozenPeriods].sort((a, b) => a.startedAt - b.startedAt)) {
+    const start = Math.max(period.startedAt, paidAt)
+    if (expiry > start) expiry += Math.max(0, Math.min(period.endedAt ?? now, now) - start)
+  }
+  return fmt(dayjs(expiry))
 }
 
 export interface MockTxn {
@@ -115,6 +132,7 @@ export interface MockOrder {
   last7DaysUsage: number
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: 'ONLINE' | 'MANUAL' | 'GIFT'
+  creditBatchType?: 'OPS_EXCEPTION'
   payChannel: 'WECHAT' | 'ALIPAY' | 'OFFLINE'
   status: 'PENDING' | 'PAID' | 'CLOSED'
   remark: string
@@ -164,10 +182,10 @@ export interface MockFeedback {
 }
 
 export const PLANS = [
-  { id: 1, name: '免费版', price: 0 },
+  { id: 1, name: '无会员', price: 0 },
   { id: 2, name: '标准版', price: 99 },
-  { id: 3, name: '专业版', price: 299 },
-  { id: 4, name: '企业版', price: 2999 }
+  { id: 3, name: '高级版', price: 299 },
+  { id: 4, name: '旗舰版', price: 499 }
 ]
 
 const NOW = dayjs()
@@ -219,6 +237,10 @@ const PERMISSIONS: MockPermission[] = [
 ;([['order:create','订单创建','order',45]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 34, code, name, module, type: 2, sort }))
 // v15 新增：反馈管理权限点（对话管理下的前台反馈处理页；授予 OPS/SUPPORT，见版本迁移）
 ;([['feedback:view','反馈查看','feedback',83,1],['feedback:manage','反馈处理','feedback',84,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 35+i, code, name, module, type, sort }))
+// 改价为独立金额写权限，避免备注或查看权限间接修改金额
+PERMISSIONS.push({ id: 37, code: 'order:price', name: '订单改价', module: 'order', type: 2, sort: 34 })
+// 运营赠送为特批权限，不随已有 order:create 自动授予。
+PERMISSIONS.push({ id: 38, code: 'order:gift', name: '运营特批赠送', module: 'order', type: 2, sort: 35 })
 const ALL_PERM_IDS = PERMISSIONS.map((p) => p.id)
 /** v4 新增权限点 id（运营角色增量授予） */
 export const V4_PERMISSION_IDS = [27, 28]
@@ -242,7 +264,7 @@ const ROLES: MockRole[] = [
     name: '运营',
     remark: '套餐/用户/订单',
     status: 1,
-    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34],
+    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34, 37],
     createdAt: daysAgo(280)
   },
   // v5：模型管理仅超管/运营持有；客服与只读均不授予（无模型菜单，见下方无条件回收）
@@ -322,13 +344,7 @@ function buildUsers(): MockUser[] {
     const planId = i % 7 === 0 ? 4 : i % 3 === 0 ? 3 : i % 3 === 1 ? 2 : 1
     const registeredAt = i <= 3 ? minutesAgo(30 + i * 95) : daysAgo((i - 3) * 8, 9 + (i % 12))
     const lastLogin = daysAgo(i % 5, 8 + (i % 14))
-    const entitlements: MockEntitlement[] =
-      planId >= 3
-        ? [ENT_RESOURCE_POOL[i % 3], ENT_RESOURCE_POOL[3 + (i % 2)]].map((e) => ({
-            ...e,
-            used: Math.min(e.quotaLimit, e.used + (i % 20))
-          }))
-        : []
+    const entitlements: MockEntitlement[] = []
     const loginLogs: MockLoginLog[] = [0, 1, 2].map((k) => ({
       ip: `113.64.${20 + (i % 60)}.${10 + ((i + k) % 200)}`,
       userAgent: UA_POOL[(i + k) % UA_POOL.length],
@@ -593,7 +609,28 @@ const BUILT_ORDERS = buildOrders(BUILT_USERS)
 const BUILT_AUDIT_LOGS = buildAuditLogs(ADMINS)
 const BUILT_FEEDBACKS = buildFeedbacks(BUILT_USERS, BUILT_EXTENSIONS.chats)
 
+export const MOCK_COMMERCE_RULES = {
+  registerBonus: 100,
+  sameFeaturesAcrossTiers: true,
+  seatsEnabled: false,
+  upgradeBasis: 'ACTUAL_PAID',
+  upgradeMinimumAmount: 0,
+  monthlyToYearly: 'IMMEDIATE_RESET_ANCHOR',
+  yearlyToMonthly: 'AT_EXPIRY',
+  downgrade: 'AT_EXPIRY',
+  futurePeriods: 'QUEUE_LOCKED_PRICE',
+  refundsEnabled: false,
+  autoRenewEnabled: false,
+  expiryReminderDays: 7,
+  paidCreditPackage: { validityDays: 365, requiresActiveAccount: true, allowedMembershipStatuses: ['ACTIVE', 'LIFETIME'], survivesMembershipExpiry: true, bonusCredits: 0 },
+  operationsGift: { permission: 'order:gift', reasonRequired: true, batchType: 'OPS_EXCEPTION' }
+} as const
+
 export interface MockDB extends Extensions {
+  commerceRules: typeof MOCK_COMMERCE_RULES
+  /** 规则升级前的配置留档；订单及历史版本不重写。 */
+  legacyRuleSettings?: { plans: ConfigItem[]; billingSettings: BillingSettings; creditPackages: CreditPackage[] }
+
   admins: MockAdmin[]
   roles: MockRole[]
   permissions: MockPermission[]
@@ -607,6 +644,7 @@ export interface MockDB extends Extensions {
 
 export const db: MockDB = {
   ...BUILT_EXTENSIONS,
+  commerceRules: MOCK_COMMERCE_RULES,
   admins: ADMINS,
   roles: ROLES,
   permissions: PERMISSIONS,
@@ -623,7 +661,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(saved.version) && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 19 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -718,7 +756,6 @@ if (storedVersion < 11) {
   // 3) 幂等种演示单：1 笔手工订单 + 1 笔赠送订单（unshift 置顶便于演示）
   const activeUsers = db.users.filter((u) => u.status === 1)
   const manualUser = activeUsers[1] || activeUsers[0]
-  const giftUser = activeUsers[2] || activeUsers[0]
   const manualPlan = db.plans.find((p) => (p.planType || 'NORMAL') !== 'GIFT' && p.status === 1 && Number(p.price) > 0)
   if (manualUser && manualPlan && !db.orders.some((o) => o.source === 'MANUAL')) {
     const mid = nextMockId()
@@ -726,7 +763,7 @@ if (storedVersion < 11) {
     db.orders.unshift({
       id: mid, orderNo: `ORD2026${String(10000000 + mid)}`, source: 'MANUAL', userId: manualUser.id,
       planId: manualPlan.id, planName: manualPlan.name, amount: Number(manualPlan.price), goodsAmount: Number(manualPlan.price), discountAmount: 0,
-      remainingCredits: 5000, durationMonths: Number(manualPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
+      remainingCredits: 5000, durationMonths: Number(manualPlan.durationDays) === 0 ? 0 : Math.max(1, Math.ceil(Number(manualPlan.durationDays) / 30)), last7DaysUsage: 0,
       payChannel: 'OFFLINE', status: 'PAID', remark: '线下对公转账，人工核实到账后录入',
       durationDays: Number(manualPlan.durationDays),
       expiresAt: Number(manualPlan.durationDays) === 0 ? null : fmt(dayjs(mat).add(Number(manualPlan.durationDays), 'day')),
@@ -734,19 +771,7 @@ if (storedVersion < 11) {
       transactions: [{ id: nextMockId(), txnNo: `PAY2026${String(20000000 + mid)}`, type: 'PAY', payChannel: 'OFFLINE', amount: Number(manualPlan.price), status: 'SUCCESS', createdAt: mat }]
     })
   }
-  const giftPlan = db.plans.find((p) => p.planType === 'GIFT' && p.status === 1)
-  if (giftUser && giftPlan && !db.orders.some((o) => o.source === 'GIFT')) {
-    const gid = nextMockId()
-    const gat = nowStr()
-    db.orders.unshift({
-      id: gid, orderNo: `ORD2026${String(10000000 + gid)}`, source: 'GIFT', userId: giftUser.id,
-      planId: giftPlan.id, planName: giftPlan.name, amount: 0, goodsAmount: 0, discountAmount: 0,
-      remainingCredits: 1000, durationMonths: Number(giftPlan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), last7DaysUsage: 0,
-      payChannel: 'OFFLINE', status: 'PAID', remark: '新客体验赠送',
-      expiresAt: Number(giftPlan.durationDays) === 0 ? null : fmt(dayjs(gat).add(Math.max(1, Math.round(Number(giftPlan.durationDays) / 30)), 'month')),
-      paidAt: gat, createdAt: gat, transactions: []
-    })
-  }
+  // 历史赠送单原样保留；新库不再自动生成常规促销赠送单。
   // 4) 新权限点 order:create：授予 OPS 运营角色（原基于已下线的 order:refund，能力不回退；超管由上方全量覆盖自动获得）
   db.roles.filter((r) => r.code === 'OPS').forEach((r) => { r.permissionIds = [...new Set([...r.permissionIds, ...V11_PERMISSION_IDS])] })
 }
@@ -792,7 +817,94 @@ if (storedVersion < 17) {
   db.creditPackages ||= seedCreditPackages()
   db.billingSettings ||= seedBillingSettings()
 }
+if (storedVersion < 18) {
+  // 既有运营角色获得订单改价权限；只读、客服和数据分析角色不授权
+  db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds, 37])] })
+}
+if (storedVersion < 19) {
+  const seedPlans = db.plans.filter(p => (p.id >= 1 && p.id <= 4 && p.code === `plan_${p.id}`) || p.code === 'plan_gift')
+  db.legacyRuleSettings = {
+    plans: structuredClone(seedPlans),
+    billingSettings: structuredClone(db.billingSettings),
+    creditPackages: structuredClone(db.creditPackages)
+  }
+  const features = ['全部专家与技能', '全平台商品分析', '高级报告与批量分析', '单账号使用']
+  const tiers = [
+    { id: 2, name: '标准版', oldPrice: 99, price: 99, oldCredits: 10000, credits: 5600, yearly: 949, oldYearly: 990 },
+    { id: 3, name: '高级版', oldPrice: 299, price: 299, oldCredits: 30000, credits: 22000, yearly: 2870, oldYearly: 2990 },
+    { id: 4, name: '旗舰版', oldPrice: 2999, price: 499, oldCredits: 100000, credits: 52500, yearly: 4788, oldYearly: undefined }
+  ]
+  for (const plan of seedPlans) {
+    const before = structuredClone(plan)
+    const tier = tiers.find(t => t.id === plan.id)
+    if (tier) {
+      plan.name = tier.name
+      // 仅替换旧种子默认报价，保留已编辑的价格及首购价（含显式 0）。
+      if (plan.price === tier.oldPrice) plan.price = tier.price
+      if (plan.credits === tier.oldCredits || plan.credits === undefined) plan.credits = tier.credits
+      plan.tagline = '三档功能一致，仅每月积分额度不同'
+      plan.features = [...features]
+      plan.frontendPerms = { planView: true, planCreate: true, skillView: true, skillCreate: true, mcpView: true, mcpCreate: true }
+      plan.grantMode = 'MONTHLY'
+      plan.creditExpiry = 'MONTH_RESET'
+      const cycles = plan.billingCycles
+      if (cycles?.length) {
+        plan.billingCycles = cycles.map(cycle => ({
+          ...cycle,
+          price: cycle.cycle === 'MONTHLY' && cycle.price === tier.oldPrice ? tier.price
+            : cycle.cycle === 'YEARLY' && cycle.price === tier.oldYearly ? tier.yearly : cycle.price
+        }))
+        if (tier.id === 4 && !cycles.some(c => c.cycle === 'YEARLY')) plan.billingCycles.push({ cycle: 'YEARLY', price: tier.yearly })
+      } else if (cycles === undefined) {
+        plan.billingCycles = [{ cycle: 'MONTHLY', price: plan.price ?? tier.price }, { cycle: 'YEARLY', price: tier.yearly }]
+      }
+    } else if (plan.id === 1) {
+      plan.name = '历史免费版（停售）'
+      plan.status = 0
+      plan.tagline = '仅保留旧数据引用，新注册赠送 100 积分'
+    } else if (plan.code === 'plan_gift') {
+      plan.name = '运营特批赠送'
+      plan.tagline = '仅限有权限的运营特批，必须填写原因并审计'
+      plan.features = ['运营特批专用']
+    }
+    if (JSON.stringify(before) !== JSON.stringify(plan)) {
+      plan.version += 1
+      plan.updatedAt = nowStr()
+      plan.refreshStatus = 'PENDING'
+      ;(db.planVersions[plan.id] ||= []).push({
+        version: plan.version, versionName: 'v19（已拍板规则迁移）', operator: 'system',
+        note: '统一三档与运营特批规则，历史订单及原版本保留', createdAt: plan.updatedAt, snapshot: structuredClone(plan)
+      })
+    }
+  }
+  db.users.forEach(user => {
+    const tier = tiers.find(t => t.id === user.planId)
+    if (tier && ['标准版', '专业版', '企业版'].includes(user.planName)) user.planName = tier.name
+    if (user.planId === 1 && user.planName === '免费版') user.planName = '无会员'
+  })
+  db.billingSettings.registerBonus = MOCK_COMMERCE_RULES.registerBonus
+  db.billingSettings.upgradePolicy = 'PRORATED'
+  // 历史促销配置已留档；付费包不再夹带常规赠分。
+  db.creditPackages.forEach(pack => { pack.bonusCredits = 0 })
+}
+db.commerceRules = MOCK_COMMERCE_RULES
+db.users.forEach(user => {
+  user.frozenPeriods ||= []
+  // 旧封禁缺少可靠起点，从迁移时开始冻结，不猜测历史封禁时长。
+  if (user.status === 0 && !user.frozenPeriods.some(p => p.endedAt === null)) {
+    user.frozenPeriods.push({ startedAt: Date.now(), endedAt: null })
+  }
+})
 db.billingSettings.creditSlider.defaultValue ??= db.billingSettings.creditSlider.min
+if (storedVersion < 20) {
+  // v20：写接口同步强制已拍板规则——付费包赠分 0、注册赠分固定 100、升级固定 PRORATED。
+  // 页面固定值与 v19 迁移不能约束直接调接口的路径，这里仅归一存量配置；此后 PUT 校验拦截非拍板值。
+  db.creditPackages.forEach(pack => { pack.bonusCredits = 0 })
+  if (db.billingSettings) {
+    db.billingSettings.registerBonus = 100
+    db.billingSettings.upgradePolicy = 'PRORATED'
+  }
+}
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
 db.users.forEach((user) => {
@@ -819,7 +931,9 @@ db.orders.forEach((order) => {
 db.planVersions ||= {}
 // v5 权限修正（无条件幂等，兼容此前已存 v5 数据）：模型管理仅超管/运营持有，客服/只读一律回收 model:view、model:edit
 db.roles.filter(r => r.code === 'SUPPORT' || r.code === 'VIEWER').forEach(r => { r.permissionIds = r.permissionIds.filter(id => !V5_PERMISSION_IDS.includes(id)) })
-db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson }))
+db.auditLogs = db.auditLogs.map(log => ({ ...log, beforeJson:redact(log.beforeJson) as typeof log.beforeJson, afterJson:redact(log.afterJson) as typeof log.afterJson })).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)
+// 旧库序列号可能落后于日志/反馈，恢复后不能复用已有记录 ID。
+idSeq = Math.max(idSeq, ...db.auditLogs.map(log => log.id), ...db.orders.flatMap(order => [order.id, ...order.transactions.map(txn => txn.id)]), ...db.feedbacks.map(item => item.id))
 /** 持久化上限：审计日志与版本快照仅保留最近 N 条，防止 localStorage 无限增长 */
 const PERSIST_AUDIT_LIMIT = 500
 const PERSIST_VERSION_LIMIT = 20
@@ -849,10 +963,10 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 17,
+        version: 20,
         data: {
           ...data,
-          auditLogs: Array.isArray(auditLogs) ? auditLogs.slice(-PERSIST_AUDIT_LIMIT) : [],
+          auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],
           expertVersions: trimMap(expertVersions || {}),
           skillVersions: trimMap(skillVersions || {}),
           mcpVersions: trimMap(mcpVersions || {}),

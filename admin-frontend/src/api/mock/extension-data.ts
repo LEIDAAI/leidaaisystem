@@ -1,4 +1,6 @@
 import dayjs from 'dayjs'
+import { beijingTime } from '../../utils/chat-time'
+import { escapeReportText } from '../../utils/static-chat-report'
 import type { BillingSettings, ConfigItem, CreditPackage, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
 import { PLATFORMS } from '../config'
 
@@ -531,16 +533,13 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
     }
   ]
   // v17：套餐营销示例（sort/tagline/badge/features/月年付计费周期）；GIFT 赠送套餐不配置任何营销字段
+  const commonFeatures = ['全部 AI 专家与技能', '全平台商品分析', '数据报表导出', '批量选品与监控']
   const PLAN_EXTRAS: Array<Partial<ConfigItem>> = [
-    { sort: 1, tagline: '永久免费', features: ['基础 AI 对话', '每日积分额度', '社区支持'] },
-    { sort: 2, tagline: '个人与小团队首选', features: ['全部基础专家', '每月 1 万 AI 积分', '全平台商品分析', '工单支持'], billingCycles: [{ cycle: 'MONTHLY', price: 99 }, { cycle: 'YEARLY', price: 990, originalPrice: 1188 }] },
-    { sort: 3, badge: '最受欢迎', tagline: '进阶选品与全渠道分析', features: ['标准版全部能力', '每月 3 万 AI 积分', '高级数据报表导出', '批量选品与监控', '优先客服响应'], billingCycles: [{ cycle: 'MONTHLY', price: 299 }, { cycle: 'YEARLY', price: 2990, originalPrice: 3588 }] },
-    { sort: 4, tagline: '为团队提供专属算力与服务', features: ['专业版全部能力', '每月 10 万 AI 积分', '团队席位与权限管理', '专属客户成功经理', '私有化部署咨询'], billingCycles: [{ cycle: 'MONTHLY', price: 2999 }] }
+    { sort: 1, tagline: '每月 1 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 99 }, { cycle: 'YEARLY', price: 990, originalPrice: 1188 }] },
+    { sort: 2, badge: '最受欢迎', tagline: '每月 3 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 299 }, { cycle: 'YEARLY', price: 2990, originalPrice: 3588 }] },
+    { sort: 3, tagline: '每月 10 万 AI 积分', features: [...commonFeatures], billingCycles: [{ cycle: 'MONTHLY', price: 2999 }] }
   ]
-  const plans: ConfigItem[] = [
-    ...['免费版','标准版','专业版','企业版'].map((name,i) => ({ ...base, id:i+1, code:`plan_${i+1}`, name, price:[0,99,299,2999][i], durationDays:30, credits:[0,10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const, ...PLAN_EXTRAS[i] })),
-    { ...base, id:5, code:'plan_gift', name:'赠送体验包', price:0, durationDays:0, entitlements:[], planType:'GIFT' as const }
-  ]
+  const plans: ConfigItem[] = ['标准版','高级版','旗舰版'].map((name,i) => ({ ...base, id:i+2, code:`plan_${i+2}`, name, price:[99,299,2999][i], durationDays:30, credits:[10000,30000,100000][i], entitlements:[], planType:'NORMAL' as const, ...PLAN_EXTRAS[i] }))
   return {
     models: seedLlmModels(),
     plans,
@@ -586,9 +585,9 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
 export function seedCreditPackages(): CreditPackage[] {
   const at = dayjs().format('YYYY-MM-DD HH:mm:ss')
   return [
-    { id: 1, name: '体验包', credits: 500, bonusCredits: 50, price: 45, originalPrice: 60, sort: 1, status: 1, remark: '新用户尝鲜首选，低门槛体验 AI 分析', createdAt: at, updatedAt: at },
-    { id: 2, name: '常用包', credits: 2000, bonusCredits: 300, price: 168, originalPrice: 199, sort: 2, status: 1, remark: '个人日常选品分析主力档', createdAt: at, updatedAt: at },
-    { id: 3, name: '专业包', credits: 8000, bonusCredits: 1500, price: 600, originalPrice: 720, badge: '超值', sort: 3, status: 1, remark: '团队高频分析，赠送积分最多', createdAt: at, updatedAt: at }
+    { id: 1, name: '体验包', credits: 500, bonusCredits: 0, price: 45, originalPrice: 60, sort: 1, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
+    { id: 2, name: '常用包', credits: 2000, bonusCredits: 0, price: 168, originalPrice: 199, sort: 2, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at },
+    { id: 3, name: '专业包', credits: 8000, bonusCredits: 0, price: 600, originalPrice: 720, badge: '超值', sort: 3, status: 1, remark: '仅有效会员可购买；付费积分有效期 365 天，不随会员到期清零', createdAt: at, updatedAt: at }
   ]
 }
 
@@ -735,8 +734,15 @@ export function migrateLegacyConfig(target: Extensions): void {
   target.mcpVersions = initVersions(servers, target.mcpVersions)
 }
 
+export function redact(value: string): string
+export function redact(value: unknown): unknown
 export function redact(value: unknown): unknown {
-  if (typeof value === 'string') return value.replace(/(?:bearer\s+)[\w.\-]+/gi,'[凭据已移除]').replace(/\b(?:token|password|secret|api[_-]?key)\s*[:=]\s*[^\s,;"}]+/gi,'[凭据已移除]').replace(/\b1[3-9]\d{9}\b/g,'[手机号已脱敏]').replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi,'[邮箱已脱敏]')
+  if (typeof value === 'string') return value
+    .replace(/\bbearer\s+[\w.~+\/-]+=*/gi, '[凭据已移除]')
+    .replace(/\b(?:token|password|secret|api[_-]?key|authorization|credential)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;，；。<>}"']+)/gi, '[凭据已移除]')
+    .replace(/\bsk-[a-z0-9_-]+/gi, '[凭据已移除]')
+    .replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, '[手机号已脱敏]')
+    .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, '[邮箱已脱敏]')
   if (Array.isArray(value)) return value.map(redact)
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !/token|password|secret|credential|authorization|authConfig|execConfig|systemPrompt|messages/i.test(k)).map(([k,v])=>[k,redact(v)]))
   return value
@@ -773,6 +779,9 @@ export function appendAskRounds(c: Chat): void {
 
 /** 分析产物公共生成（mock：模拟 Agent 选品分析产物，不落库）；seedBase 决定随机序列，topic 决定需求描述 */
 function genChatAnalysis(c: Chat, topic: string, seedBase: number, expertName?: string): ChatAnalysis {
+  topic = redact(topic)
+  expertName = redact(expertName || '—')
+  const esc = escapeReportText
   const rand=(n:number)=>{ const x=Math.abs(Math.sin(seedBase+n*13))*10000; return x-Math.floor(x) }
   const hitCount=12+Math.floor(rand(1)*29)
   const stepAt=(min:number)=>new Date(new Date(c.createdAt).getTime()+min*60000).toISOString()
@@ -793,22 +802,22 @@ function genChatAnalysis(c: Chat, topic: string, seedBase: number, expertName?: 
     return [n,platforms[Math.floor(rand(60+idx)*5)],`¥${price}`,`${sales} 件`,comp,`${margin}%`,score]
   }).sort((a,b)=>Number(b[6])-Number(a[6])).map((r,i)=>[String(i+1),...r])
   const table:ChatAnalysisTable={ title:'候选商品对比', columns:['排名','商品','平台','参考价','月销量','竞争度','预估毛利率','推荐指数'], rows }
-  const best=rows[0]
-  const tr=rows.map(r=>`<tr>${r.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')
-  const li=rows.slice(0,3).map((r,i)=>`<li><b>TOP${i+1} ${r[1]}</b>（${r[2]}）：参考价 ${r[3]}，月销 ${r[4]}，竞争度${r[5]}，预估毛利率 ${r[6]}，推荐指数 ${r[7]}。</li>`).join('')
-  const reportHtml=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>选品分析报告 · ${topic}</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:860px;margin:32px auto;color:#262626;line-height:1.7;padding:0 20px}h1{font-size:22px;border-bottom:3px solid #2563eb;padding-bottom:12px}.meta{color:#8c8c8c;font-size:13px}h2{font-size:17px;margin-top:28px;color:#1d4ed8}table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}th{background:#eff6ff;color:#1e40af}th,td{border:1px solid #d9d9d9;padding:8px 10px;text-align:center}.tag{display:inline-block;background:#eff6ff;color:#1d4ed8;border-radius:4px;padding:2px 8px;font-size:12px;margin-right:8px}ul{padding-left:20px}footer{margin-top:32px;color:#8c8c8c;font-size:12px;border-top:1px dashed #d9d9d9;padding-top:12px}</style></head><body><h1>选品分析报告</h1><p class="meta">会话 #${c.id} · 专家 ${expertName||'—'} · ${c.createdAt.slice(0,16).replace('T',' ')} · <span class="tag">Mock 演示数据</span></p><h2>一、需求概述</h2><p>用户发起「${topic}」选品咨询：要求在预算区间内筛选竞争度适中、毛利率不低于 18% 的候选商品，并给出推荐排序。</p><h2>二、候选商品对比</h2><table><thead><tr>${table.columns.map(col=>`<th>${col}</th>`).join('')}</tr></thead><tbody>${tr}</tbody></table><h2>三、分析结论</h2><ul>${li}</ul><p>综合推荐：<b>${best[1]}</b>（推荐指数 ${best[7]}），建议先小批量测款，根据转化数据决定是否放量。</p><footer>店雷达 AI 生成 · 数据为 Mock 演示，实盘决策请以真实数据核实</footer></body></html>`
+  const best=rows[0].map(esc)
+  const tr=rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')
+  const li=rows.slice(0,3).map((row,i)=>{const r=row.map(esc);return `<li><b>TOP${i+1} ${r[1]}</b>（${r[2]}）：参考价 ${r[3]}，月销 ${r[4]}，竞争度${r[5]}，预估毛利率 ${r[6]}，推荐指数 ${r[7]}。</li>`}).join('')
+  const reportHtml=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>选品分析报告 · ${esc(topic)}</title><style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;max-width:860px;margin:32px auto;color:#262626;line-height:1.7;padding:0 20px}h1{font-size:22px;border-bottom:3px solid #2563eb;padding-bottom:12px}.meta{color:#8c8c8c;font-size:13px}h2{font-size:17px;margin-top:28px;color:#1d4ed8}table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}th{background:#eff6ff;color:#1e40af}th,td{border:1px solid #d9d9d9;padding:8px 10px;text-align:center}.tag{display:inline-block;background:#eff6ff;color:#1d4ed8;border-radius:4px;padding:2px 8px;font-size:12px;margin-right:8px}ul{padding-left:20px}footer{margin-top:32px;color:#8c8c8c;font-size:12px;border-top:1px dashed #d9d9d9;padding-top:12px}</style></head><body><h1>选品分析报告</h1><p class="meta">会话 #${esc(c.id)} · 专家 ${esc(expertName)} · ${esc(beijingTime(c.createdAt))}（北京时间 UTC+08:00） · <span class="tag">Mock 演示数据</span></p><h2>一、需求概述</h2><p>用户发起「${esc(topic)}」选品咨询：要求在预算区间内筛选竞争度适中、毛利率不低于 18% 的候选商品，并给出推荐排序。</p><h2>二、候选商品对比</h2><table><thead><tr>${table.columns.map(col=>`<th>${esc(col)}</th>`).join('')}</tr></thead><tbody>${tr}</tbody></table><h2>三、分析结论</h2><ul>${li}</ul><p>综合推荐：<b>${best[1]}</b>（推荐指数 ${best[7]}），建议先小批量测款，根据转化数据决定是否放量。</p><footer>店雷达 AI 生成 · 数据为 Mock 演示，实盘决策请以真实数据核实</footer></body></html>`
   return { steps, table, reportHtml }
 }
 
 /** 会话级分析（行右侧「查看分析」/ 三级页 = 该会话所有问话的分析结果）：话题 = 全部问话拼接 */
 export function buildChatAnalysis(c: Chat, expertName?: string): ChatAnalysis {
-  const topics = c.messages.filter(m => m.role === 'user').map(m => m.content.split('，')[0].split('。')[0])
+  const topics = c.messages.filter(m => m.role === 'user').map(m => redact(m.content).split('，')[0].split('。')[0])
   return genChatAnalysis(c, topics.join('；') || '选品咨询', c.id * 97, expertName)
 }
 
 /** 单问话分析（展开区每轮问话的「查看分析」）：话题 = 第 askIdx 条用户消息 */
 export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): ChatAnalysis {
   const ask = c.messages.filter(m => m.role === 'user')[askIdx]
-  const topic = (ask?.content || '选品咨询').split('，')[0].split('。')[0]
-  return genChatAnalysis(c, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
+  const topic = redact(ask?.content || '选品咨询').split('，')[0].split('。')[0]
+  return genChatAnalysis({ ...c, createdAt: ask?.createdAt || c.createdAt }, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
 }

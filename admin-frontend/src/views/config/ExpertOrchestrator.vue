@@ -10,8 +10,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { get } from '@/api/request'
-import { saveConfig, listConfig, listModels, listKnowledgeBases, listTools, PLATFORMS, PLATFORM_META, type ConfigItem, type KnowledgeBase, type LlmModel, type PlatformType, type Tool } from '@/api/config'
+import { configVersions, restoreConfigVersion, type ConfigVersion, saveConfig, listConfig, listModels, listKnowledgeBases, listTools, PLATFORMS, PLATFORM_META, type ConfigItem, type KnowledgeBase, type LlmModel, type PlatformType, type Tool } from '@/api/config'
 import { ensureScenario, ensureScenarios, orderedScenarioOptions, scenarioList } from '@/utils/scenarios'
 import { CAPABILITY_KEYS, CAPABILITY_LABELS, defaultCapabilities } from '@/api/mock/extension-data'
 import YuqueEditor from '@/components/yuque/YuqueEditor.vue'
@@ -21,7 +20,6 @@ import { FILE_ACCEPT, MAX_FILE_MB, uploadIntroFile, downloadIntroFile, fileKind,
 import ExpertChatPreview from './ExpertChatPreview.vue'
 import ConfigPickerDialog from './ConfigPickerDialog.vue'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
-import VersionDrawer from './VersionDrawer.vue'
 import type { FormDraft } from './PlanFormDrawer.vue'
 
 const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean }>()
@@ -47,6 +45,21 @@ let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 /** 最近一次「已保存/已应用」草稿的序列化基线：deep watch 触发时与其比对，无实际变化不写盘 */
 let lastSnapshot = ''
 const draftSnapshot = (): string => JSON.stringify(draft.value)
+let editorSession = 0
+let activeAutosave: Promise<void> | null = null
+let preparingLeave = false
+const initializing = ref(false)
+const savedVersion = ref<number | null>(null)
+const publishedVersion = ref<number | null>(null)
+const previewExpanded = ref(false)
+function clearAutosave(): void {
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = null
+}
+function scheduleAutosave(): void {
+  clearAutosave()
+  if (!preparingLeave && props.modelValue && dirty.value && !saving.value && !historyDrawer.value) autosaveTimer = setTimeout(() => void doAutosave(), 1500)
+}
 
 const enabledModels = computed(() => models.value.filter((m) => m.status === 1))
 const baseModelUnavailable = computed(() => Boolean(currentId.value) && !!draft.value.baseModel && !enabledModels.value.some((m) => m.code === draft.value.baseModel))
@@ -74,17 +87,30 @@ async function onScenariosChange(names: unknown[]): Promise<void> {
 
 // ---------------------------------------------------------------- 打开初始化
 watch(
-  () => props.modelValue,
-  async (v) => {
+  () => [props.modelValue, props.item?.id] as const,
+  async ([v]) => {
+    const session = ++editorSession
+    clearAutosave()
     if (!v) return
-    // 每次打开都重拉选择器数据源，避免期间新建的技能/MCP/知识库/套餐/模型不可见
-    const [sk, sv, kbList, pl, md, tl] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listKnowledgeBases(), listConfig('plans'), listModels({ page: 1, pageSize: 200 }), listTools()])
-    skills.value = sk; servers.value = sv; kbs.value = kbList; plans.value = pl; models.value = md.list; tools.value = tl
-    void ensureScenarios().catch(() => {}) // 场景下拉数据源（共享缓存，失败不阻塞打开）
-    currentId.value = props.item?.id ?? null
+    initializing.value = true
+    const item = JSON.parse(JSON.stringify(props.item || {}))
+    currentId.value = item.id ?? null
     autosaveAt.value = ''
-    autosaveState.value = currentId.value ? 'idle' : 'idle'
-    applyDraft(normalize(JSON.parse(JSON.stringify(props.item || {}))))
+    autosaveState.value = 'idle'
+    savedVersion.value = item.version ?? null
+    publishedVersion.value = null
+    previewExpanded.value = false
+    applyDraft(normalize(item))
+    try {
+      const [sk, sv, kbList, pl, md, tl] = await Promise.all([listConfig('skills'), listConfig('mcp/servers'), listKnowledgeBases(), listConfig('plans'), listModels({ page: 1, pageSize: 200 }), listTools()])
+      if (session !== editorSession || !props.modelValue) return
+      skills.value = sk; servers.value = sv; kbs.value = kbList; plans.value = pl; models.value = md.list; tools.value = tl
+      void ensureScenarios().catch(() => {})
+    } catch (e) {
+      if (session === editorSession) ElMessage.error(e instanceof Error ? e.message : '配置选项加载失败，请关闭后重试')
+    } finally {
+      if (session === editorSession) initializing.value = false
+    }
   },
   { immediate: true }
 )
@@ -139,10 +165,9 @@ const temperature = computed<number>({
 // ---------------------------------------------------------------- 自动保存
 watch(draft, () => {
   if (suppress) return
-  if (draftSnapshot() === lastSnapshot) return // 序列化比对：同值赋值/改回原值不触发写盘
-  dirty.value = true
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  autosaveTimer = setTimeout(() => void doAutosave(), 1500)
+  dirty.value = draftSnapshot() !== lastSnapshot
+  if (dirty.value) autosaveState.value = activeAutosave ? 'saving' : 'idle'
+  scheduleAutosave()
 }, { deep: true })
 
 /** UI 侧必填前置校验（对齐 mock 422 规则）：不完整则跳过自动保存并提示缺项 */
@@ -184,29 +209,41 @@ function buildPayload(): FormDraft {
   }
 }
 
-let autosaveSeq = 0
-async function doAutosave(): Promise<void> {
-  if (suppress || !props.canEdit || !currentId.value || !dirty.value || !draftComplete.value) return
-  if (draftSnapshot() === lastSnapshot) { dirty.value = false; return } // 定时器触发时内容已回到已保存状态
-  const seq = ++autosaveSeq
+function doAutosave(): Promise<void> {
+  if (activeAutosave) return activeAutosave
+  if (preparingLeave || !props.modelValue || suppress || initializing.value || saving.value || historyDrawer.value || !props.canEdit || !currentId.value || !draftComplete.value) return Promise.resolve()
+  const sentSnapshot = draftSnapshot()
+  if (sentSnapshot === lastSnapshot) { dirty.value = false; return Promise.resolve() }
+  const session = editorSession
+  const payload = JSON.parse(JSON.stringify(buildPayload())) as FormDraft
   autosaveState.value = 'saving'
-  try {
-    await saveConfig('experts', { ...buildPayload(), skipVersion: true })
-    if (seq !== autosaveSeq) return // 保存期间又有新编辑在途，交给最新一次保存收尾
-    lastSnapshot = draftSnapshot()
-    dirty.value = false
-    autosaveState.value = 'saved'
-    autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  } catch {
-    autosaveState.value = 'error'
-  }
+  activeAutosave = (async () => {
+    let succeeded = false
+    try {
+      const result = await saveConfig('experts', { ...payload, skipVersion: true })
+      if (session !== editorSession || !props.modelValue) return
+      lastSnapshot = sentSnapshot
+      savedVersion.value = result.version ?? savedVersion.value
+      dirty.value = draftSnapshot() !== sentSnapshot
+      autosaveState.value = dirty.value ? 'idle' : 'saved'
+      autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+      succeeded = true
+    } catch {
+      if (session === editorSession) { dirty.value = true; autosaveState.value = 'error' }
+    } finally {
+      activeAutosave = null
+      if (session === editorSession && succeeded && dirty.value) scheduleAutosave()
+    }
+  })()
+  return activeAutosave
 }
 
 const autosaveText = computed(() => {
   if (!props.canEdit) return '只读模式'
   if (!currentId.value) return '新建草稿：首次「发布」后启用自动保存'
   if (autosaveState.value === 'saving') return '自动保存中…'
-  if (autosaveState.value === 'saved') return `自动保存于 ${autosaveAt.value}`
+  if (dirty.value && autosaveState.value !== 'error') return draftComplete.value ? '有未保存修改，等待保存…' : `必填未完整（${missingLabels.value.join('、')}），暂未自动保存`
+  if (autosaveState.value === 'saved') return `已保存于 ${autosaveAt.value}`
   if (autosaveState.value === 'error') return '自动保存失败，请检查填写后重试'
   if (dirty.value && !draftComplete.value) return `必填未完整（${missingLabels.value.join('、')}），暂未自动保存`
   return '自动保存已就绪'
@@ -256,12 +293,16 @@ async function onIntroFilesChosen(e: Event): Promise<void> {
   const files = Array.from(input.files || [])
   input.value = '' // 立即清空，便于重复选择同一文件
   if (!files.length || !props.canEdit) return
+  if (introUploading.value || saving.value || historyDrawer.value) return
+  const session = editorSession
+  const targetDraft = draft.value
   introUploading.value = true
   try {
     for (const f of files) {
       try {
         const meta = await uploadIntroFile(f)
-        draft.value.introductionFiles = [...(draft.value.introductionFiles || []), meta]
+        if (session !== editorSession || draft.value !== targetDraft || !props.modelValue) break
+        targetDraft.introductionFiles = [...(targetDraft.introductionFiles || []), meta]
       } catch (err) {
         ElMessage.error(err instanceof Error ? err.message : `「${f.name}」上传失败`)
       }
@@ -302,7 +343,7 @@ function saveNq(): void {
 const versionDialog = ref(false)
 const historyDrawer = ref(false)
 function onPublishClick(): void {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value || historyDrawer.value || initializing.value || introUploading.value) return
   if (!draftComplete.value) {
     ElMessage.warning(`请先完善：${missingLabels.value.join('、')}`)
     return
@@ -311,48 +352,97 @@ function onPublishClick(): void {
 }
 
 async function save(v: { versionName: string; note: string }): Promise<void> {
+  if (saving.value || historyDrawer.value || introUploading.value || initializing.value || !draftComplete.value) return
+  const session = editorSession
   saving.value = true
+  clearAutosave()
   try {
-    const resp = await saveConfig('experts', { ...buildPayload(), versionName: v.versionName, note: v.note })
-    if (!currentId.value && resp?.id) {
-      currentId.value = resp.id
-      suppress = true
-      draft.value.id = resp.id
-      nextTick(() => { suppress = false })
-    }
-    lastSnapshot = draftSnapshot()
-    dirty.value = false
-    autosaveState.value = 'saved'
+    await activeAutosave
+    if (session !== editorSession || !props.modelValue) return
+    const sentDraft = JSON.parse(draftSnapshot()) as FormDraft
+    const payload = JSON.parse(JSON.stringify(buildPayload())) as FormDraft
+    const resp = await saveConfig('experts', { ...payload, versionName: v.versionName, note: v.note })
+    if (session !== editorSession || !props.modelValue) return
+    if (!currentId.value) { currentId.value = resp.id; draft.value.id = resp.id; sentDraft.id = resp.id }
+    lastSnapshot = JSON.stringify(sentDraft)
+    dirty.value = draftSnapshot() !== lastSnapshot
+    savedVersion.value = resp.version ?? null
+    publishedVersion.value = resp.version ?? null
+    autosaveState.value = dirty.value ? 'idle' : 'saved'
     autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    ElMessage.success('已发布：版本 +1 并生成快照；启用状态即上架前台')
     versionDialog.value = false
+    ElMessage.success('已发布发送时的内容并生成版本快照')
     emit('saved')
   } finally {
-    saving.value = false
+    if (session === editorSession) { saving.value = false; scheduleAutosave() }
   }
 }
 
-/** 历史版本项（VersionDrawer 按 id 拉取快照） */
-const historyItem = computed<ConfigItem | null>(() => (currentId.value ? ({ ...draft.value, id: currentId.value } as ConfigItem) : null))
-/** 恢复版本后以服务端最新内容重刷草稿（自动保存同步跟进） */
-async function onRestored(): Promise<void> {
-  if (!currentId.value) return
-  const detail = await get<ConfigItem>(`/experts/${currentId.value}`)
-  applyDraft(normalize(JSON.parse(JSON.stringify(detail))))
-  ElMessage.success('已恢复为所选版本内容')
+const versions = ref<ConfigVersion[]>([])
+const restoreTarget = ref<ConfigVersion | null>(null)
+const historyLoading = ref(false)
+async function openHistory(): Promise<void> {
+  if (saving.value || introUploading.value || initializing.value) return
+  historyDrawer.value = true
+  clearAutosave()
+  historyLoading.value = true
+  const session = editorSession
+  try {
+    await activeAutosave
+    if (session !== editorSession || !currentId.value) return
+    const list = await configVersions('experts', currentId.value)
+    if (session === editorSession) versions.value = list.slice().sort((a, b) => b.version - a.version)
+  } finally { if (session === editorSession) historyLoading.value = false }
+}
+function closeHistory(done?: () => void): void {
+  if (saving.value || historyLoading.value) return
+  restoreTarget.value = null
+  historyDrawer.value = false
+  done?.()
+  scheduleAutosave()
+}
+async function restoreVersion(v: { versionName: string; note: string }): Promise<void> {
+  if (!currentId.value || !restoreTarget.value || saving.value) return
+  const session = editorSession
+  saving.value = true
+  clearAutosave()
+  try {
+    const detail = await restoreConfigVersion('experts', currentId.value, restoreTarget.value.version, v.versionName, v.note)
+    if (session !== editorSession || !props.modelValue) return
+    applyDraft(normalize(JSON.parse(JSON.stringify(detail))))
+    savedVersion.value = detail.version ?? null
+    publishedVersion.value = detail.version ?? null
+    autosaveState.value = 'saved'
+    autosaveAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    restoreTarget.value = null
+    historyDrawer.value = false
+    ElMessage.success('已恢复为所选版本内容并生成新版本')
+    emit('saved')
+  } finally { if (session === editorSession) saving.value = false }
 }
 
-/** 关闭确认：有未发布修改（自动保存窗口内 / 必填未完整）时先询问 */
-async function tryClose(): Promise<void> {
-  if (dirty.value && props.canEdit) {
+async function prepareLeave(destination = '关闭编辑器'): Promise<boolean> {
+  if (saving.value || introUploading.value || historyLoading.value) {
+    ElMessage.warning('保存、恢复或上传进行中，请完成后再离开')
+    return false
+  }
+  preparingLeave = true
+  clearAutosave()
+  await activeAutosave
+  if (draftSnapshot() !== lastSnapshot && props.canEdit) {
     try {
-      await ElMessageBox.confirm('当前有尚未发布的修改。已自动保存的内容会保留在服务端（不进入版本历史）；必填未完整的编辑内容关闭后将丢失。确认关闭？', '关闭确认', {
-        type: 'warning', confirmButtonText: '确认关闭', cancelButtonText: '继续编辑'
+      await ElMessageBox.confirm(`即将${destination}。尚未保存的修改会丢失，已保存内容保留在服务端；自动保存不进入发布历史。`, '未保存修改', {
+        type: 'warning', confirmButtonText: '放弃未保存修改并离开', cancelButtonText: '继续编辑'
       })
-    } catch { return }
+    } catch { preparingLeave = false; scheduleAutosave(); return false }
   }
-  emit('update:modelValue', false)
+  preparingLeave = false
+  return true
 }
+async function tryClose(): Promise<void> {
+  if (await prepareLeave()) emit('update:modelValue', false)
+}
+defineExpose({ prepareLeave })
 
 // ---------------------------------------------------------------- 三栏拖拽调整列宽
 /** 默认列宽：两边宽、中间窄（按视口比例分配，1280 视口≈左 512 / 右 384），拖拽后以内联样式为准 */
@@ -400,6 +490,9 @@ function onMouseUp(): void {
 }
 
 onBeforeUnmount(() => {
+  ++editorSession
+  clearAutosave()
+  onMouseUp()
   document.removeEventListener('mousemove', onMouseMove)
   document.removeEventListener('mouseup', onMouseUp)
 })
@@ -424,14 +517,17 @@ onBeforeUnmount(() => {
           <span class="autosave" :class="autosaveState">{{ autosaveText }}</span>
         </div>
         <div class="orch-header-right">
-          <el-button v-if="currentId" @click="historyDrawer = true">历史版本</el-button>
-          <el-button v-if="canEdit" type="primary" :loading="saving" @click="onPublishClick">发布版本</el-button>
+          <span class="muted">对象 {{ currentId || '新建' }} · 已保存 v{{ savedVersion ?? '—' }} · 本次发布 v{{ publishedVersion ?? '—' }}</span>
+          <el-button @click="previewExpanded = !previewExpanded">{{ previewExpanded ? '收起调试' : '展开调试' }}</el-button>
+          <el-button @click="leftWidth = leftWidth === DEFAULT_LEFT ? Math.round(VW * 0.55) : DEFAULT_LEFT">切换编辑宽度</el-button>
+          <el-button v-if="currentId" :disabled="saving || initializing || introUploading" @click="openHistory">历史版本</el-button>
+          <el-button v-if="canEdit" type="primary" :loading="saving" :disabled="historyDrawer || initializing || introUploading" @click="onPublishClick">发布版本</el-button>
           <el-button @click="tryClose">关闭</el-button>
         </div>
       </div>
     </template>
 
-    <div class="orch-layout">
+    <div v-loading="initializing" class="orch-layout" :inert="saving || historyDrawer || initializing">
       <!-- 左栏：人设与回复逻辑 -->
       <aside class="col-left" :style="{ flexBasis: leftWidth + 'px' }">
         <div class="panel-title">人设与回复逻辑</div>
@@ -644,13 +740,13 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- 中/右拖动手柄 -->
-      <div class="resize-handle" :class="{ active: dragging === 'right' }" @mousedown="onHandleMouseDown('right', $event)">
+      <div v-if="previewExpanded" class="resize-handle" :class="{ active: dragging === 'right' }" @mousedown="onHandleMouseDown('right', $event)">
         <div class="resize-handle-line"></div>
       </div>
 
       <!-- 右栏：对话预览 -->
-      <aside class="col-right" :style="{ flexBasis: rightWidth + 'px' }">
-        <ExpertChatPreview :draft="draft" :models="models" />
+      <aside v-show="previewExpanded" class="col-right" :style="{ flexBasis: rightWidth + 'px' }">
+        <ExpertChatPreview v-if="modelValue" :key="currentId || 'new'" :draft="draft" :models="models" />
       </aside>
     </div>
 
@@ -680,7 +776,19 @@ onBeforeUnmount(() => {
     </el-dialog>
 
     <VersionConfirmDialog v-model="versionDialog" title="发布版本确认" description="确认后将写库、版本 +1 并生成快照（进入版本历史）。" async :loading="saving" @confirm="save" />
-    <VersionDrawer v-if="currentId" v-model="historyDrawer" kind="experts" :item="historyItem" :can-edit="canEdit" @restored="onRestored" />
+    <el-drawer :model-value="historyDrawer" :title="`版本历史 · ${draft.name || ''}`" size="720px" :before-close="closeHistory" :close-on-click-modal="false" append-to-body>
+      <div v-loading="historyLoading">
+        <el-alert title="恢复会替换当前编辑内容并生成新版本；未保存修改将被放弃。历史浏览期间暂停自动保存。" type="warning" :closable="false" />
+        <el-empty v-if="!historyLoading && !versions.length" description="暂无发布版本，发布后可在此查看和恢复" />
+        <el-card v-for="v in versions" :key="v.version" shadow="never" style="margin-top:12px">
+          <div>{{ v.versionName || `v${v.version}` }} · {{ v.createdAt }}</div>
+          <p class="muted">{{ v.note || '无版本备注' }}</p>
+          <details><summary>查看完整快照</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ JSON.stringify(v.snapshot, null, 2) }}</pre></details>
+          <el-button v-if="canEdit" size="small" :disabled="saving" @click="restoreTarget = v">恢复此版本</el-button>
+        </el-card>
+      </div>
+    </el-drawer>
+    <VersionConfirmDialog :model-value="Boolean(restoreTarget)" title="恢复版本确认" description="恢复会替换当前编辑内容（包括未保存修改），并生成新版本。" :default-name="`恢复自 ${restoreTarget?.versionName || restoreTarget?.version || ''}`" async :loading="saving" @update:model-value="!$event && !saving && (restoreTarget = null)" @confirm="restoreVersion" />
     <FilePreviewDialog v-model="previewVisible" :file="previewFile" />
   </el-dialog>
 </template>
@@ -691,7 +799,7 @@ onBeforeUnmount(() => {
 :global(.el-dialog.orchestrator-dialog) { display: flex; flex-direction: column; overflow: hidden; }
 :global(.el-dialog.orchestrator-dialog .el-dialog__header) { padding: 0; margin: 0; border-bottom: 1px solid var(--el-border-color-light); flex: none; }
 :global(.el-dialog.orchestrator-dialog .el-dialog__body) { padding: 12px 16px; flex: 1; min-height: 0; overflow: hidden; }
-.orch-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; }
+.orch-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 10px; flex-wrap: wrap; }
 .orch-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .back-btn { font-size: 20px; cursor: pointer; color: var(--el-text-color-regular); padding: 0 6px; line-height: 1; }
 .back-btn:hover { color: var(--el-color-primary); }
@@ -701,7 +809,7 @@ onBeforeUnmount(() => {
 .autosave { font-size: 12px; color: var(--el-text-color-secondary); white-space: nowrap; }
 .autosave.saved { color: var(--el-color-success); }
 .autosave.error { color: var(--el-color-danger); }
-.orch-header-right { display: flex; gap: 8px; }
+.orch-header-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .orch-layout { display: flex; gap: 0; height: 100%; }
 /* min-width:0 + overflow:hidden 关键：flex 项默认 min-width:auto 会被编辑器内容的 min-content（工具栏≈991px）撑破列宽，导致拖拽调宽失效 */
 .col-left { flex: 0 0 260px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }

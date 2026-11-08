@@ -6,10 +6,12 @@ import ProTable from '@/components/ProTable.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { deleteFeedback, handleFeedback, listFeedbacks } from '@/api/feedback'
 import type { FeedbackItem, FeedbackQuery, ProTableHandle } from '@/api/types'
-import { formatDateTime } from '@/utils/format'
+import { beijingTime as formatDateTime } from '@/utils/chat-time'
+import { useAuthStore } from '@/stores/auth'
 import { confirmAction, feedbackImageSrc } from '@/utils/feedback'
 import FeedbackDetailDrawer from './FeedbackDetailDrawer.vue'
 
+const auth = useAuthStore()
 const tableRef = ref<ProTableHandle | null>(null)
 
 const filter = reactive<{ keyword: string; status: string; dateRange: string[] }>({
@@ -62,6 +64,7 @@ const handleForm = reactive<{ status: 'ADOPTED' | 'REJECTED'; rewardPoints: numb
 })
 
 function openHandle(row: FeedbackItem) {
+  if (handleSubmitting.value || !auth.hasPerm('feedback:manage') || row.status !== 'PENDING') return
   handleTarget.value = row
   handleForm.status = 'ADOPTED'
   handleForm.rewardPoints = 200
@@ -71,27 +74,34 @@ function openHandle(row: FeedbackItem) {
 
 async function submitHandle() {
   const target = handleTarget.value
-  if (!target) return
-  if (handleForm.status === 'ADOPTED' && !handleForm.handleRemark.trim()) {
-    ElMessage.warning('采纳反馈须填写处理说明')
+  if (!target || handleSubmitting.value || !auth.hasPerm('feedback:manage')) return
+  const payload = {
+    status: handleForm.status,
+    rewardPoints: handleForm.status === 'ADOPTED' ? handleForm.rewardPoints : 0,
+    handleRemark: handleForm.handleRemark.trim()
+  }
+  if (payload.status === 'ADOPTED' && !payload.handleRemark) {
+    ElMessage.warning('采纳反馈须填写处理说明；有奖励时请说明运营特批原因')
     return
   }
-  if (handleSubmitting.value) return
-  const actionLabel = handleForm.status === 'ADOPTED' ? `采纳并奖励 ${handleForm.rewardPoints} 积分` : '驳回'
-  const confirmed = await confirmAction(`确认${actionLabel}反馈 ${target.fbNo}？`, '反馈处理确认')
-  if (!confirmed) return
+  if (!Number.isSafeInteger(payload.rewardPoints) || payload.rewardPoints < 0) {
+    ElMessage.warning('奖励积分须为非负安全整数')
+    return
+  }
   handleSubmitting.value = true
   try {
+    const actionLabel = payload.status === 'ADOPTED' ? `采纳并运营特批奖励 ${payload.rewardPoints} 积分` : '驳回'
+    const confirmed = await confirmAction(`确认${actionLabel}反馈 ${target.fbNo}？处理说明将作为特批原因留审计。`, '反馈处理确认')
+    if (!confirmed || !auth.hasPerm('feedback:manage')) return
     await handleFeedback(target.id, {
-      status: handleForm.status,
-      rewardPoints: handleForm.status === 'ADOPTED' ? handleForm.rewardPoints : 0,
-      handleRemark: handleForm.handleRemark.trim()
+      ...payload,
+      handleRemark: payload.rewardPoints > 0 ? `【反馈奖励：运营特批积分，非购买赠分】${payload.handleRemark}` : payload.handleRemark
     })
     ElMessage.success('处理成功')
     handleVisible.value = false
     tableRef.value?.refresh()
   } catch {
-    // 校验失败已由 request 拦截器透出
+    // 请求层统一展示接口错误；保留表单供重试。
   } finally {
     handleSubmitting.value = false
   }
@@ -210,8 +220,9 @@ async function handleDelete(row: FeedbackItem) {
 
     <FeedbackDetailDrawer v-model="detailVisible" :feedback-id="detailFeedbackId" />
 
-    <el-dialog v-model="handleVisible" title="处理反馈" width="500px">
-      <el-form label-width="90px" @submit.prevent>
+    <el-dialog v-model="handleVisible" title="处理反馈" width="500px" :close-on-click-modal="!handleSubmitting" :close-on-press-escape="!handleSubmitting" :show-close="!handleSubmitting">
+      <el-alert title="反馈奖励为独立运营特批积分，不属于常规购买赠分。仅反馈管理权限可处理，必须说明特批原因并留审计。" type="info" :closable="false" style="margin-bottom:16px" />
+      <el-form label-width="90px" :disabled="handleSubmitting" @submit.prevent>
         <el-form-item label="编号">
           <span>{{ handleTarget?.fbNo }}</span>
         </el-form-item>
@@ -222,8 +233,8 @@ async function handleDelete(row: FeedbackItem) {
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="handleForm.status === 'ADOPTED'" label="奖励积分" required>
-          <el-input-number v-model="handleForm.rewardPoints" :min="0" :step="100" style="width: 180px" />
-          <span class="muted" style="margin-left: 12px">有效反馈有机会获得积分奖励</span>
+          <el-input-number v-model="handleForm.rewardPoints" :min="0" :max="Number.MAX_SAFE_INTEGER" :precision="0" :step="100" style="width: 180px" />
+          <span class="muted" style="margin-left: 12px">运营特批奖励，非购买赠分</span>
         </el-form-item>
         <el-form-item label="处理说明" :required="handleForm.status === 'ADOPTED'">
           <el-input
@@ -232,12 +243,12 @@ async function handleDelete(row: FeedbackItem) {
             :rows="3"
             maxlength="200"
             show-word-limit
-            :placeholder="handleForm.status === 'ADOPTED' ? '请输入处理说明（采纳必填）' : '驳回原因（选填）'"
+            :placeholder="handleForm.status === 'ADOPTED' ? '请输入处理说明 / 运营特批奖励原因（采纳必填）' : '驳回原因（选填）'"
           />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="handleVisible = false">取消</el-button>
+        <el-button :disabled="handleSubmitting" @click="handleVisible = false">取消</el-button>
         <el-button type="primary" :loading="handleSubmitting" @click="submitHandle">确认处理</el-button>
       </template>
     </el-dialog>

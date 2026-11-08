@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { listConfig, listKnowledgeBases, saveConfig, type ConfigItem, type FrontendPerms, type KnowledgeBase, type VisibilityConfig, FRONTEND_PERM_GROUPS, normalizeFrontendPerms } from '@/api/config'
+import { listConfig, listKnowledgeBases, saveConfig, type ConfigItem, type FrontendPerms, type KnowledgeBase, type VisibilityConfig, normalizeFrontendPerms } from '@/api/config'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
+import { isValidMoney } from '@/utils/format'
 
 /** 表单草稿：ConfigItem 业务字段 + 版本名称/变更说明 / 引用确认（服务层审计字段） */
 export type FormDraft = Partial<ConfigItem> & { versionName?: string; note?: string; confirmReferences?: boolean; frontendPerms?: FrontendPerms }
@@ -21,34 +22,26 @@ const rules: FormRules = {
   ]
 }
 
-watch(
-  () => [props.modelValue, props.item] as const,
-  ([visible]) => {
-    if (visible) {
-      draft.value = JSON.parse(JSON.stringify(props.item || {}))
-      draft.value.frontendPerms = normalizeFrontendPerms(draft.value.frontendPerms)
-      if (!draft.value.planType) draft.value.planType = 'NORMAL'
-      // v12：AI 积分初始化（仅常规套餐配置，创建手工订单时默认带出；赠送套餐固定 0）
-      if (draft.value.planType === 'GIFT') draft.value.credits = 0
-      else if (draft.value.credits === undefined) draft.value.credits = 10000
-      giftDurationMode.value = draft.value.durationMode === 'MEMBERSHIP' ? 'membership' : Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
-      // 常规套餐时长模式回显：0 = 长期有效，其余 = 按天数（支持自定义任意天数）
-      normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
-      // v17 计费周期回显：拆到月付 / 年付两行（价格留空的行 = 未启用该周期）
-      const mc = (draft.value.billingCycles || []).find((c) => c.cycle === 'MONTHLY')
-      const yc = (draft.value.billingCycles || []).find((c) => c.cycle === 'YEARLY')
-      cycleRows.value = { monthlyPrice: mc?.price, monthlyOriginal: mc?.originalPrice ?? undefined, yearlyPrice: yc?.price, yearlyOriginal: yc?.originalPrice ?? undefined }
-      // v17 新字段默认值：排序 0；积分一次性发放；积分永不过期
-      draft.value.sort ??= 0
-      draft.value.grantMode ??= 'ONCE'
-      draft.value.creditExpiry ??= 'NEVER'
-      entOpen.value = []
-      void loadEntitlementRefs()
-      nextTick(() => formRef.value?.clearValidate())
-    }
-  },
-  { immediate: true }
-)
+function initializeDraft() {
+  draft.value = JSON.parse(JSON.stringify(props.item || {}))
+  draft.value.frontendPerms = normalizeFrontendPerms(undefined)
+  draft.value.planType ??= 'NORMAL'
+  draft.value.credits ??= 10000
+  giftDurationMode.value = draft.value.durationMode === 'MEMBERSHIP' ? 'membership' : Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
+  normalDurationMode.value = Number(draft.value.durationDays) === 0 ? 'lifetime' : 'days'
+  const mc = (draft.value.billingCycles || []).find((c) => c.cycle === 'MONTHLY')
+  const yc = (draft.value.billingCycles || []).find((c) => c.cycle === 'YEARLY')
+  cycleRows.value = { monthlyPrice: mc?.price, monthlyFirstPurchase: mc?.firstPurchasePrice, monthlyOriginal: mc?.originalPrice ?? undefined, yearlyPrice: yc?.price, yearlyFirstPurchase: yc?.firstPurchasePrice, yearlyOriginal: yc?.originalPrice ?? undefined }
+  cycleEnabled.value = { monthly: Boolean(mc), yearly: Boolean(yc) }
+  pricingTouched.value = false
+  if (draft.value.planType === 'GIFT') normalizeGift()
+  draft.value.sort ??= 0
+  draft.value.grantMode ??= 'ONCE'
+  draft.value.creditExpiry ??= 'NEVER'
+  entOpen.value = []
+  void loadEntitlementRefs()
+  nextTick(() => formRef.value?.clearValidate())
+}
 
 /** v11 赠送套餐时长模式：长期有效（durationDays=0）/ 自定义天数 */
 const giftDurationMode = ref<'lifetime' | 'custom' | 'membership'>('custom')
@@ -67,8 +60,7 @@ watch(
   () => draft.value.planType,
   (type) => {
     if (type === 'GIFT') {
-      draft.value.price = 0
-      draft.value.credits = 0
+      normalizeGift()
       // 切到赠送：0 天=长期有效保持，否则固定为自定义天数模式
       giftDurationMode.value = draft.value.durationMode === 'MEMBERSHIP' ? 'membership' : Number(draft.value.durationDays) === 0 ? 'lifetime' : 'custom'
     } else {
@@ -97,19 +89,48 @@ const featuresText = computed({
   get: () => (draft.value.features || []).join('\n'),
   set: (v: string) => { draft.value.features = v.split('\n').map((s) => s.trim()).filter(Boolean) }
 })
-/** 月 / 年付计费周期编辑行：价格留空 = 不启用该周期；划线价可空 */
-const cycleRows = ref<{ monthlyPrice?: number; monthlyOriginal?: number; yearlyPrice?: number; yearlyOriginal?: number }>({})
-
-/** 组装 billingCycles：两个周期价格全为空 → undefined（前台按基础价展示） */
-function buildBillingCycles(): ConfigItem['billingCycles'] {
-  const cycles: NonNullable<ConfigItem['billingCycles']> = []
-  const push = (cycle: 'MONTHLY' | 'YEARLY', price?: number, originalPrice?: number) => {
-    if (price === undefined || price === null) return
-    cycles.push({ cycle, price, ...(originalPrice ? { originalPrice } : {}) })
+type PriceInput = number | null | undefined
+const cycleRows = ref<{ monthlyPrice?: PriceInput; monthlyFirstPurchase?: PriceInput; monthlyOriginal?: PriceInput; yearlyPrice?: PriceInput; yearlyFirstPurchase?: PriceInput; yearlyOriginal?: PriceInput }>({})
+const cycleEnabled = ref({ monthly: false, yearly: false })
+const hasCycles = computed(() => cycleEnabled.value.monthly || cycleEnabled.value.yearly)
+const pricingTouched = ref(false)
+const pricingError = computed(() => {
+  if (draft.value.planType === 'GIFT') return ''
+  const rows = [
+    { on: cycleEnabled.value.monthly, name: '月付', price: cycleRows.value.monthlyPrice, first: cycleRows.value.monthlyFirstPurchase, original: cycleRows.value.monthlyOriginal },
+    { on: cycleEnabled.value.yearly, name: '年付', price: cycleRows.value.yearlyPrice, first: cycleRows.value.yearlyFirstPurchase, original: cycleRows.value.yearlyOriginal }
+  ]
+  if (!hasCycles.value) rows.push({ on: true, name: '基础', price: draft.value.price, first: draft.value.firstPurchasePrice, original: undefined })
+  for (const row of rows.filter((r) => r.on)) {
+    if (!isValidMoney(row.price)) return `${row.name}正常价必填，须为非负金额且最多两位小数；0 元须明确填写`
+    if (row.first != null && !isValidMoney(row.first)) return `${row.name}首购价须为非负金额且最多两位小数`
+    if (row.original != null && (!isValidMoney(row.original) || row.original <= row.price)) return `${row.name}划线价须大于正常价，或留空不设置`
   }
-  push('MONTHLY', cycleRows.value.monthlyPrice, cycleRows.value.monthlyOriginal)
-  push('YEARLY', cycleRows.value.yearlyPrice, cycleRows.value.yearlyOriginal)
-  return cycles.length ? cycles : undefined
+  return ''
+})
+
+function normalizeGift(): void {
+  draft.value.price = 0
+  draft.value.firstPurchasePrice = null
+  draft.value.credits = 0
+  draft.value.grantMode = 'ONCE'
+  draft.value.creditExpiry = 'NEVER'
+  draft.value.creditValidityDays = undefined
+  draft.value.billingCycles = []
+  cycleRows.value = {}
+  cycleEnabled.value = { monthly: false, yearly: false }
+}
+
+/** 空数组明确清除已有周期；未启用行不进入载荷，显式零首购价保留。 */
+function buildBillingCycles(): NonNullable<ConfigItem['billingCycles']> {
+  const cycles: NonNullable<ConfigItem['billingCycles']> = []
+  const push = (enabled: boolean, cycle: 'MONTHLY' | 'YEARLY', price: PriceInput, firstPurchasePrice: PriceInput, originalPrice: PriceInput) => {
+    if (!enabled || !isValidMoney(price)) return
+    cycles.push({ cycle, price, ...(firstPurchasePrice != null ? { firstPurchasePrice } : {}), ...(originalPrice != null ? { originalPrice } : {}) })
+  }
+  push(cycleEnabled.value.monthly, 'MONTHLY', cycleRows.value.monthlyPrice, cycleRows.value.monthlyFirstPurchase, cycleRows.value.monthlyOriginal)
+  push(cycleEnabled.value.yearly, 'YEARLY', cycleRows.value.yearlyPrice, cycleRows.value.yearlyFirstPurchase, cycleRows.value.yearlyOriginal)
+  return cycles
 }
 
 // -------------------------------------------------- 权益绑定只读展示（v13）
@@ -162,25 +183,24 @@ const entGroups = computed(() => {
   ]
 })
 
-function toggleGroup(groupLabel: string, value: boolean): void {
-  const group = FRONTEND_PERM_GROUPS.find((g) => g.label === groupLabel)
-  if (!group || !draft.value.frontendPerms) return
-  for (const it of group.items) draft.value.frontendPerms[it.key] = value
-}
-
 /** 保存（发布）：先表单校验，再弹版本确认框（默认时间戳版本名可改），确认后才写库并生成快照 */
 const versionDialog = ref(false)
 async function onSaveClick(): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value) return
+  pricingTouched.value = true
+  if (pricingError.value) { ElMessage.warning(pricingError.value); return }
   try { await formRef.value?.validate() } catch { return }
   versionDialog.value = true
 }
 
 async function save(v: { versionName: string; note: string }): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value) return
+  pricingTouched.value = true
+  if (pricingError.value) { ElMessage.warning(pricingError.value); return }
   saving.value = true
   try {
     const isGift = draft.value.planType === 'GIFT'
+    if (isGift) normalizeGift()
     await saveConfig('plans', {
       ...draft.value,
       durationMode: isGift ? (giftDurationMode.value === 'membership' ? 'MEMBERSHIP' : giftDurationMode.value === 'lifetime' ? 'LIFETIME' : 'CUSTOM_DAYS') : normalDurationMode.value === 'lifetime' ? 'LIFETIME' : 'CUSTOM_DAYS',
@@ -189,7 +209,13 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
       tagline: isGift ? undefined : draft.value.tagline,
       badge: isGift ? undefined : draft.value.badge,
       features: isGift ? undefined : draft.value.features,
-      billingCycles: isGift ? undefined : buildBillingCycles(),
+      billingCycles: isGift ? [] : buildBillingCycles(),
+      price: isGift ? 0 : hasCycles.value && !isValidMoney(draft.value.price) ? buildBillingCycles()[0]?.price : draft.value.price,
+      firstPurchasePrice: isGift ? null : (draft.value.firstPurchasePrice ?? null),
+      grantMode: isGift ? 'ONCE' : draft.value.grantMode,
+      creditExpiry: isGift ? 'NEVER' : draft.value.creditExpiry,
+      creditValidityDays: isGift ? undefined : draft.value.creditValidityDays,
+      frontendPerms: normalizeFrontendPerms(undefined),
       versionName: v.versionName,
       note: v.note
     })
@@ -201,10 +227,16 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
     saving.value = false
   }
 }
+
+watch(() => [props.modelValue, props.item] as const, ([open]) => {
+  versionDialog.value = false
+  if (open) initializeDraft()
+}, { immediate: true })
 </script>
 <template>
-  <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑套餐' : '新建套餐'}`" size="640px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
+  <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑套餐' : '新建套餐'}`" size="min(860px, 100vw)" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
     <el-form ref="formRef" :model="draft" :rules="rules" label-width="110px" :disabled="!canEdit">
+      <el-alert title="标准版 / 高级版 / 旗舰版功能一致，仅积分额度不同；单账号制，无席位。" type="info" :closable="false" class="rule-alert" />
       <el-form-item label="名称" prop="name"><el-input v-model="draft.name" placeholder="请输入套餐名称" /></el-form-item>
       <el-form-item label="唯一编码" prop="code"><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="字母数字下划线短横线，创建后不可修改" /></el-form-item>
       <el-form-item label="启用 / 上架"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" /></el-form-item>
@@ -214,33 +246,48 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
           <el-radio value="CREDIT_PACKAGE">积分包套餐</el-radio>
           <el-radio value="GIFT">赠送套餐</el-radio>
         </el-radio-group>
-        <p class="perm-hint">赠送套餐用于创建赠送订单：价格必须为 0 元，时长支持长期有效、自定义天数或会员期内有效（随会员续费延续，到期失效）；创建后类型不可修改。</p>
+        <p class="perm-hint">赠送套餐仅供运营特批使用，需独立管理权限、必填原因和审计，不属于常规购买促销；常规赠分仅注册 100 分。特批积分固定一次发放、永不过期；创建后类型不可修改。</p>
       </el-form-item>
       <!-- v17 营销信息：仅常规套餐（角标 / 标语 / 卖点列表，前台套餐卡片展示） -->
       <template v-if="draft.planType !== 'GIFT'">
         <el-divider content-position="left">营销信息</el-divider>
-        <el-form-item label="营销标语"><el-input v-model="draft.tagline" placeholder="一句话卖点，如「最受欢迎的专业版」" maxlength="50" /></el-form-item>
+        <el-form-item label="营销标语"><el-input v-model="draft.tagline" placeholder="一句话卖点，如「适合高频使用的高级版」" maxlength="50" /></el-form-item>
         <el-form-item label="营销角标"><el-input v-model="draft.badge" placeholder="如「最受欢迎」，留空则不显示" maxlength="10" /></el-form-item>
-        <el-form-item label="卖点列表"><el-input v-model="featuresText" type="textarea" :rows="4" placeholder="一行一条卖点，如：&#10;每月 10000 AI 积分&#10;支持 5 个专家编排" /></el-form-item>
+        <el-form-item label="卖点列表"><el-input v-model="featuresText" type="textarea" :rows="4" placeholder="一行一条卖点，如：&#10;每月 10000 AI 积分&#10;三档功能一致，无席位" /></el-form-item>
       </template>
-      <el-form-item label="价格（元）">
+      <el-form-item v-if="draft.planType === 'GIFT' || !hasCycles" label="基础正常价" :error="pricingTouched && !hasCycles ? pricingError : ''">
         <el-input-number v-model="draft.price" :min="0" :precision="2" :disabled="draft.planType === 'GIFT'" />
         <p v-if="draft.planType === 'GIFT'" class="perm-hint">赠送套餐价格固定为 0 元</p>
       </el-form-item>
-      <!-- v17 月 / 年付计费周期：价格留空的周期不启用；全部留空前台按基础价展示 -->
-      <el-form-item v-if="draft.planType !== 'GIFT'" label="计费周期">
+      <el-form-item v-if="draft.planType !== 'GIFT' && !hasCycles" label="基础首购价">
         <div class="cycle-editor">
-          <div class="cycle-row">
-            <span class="cycle-name">月付</span>
-            <el-input-number v-model="cycleRows.monthlyPrice" :min="0" :precision="2" controls-position="right" placeholder="月付价格" />
-            <el-input-number v-model="cycleRows.monthlyOriginal" :min="0" :precision="2" controls-position="right" placeholder="划线价（可空）" />
+          <el-input-number v-model="draft.firstPurchasePrice" :min="0" :precision="2" controls-position="right" placeholder="留空不设置" />
+          <p class="perm-hint">选填，仅用于无计费周期时的首购报价；设为 0 元表示免费首购。按月/年销售请在下方分别配置首购价。</p>
+        </div>
+      </el-form-item>
+      <el-form-item v-if="draft.planType !== 'GIFT'" label="定价矩阵" :error="pricingTouched && hasCycles ? pricingError : ''">
+        <div class="cycle-editor">
+          <div class="pricing-scroll">
+            <table class="pricing-matrix">
+              <thead><tr><th>周期 / 启用</th><th>正常价（元）</th><th>首购价（选填）</th><th>划线价（选填）</th></tr></thead>
+              <tbody>
+                <tr>
+                  <th><el-switch v-model="cycleEnabled.monthly" aria-label="启用月付" /> 月付</th>
+                  <td><el-input-number v-model="cycleRows.monthlyPrice" :disabled="!cycleEnabled.monthly" :min="0" :precision="2" :controls="false" aria-label="月付正常价" placeholder="启用后必填" /></td>
+                  <td><el-input-number v-model="cycleRows.monthlyFirstPurchase" :disabled="!cycleEnabled.monthly" :min="0" :precision="2" :controls="false" aria-label="月付首购价" placeholder="未设置" /></td>
+                  <td><el-input-number v-model="cycleRows.monthlyOriginal" :disabled="!cycleEnabled.monthly" :min="0" :precision="2" :controls="false" aria-label="月付划线价" placeholder="未设置" /></td>
+                </tr>
+                <tr>
+                  <th><el-switch v-model="cycleEnabled.yearly" aria-label="启用年付" /> 年付</th>
+                  <td><el-input-number v-model="cycleRows.yearlyPrice" :disabled="!cycleEnabled.yearly" :min="0" :precision="2" :controls="false" aria-label="年付正常价" placeholder="启用后必填" /></td>
+                  <td><el-input-number v-model="cycleRows.yearlyFirstPurchase" :disabled="!cycleEnabled.yearly" :min="0" :precision="2" :controls="false" aria-label="年付首购价" placeholder="未设置" /></td>
+                  <td><el-input-number v-model="cycleRows.yearlyOriginal" :disabled="!cycleEnabled.yearly" :min="0" :precision="2" :controls="false" aria-label="年付划线价" placeholder="未设置" /></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="cycle-row">
-            <span class="cycle-name">年付</span>
-            <el-input-number v-model="cycleRows.yearlyPrice" :min="0" :precision="2" controls-position="right" placeholder="年付价格" />
-            <el-input-number v-model="cycleRows.yearlyOriginal" :min="0" :precision="2" controls-position="right" placeholder="划线价（可空）" />
-          </div>
-          <p class="perm-hint">价格留空表示不启用该计费周期；未配置计费周期时前台按基础价展示。</p>
+          <p class="perm-hint">开关关闭为未启用；正常价启用后必填，明确 0 元有效。首购价留空按正常价，明确 0 元为免费首购；划线价选填且须高于正常价。关闭全部周期后使用基础报价，并显式清空旧周期。</p>
+          <p class="perm-hint">首购资格、实际成交价与积分履约由交易服务核定，保存配置不代表购买引擎已接入。</p>
         </div>
       </el-form-item>
       <el-form-item v-if="draft.planType !== 'GIFT'" label="AI 积分">
@@ -309,23 +356,10 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
           <p class="perm-hint">权益由各资源管理页设置的可见性自动决定（专家 / 技能 / MCP 按可见范围，知识库按公开 / 私有），此处仅查看、不可编辑；点击分组展开明细。</p>
         </div>
       </el-form-item>
-      <el-form-item label="前台权限">
+      <el-form-item label="功能范围">
         <div class="perm-editor">
-          <div v-for="group in FRONTEND_PERM_GROUPS" :key="group.label" class="perm-row">
-            <span class="perm-group">{{ group.label }}</span>
-            <el-checkbox
-              v-for="it in group.items"
-              :key="it.key"
-              v-model="draft.frontendPerms![it.key]"
-              :disabled="!canEdit"
-              class="perm-check"
-            >{{ it.label }}</el-checkbox>
-            <div class="perm-quick">
-              <el-button size="small" link type="primary" :disabled="!canEdit" @click="toggleGroup(group.label, true)">全开</el-button>
-              <el-button size="small" link type="danger" :disabled="!canEdit" @click="toggleGroup(group.label, false)">全关</el-button>
-            </div>
-          </div>
-          <p class="perm-hint">控制该套餐用户在前台工作台的能力：关闭「查看」后对应入口与列表不可见；关闭「创建」后不可新建该类资源。</p>
+          <el-tag type="success">标准 / 高级 / 旗舰：功能一致</el-tag>
+          <p class="perm-hint">各档仅积分额度不同，统一开放套餐、技能、MCP 的查看与创建能力；无团队和席位配置。具体资源清单沿用资源侧可见性。</p>
         </div>
       </el-form-item>
       <el-form-item label="变更说明"><el-input v-model="draft.note" type="textarea" :rows="2" placeholder="可选，记录本次变更目的（进入版本审计）" /></el-form-item>
@@ -395,7 +429,7 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
 }
 
 .ent-empty {
-  color: #c0c4cc;
+  color: #606266;
   font-size: 12px;
 }
 
@@ -422,25 +456,16 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
 
 .perm-hint {
   margin: 8px 0 0;
-  color: #c0c4cc;
+  color: #606266;
   font-size: 12px;
 }
 
-/* v17 月 / 年付计费周期编辑行 */
-.cycle-editor {
-  width: 100%;
-}
-
-.cycle-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.cycle-name {
-  flex: 0 0 36px;
-  font-size: 13px;
-  color: #606266;
-}
+.rule-alert { margin-bottom: 18px; }
+.cycle-editor { width: 100%; }
+.pricing-scroll { overflow-x: auto; }
+.pricing-matrix { width: 100%; min-width: 590px; border-collapse: collapse; }
+.pricing-matrix th, .pricing-matrix td { padding: 8px; text-align: left; border: 1px solid #dcdfe6; }
+.pricing-matrix thead { color: #303133; background: #f5f7fa; }
+.pricing-matrix .el-input-number { width: 132px; }
+.pricing-matrix tbody th { white-space: nowrap; font-weight: 500; }
 </style>

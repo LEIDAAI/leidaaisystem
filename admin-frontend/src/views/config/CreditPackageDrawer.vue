@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { saveCreditPackage, type CreditPackage } from '../../api/config'
+import { isValidMoney } from '@/utils/format'
 
 /** 加油包表单抽屉（v17）：积分加油包商品（名称/积分/赠送/价格/角标/排序/状态/备注） */
 const props = defineProps<{ modelValue: boolean; item: Partial<CreditPackage> | null; canEdit: boolean }>()
@@ -16,12 +17,9 @@ const rules: FormRules = {
     { required: true, message: '请输入积分数', trigger: 'blur' },
     { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isInteger(v) && v > 0)) ? cb() : cb(new Error('积分须为正整数')), trigger: 'blur' }
   ],
-  bonusCredits: [
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isInteger(v) && v >= 0)) ? cb() : cb(new Error('赠送积分须为非负整数')), trigger: 'blur' }
-  ],
   price: [
     { required: true, message: '请输入售价', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || v >= 0) ? cb() : cb(new Error('价格不能为负数')), trigger: 'blur' }
+    { validator: (_r, v: unknown, cb) => isValidMoney(v) ? cb() : cb(new Error('请填写非负金额，明确 0 元有效，最多两位小数')), trigger: 'blur' }
   ],
   originalPrice: [
     { validator: (_r, v: number | undefined, cb) => (v === undefined || v === null || Number(v) > Number(draft.value.price ?? 0)) ? cb() : cb(new Error('划线价须大于售价')), trigger: 'blur' }
@@ -35,10 +33,9 @@ watch(
     if (visible) {
       draft.value = JSON.parse(JSON.stringify(props.item || {}))
       // 默认值补齐：赠送积分 0 / 排序 0 / 启用
-      draft.value.bonusCredits ??= 0
+      draft.value.bonusCredits = 0
       draft.value.sort ??= 0
       draft.value.status ??= 1
-      draft.value.price ??= 0
       nextTick(() => formRef.value?.clearValidate())
     }
   },
@@ -47,11 +44,11 @@ watch(
 
 /** 保存：有 id 更新、无 id 新建（由 saveCreditPackage 内部判断） */
 async function save(): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value) return
   try { await formRef.value?.validate() } catch { return }
   saving.value = true
   try {
-    await saveCreditPackage({ ...draft.value, remark: draft.value.remark?.trim() || undefined })
+    await saveCreditPackage({ ...draft.value, bonusCredits: 0, remark: draft.value.remark?.trim() || undefined })
     ElMessage.success(draft.value.id ? '加油包已更新' : '加油包已创建')
     emit('saved')
     emit('update:modelValue', false)
@@ -64,11 +61,12 @@ async function save(): Promise<void> {
   <el-drawer :model-value="modelValue" :title="`${item?.id ? '编辑加油包' : '新建加油包'}`" size="520px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
     <el-form ref="formRef" :model="draft" :rules="rules" label-width="110px" :disabled="!canEdit">
       <el-form-item label="套餐类型"><el-radio-group model-value="CREDIT_PACKAGE" :disabled="!canEdit || Boolean(item?.id)" @change="(value: unknown) => { if (value !== 'CREDIT_PACKAGE') emit('plan-type', value as 'NORMAL' | 'GIFT') }"><el-radio value="NORMAL">常规套餐</el-radio><el-radio value="CREDIT_PACKAGE">积分包套餐</el-radio><el-radio value="GIFT">赠送套餐</el-radio></el-radio-group></el-form-item>
-      <el-alert title="固定积分包，与积分加油包同源；纯积分商品，不改变会员等级、会员到期或权限。积分有效期及到账待购买链路对接。" type="info" :closable="false" style="margin-bottom:16px" />
+      <el-alert title="积分包仅有效会员可购，付费积分 365 天有效，不随会员到期清零；不改变会员等级或权限。购买资格校验、积分批次与到账仍须交易服务接入。" type="info" :closable="false" style="margin-bottom:16px" />
       <el-form-item label="自定义积分"><el-button link type="primary" @click="emit('slider-settings')">打开计费设置 / 滑块后台预览</el-button><p class="pkg-hint">固定包按本表价格出售；自定义积分沿计费设置的统一单价计算。</p></el-form-item>
       <el-form-item label="名称" prop="name"><el-input v-model="draft.name" placeholder="如「500 积分加油包」" /></el-form-item>
       <el-form-item label="积分" prop="credits"><el-input-number v-model="draft.credits" :min="1" :step="100" :precision="0" /></el-form-item>
-      <el-form-item label="赠送积分" prop="bonusCredits"><el-input-number v-model="draft.bonusCredits" :min="0" :step="50" :precision="0" /></el-form-item>
+      <el-form-item label="常规赠分"><span>不赠送（0 分）</span><p class="pkg-hint">常规赠分仅注册 100 分一批；运营特批须走独立权限、原因与审计入口，不配置为购买促销。</p></el-form-item>
+      <el-form-item label="积分有效期"><span>365 天，不随会员到期清零</span></el-form-item>
       <el-form-item label="售价（元）" prop="price"><el-input-number v-model="draft.price" :min="0" :precision="2" /></el-form-item>
       <el-form-item label="划线价（元）" prop="originalPrice">
         <el-input-number v-model="draft.originalPrice" :min="0" :precision="2" placeholder="可空" />
@@ -94,7 +92,7 @@ async function save(): Promise<void> {
 <style scoped>
 .pkg-hint {
   margin: 6px 0 0;
-  color: #c0c4cc;
+  color: #606266;
   font-size: 12px;
 }
 </style>

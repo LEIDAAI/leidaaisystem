@@ -3,7 +3,7 @@ import { CAPABILITY_KEYS, defaultCapabilities, redact, detectPlatforms, seedBill
 import type { LlmModelRow } from './extension-data'
 import { simulatePreviewChat, type PreviewDraftLike } from './preview-engine'
 import { normalizeFrontendPerms, PLATFORMS, hostOf } from '../config'
-import type { BillingSettings, ConfigItem, ConfigKind, ConfigVersion, CreditPackage, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario } from '../config'
+import type { BillingSettings, ConfigItem, ConfigKind, ConfigVersion, CreditPackage, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario, Tool } from '../config'
 
 export interface Context { params: Record<string,string>; query: Record<string,unknown>; body: unknown; adminId: number; token: string }
 export interface Services {
@@ -44,7 +44,7 @@ function entitledBy(resourceType:'EXPERT'|'SKILL'|'MCP_TOOL', ids:number[]): str
 }
 
 export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
-  const fail = (message:string,code=422):never=>{ throw new ErrorType(code,message) }
+  const fail: (message:string,code?:number)=>never = (message,code=422)=>{ throw new ErrorType(code,message) }
   const normalizeDuration = (item: ConfigItem) => {
     item.durationMode ??= item.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
     if (!['LIFETIME','CUSTOM_DAYS','MEMBERSHIP'].includes(item.durationMode)) fail('套餐时长模式无效')
@@ -65,8 +65,25 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   const touch = (item:ConfigItem)=>{ item.version++; item.updatedAt=nowStr(); item.refreshStatus='PENDING'; item.refreshMessage='Mock 待刷新；未连接 AgentScope' }
   const publicItem = (item:ConfigItem)=>({ ...item, authConfig:item.authConfig ? { ...item.authConfig,credential:item.authConfig.credential?'******':undefined }:undefined })
   const collections: Array<[ConfigKind,ConfigItem[],string]> = [['plans',db.plans,'plan'],['experts',db.experts,'expert'],['skills',db.skills,'skill'],['mcp/servers',db.servers,'mcp']]
-  /** 供导入/克隆复用的按模块保存入口 */
-  const saveFns: Partial<Record<'plan'|'expert'|'skill'|'mcp', (ctx:Context)=>ConfigItem>> = {}
+  type Module = 'plan'|'expert'|'skill'|'mcp'
+  type RestoreOptions = { snapshot: ConfigItem; restoredFrom: number; tools?: Tool[] }
+  /** 恢复与保存使用同一候选对象、校验和提交路径；恢复选项仅由内部路由传入。 */
+  const saveFns: Partial<Record<Module, (ctx:Context, restore?:RestoreOptions)=>ConfigItem>> = {}
+  const versionStore = (module:string) => module==='expert'?db.expertVersions:module==='skill'?db.skillVersions:module==='mcp'?db.mcpVersions:db.planVersions
+  const configSnapshot = (module:string, item:ConfigItem):ConfigItem => snapshot(module==='mcp' ? { ...item, tools:db.tools.filter(t=>t.serverId===item.id) } : item)
+  const normalizeVisibility = (value:ConfigItem['visibility']):NonNullable<ConfigItem['visibility']> => {
+    const vis=value ?? { type:'PUBLIC', planIds:[] }
+    if(!['PUBLIC','PLAN','PRIVATE'].includes(vis.type)) fail('可见性类型无效（PUBLIC/PLAN/PRIVATE）')
+    if(vis.type==='PLAN' && (!Array.isArray(vis.planIds) || !vis.planIds.length || vis.planIds.some(id=>!db.plans.some(p=>p.id===id)))) fail('指定套餐可见性需选择有效套餐')
+    return { type:vis.type, planIds:vis.type==='PLAN'?[...new Set(vis.planIds)]:[] }
+  }
+  const assertToolsRemovable = (ids:number[]) => {
+    const by=entitledBy('MCP_TOOL',ids)
+    db.experts.forEach(e=>{
+      if((e.mcpToolIds||[]).some(id=>ids.includes(id)) || Object.values(e.mcpToolSelection||{}).some(selected=>selected.some(id=>ids.includes(id)))) by.push(`专家「${e.name}」工具选择`)
+    })
+    if(by.length) fail(`工具被以下配置引用：${[...new Set(by)].join('、')}；请先解除引用`,409)
+  }
   /** v5：版本快照公共字段（版本名称留空自动生成 yyyyMMddHHmmss；操作人取当前管理员） */
   const versionMeta = (ctx:Context, body:unknown, store?:Record<string, ConfigVersion[]>, itemId?:number|string)=>{
     const custom=String((body as Record<string,unknown>)?.versionName || '').trim()
@@ -79,18 +96,38 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   const assertVersionNameUnique = (store: Record<string, ConfigVersion[]> | undefined, itemId: number|string, versionName: string): void => {
     if((store?.[String(itemId)] || []).some(v=>v.versionName===versionName)) fail(`版本名称「${versionName}」在该资源的历史版本中已存在，请更换`)
   }
+  const preserveMcpBaseline = (ctx:Context, item:ConfigItem, reservedName:string) => {
+    const history=db.mcpVersions[String(item.id)] ||= []
+    const current=history.find(v=>v.version===item.version)
+    // 只有当前版本的旧快照可以准确补齐工具；更早的缺失快照不猜测历史状态。
+    if(current) { if(!current.snapshot.tools) current.snapshot.tools=structuredClone(db.tools.filter(t=>t.serverId===item.id)) }
+    else {
+      const base=`工具变更前 v${item.version}`
+      let versionName=base
+      for(let n=2;versionName===reservedName || history.some(v=>v.versionName===versionName);n++) versionName=`${base}-${n}`
+      history.push({ version:item.version,...versionMeta(ctx,{ versionName },db.mcpVersions,item.id),note:'工具变更前基线',createdAt:item.updatedAt,snapshot:configSnapshot('mcp',item) })
+    }
+  }
   route('GET','/entitlement-resources',ctx=>{ if(!['user:entitlement','plan:view','plan:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限',403); return resources() })
   for(const [kind,items,module] of collections) {
     route('GET',`/${kind}`,ctx=>{ perm(ctx,`${module}:view`); const keyword=String(ctx.query.keyword || '');const status=ctx.query.status==='' || ctx.query.status===undefined ? undefined:Number(ctx.query.status);return items.filter(i=>(!keyword || `${i.name} ${i.code}`.includes(keyword)) && (status===undefined || i.status===status)).map(i=>({ ...publicItem(i), salesCount: module==='plan'?db.orders.filter(o=>o.planId===i.id && o.status==='PAID').length:undefined, boundSkillCount: module==='expert'?(i.skillIds||[]).length:undefined, boundMcpCount: module==='expert'?(i.mcpServerIds||[]).length:undefined, boundExpertCount: module==='skill'?db.experts.filter(e=>e.skillIds?.includes(i.id)).length:undefined })) })
     route('GET',`/${kind}/:id`,ctx=>{ perm(ctx,`${module}:view`);return publicItem(find(items,ctx.params.id)) })
-    const save = (ctx:Context)=>{
+    const save = (ctx:Context, restore?:RestoreOptions)=>{
       perm(ctx,`${module}:edit`)
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
-      for(const key of fields) if(input[key]!==undefined) Object.assign(item,{[key]:input[key]})
-      item.name=String(item.name).trim();item.code=String(item.code).trim()
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
+      const source=restore?.snapshot || input
+      for(const key of fields) if(restore || source[key]!==undefined) Object.assign(item,{[key]:source[key]===undefined?undefined:structuredClone(source[key])})
+      if(restore && old && source.code===undefined) item.code=old.code
+      if(old && (module==='plan' || restore) && item.code!==old.code) fail('配置编码创建后不可修改，历史恢复也必须保留当前编码')
+      if(restore && module==='plan') item.durationMode ??= item.durationDays===0?'LIFETIME':'CUSTOM_DAYS'
+      if(restore && module==='expert') {
+        item.skillIds ??=[];item.mcpServerIds ??=[];item.knowledgeBaseIds ??=[]
+        item.suggestedQuestions ??=[];item.tags ??=[];item.isDefault ??=false
+      }
+      item.name=String(item.name ?? '').trim();item.code=String(item.code ?? '').trim()
       if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
       if(items.some(i=>i.id!==item.id && i.code===item.code)) fail('编码已存在')
       if(![0,1].includes(item.status)) fail('状态无效')
@@ -107,8 +144,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         item.platforms=plats as PlatformType[]
       }
       if(module==='plan') {
-        if (input.planType !== undefined && !['NORMAL','GIFT'].includes(input.planType)) fail('会员套餐类型仅支持 NORMAL/GIFT；积分包请使用 credit-packages')
-        if (old && input.planType !== undefined && input.planType !== (old.planType || 'NORMAL')) fail('套餐类型创建后不可修改')
+        if (item.planType !== undefined && !['NORMAL','GIFT'].includes(item.planType)) fail('会员套餐类型仅支持 NORMAL/GIFT；积分包请使用 credit-packages')
+        if (old && (item.planType || 'NORMAL') !== (old.planType || 'NORMAL')) fail('套餐类型创建后不可修改')
         item.planType=item.planType==='GIFT'?'GIFT':'NORMAL'
         if (input.durationMode === undefined && input.durationDays !== undefined) item.durationMode = input.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
         normalizeDuration(item)
@@ -116,8 +153,12 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
           // 赠送套餐：价格必须为 0 元；有效天数 0=长期有效，正整数=自定义时长；不配置 AI 积分（固定 0）
           if(Number(item.price)!==0) fail('赠送套餐价格必须为 0 元')
           item.credits=0
+          item.firstPurchasePrice=undefined
+          item.billingCycles=undefined
         } else {
           if(!Number.isFinite(item.price) || Number(item.price)<0 || !Number.isInteger(item.durationDays) || Number(item.durationDays)<0) fail('价格须非负，有效天数须为 0（长期有效）或正整数')
+          if(item.firstPurchasePrice===null || item.firstPurchasePrice===undefined) item.firstPurchasePrice=undefined
+          else if(typeof item.firstPurchasePrice!=='number' || !Number.isFinite(item.firstPurchasePrice) || item.firstPurchasePrice<0 || Math.abs(item.firstPurchasePrice*100-Math.round(item.firstPurchasePrice*100))>1e-6) fail('首次购买价格须为非负金额，最多两位小数')
           // v12：常规套餐 AI 积分（可选，非负整数，缺省 0；创建手工订单时默认带出）
           const credits=Number(item.credits||0)
           if(!Number.isInteger(credits) || credits<0) fail('AI 积分须为非负整数')
@@ -144,6 +185,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
             if(cycles.has(c.cycle)) fail('月付/年付计费周期不能重复配置')
             cycles.add(c.cycle)
             if(!Number.isFinite(Number(c.price)) || Number(c.price)<0) fail('计费周期售价须为不小于 0 的数字')
+            if(c.firstPurchasePrice===null) delete c.firstPurchasePrice
+            if(c.firstPurchasePrice!==undefined && (typeof c.firstPurchasePrice!=='number' || !Number.isFinite(c.firstPurchasePrice) || c.firstPurchasePrice<0 || Math.abs(c.firstPurchasePrice*100-Math.round(c.firstPurchasePrice*100))>1e-6)) fail('计费周期首购价须为非负金额，最多两位小数')
             if(c.originalPrice!==undefined && (!(Number(c.originalPrice)>0) || Number(c.originalPrice)<=Number(c.price))) fail('计费周期划线价须大于 0 且大于该档售价')
           }
           item.billingCycles=item.billingCycles.length?item.billingCycles:undefined
@@ -153,7 +196,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         item.sort=sort
         // v17：积分发放模式（GIFT 赠送套餐强制一次性发放）与积分有效期策略（CUSTOM_DAYS 须填正整数天数，其余清空）
         item.grantMode=item.planType==='GIFT'?'ONCE':(item.grantMode==='MONTHLY'?'MONTHLY':'ONCE')
-        item.creditExpiry=item.creditExpiry==='MONTH_RESET'||item.creditExpiry==='CUSTOM_DAYS'?item.creditExpiry:'NEVER'
+        item.creditExpiry=item.planType==='GIFT'?'NEVER':(item.creditExpiry==='MONTH_RESET'||item.creditExpiry==='CUSTOM_DAYS'?item.creditExpiry:'NEVER')
         if(item.creditExpiry==='CUSTOM_DAYS') { if(!Number.isInteger(item.creditValidityDays) || Number(item.creditValidityDays)<1) fail('自定义积分有效期须填写正整数天数') }
         else item.creditValidityDays=undefined
       }
@@ -165,16 +208,15 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!String(item.description||'').trim()) fail('能力摘要不能为空')
         if(!Array.isArray(item.skillIds) || item.skillIds.some(id=>!db.skills.some(s=>s.id===id))) fail('绑定的技能不存在')
         if(!Array.isArray(item.mcpServerIds) || item.mcpServerIds.some(id=>!db.servers.some(s=>s.id===id))) fail('绑定的MCP服务器不存在')
-        // v9：绑定级 MCP 工具裁剪归一化（serverId→工具 id 列表；仅保留已绑定服务下真实存在的工具，空=放开全部；悬空条目剔除）
-        if(item.mcpToolSelection!==undefined && (typeof item.mcpToolSelection!=='object' || Array.isArray(item.mcpToolSelection))) fail('MCP 工具裁剪配置无效')
+        // 空数组保留为全量选择；失效引用必须报错，避免恢复时静默扩大调用范围。
+        if(item.mcpToolSelection!==undefined && (!item.mcpToolSelection || typeof item.mcpToolSelection!=='object' || Array.isArray(item.mcpToolSelection))) fail('MCP 工具裁剪配置无效')
         {
           const sel=item.mcpToolSelection || {}
           const cleaned: Record<string, number[]>={}
           for(const [k,v] of Object.entries(sel)){
             const sid=Number(k)
-            if(!(item.mcpServerIds||[]).includes(sid)) continue
-            const ids=Array.isArray(v)?v.filter(id=>db.tools.some(t=>t.id===id&&t.serverId===sid)):[]
-            if(ids.length) cleaned[k]=[...new Set(ids)]
+            if(!(item.mcpServerIds||[]).includes(sid) || !Array.isArray(v) || v.some(id=>!db.tools.some(t=>t.id===id&&t.serverId===sid))) fail('MCP 工具裁剪引用无效，请先修正绑定')
+            cleaned[k]=[...new Set(v)]
           }
           item.mcpToolSelection=Object.keys(cleaned).length?cleaned:undefined
         }
@@ -203,14 +245,15 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!cap || typeof cap!=='object' || Array.isArray(cap) || Object.values(cap).some(v=>typeof v!=='boolean')) fail('能力开关须为布尔值对象')
         for(const k of Object.keys(cap)) if(!(CAPABILITY_KEYS as readonly string[]).includes(k)) fail(`未知能力开关：${k}`)
         item.capabilities=defaultCapabilities(cap as Record<string,boolean>)
-        const vis=item.visibility
-        if(!vis || (vis.type!=='PUBLIC' && vis.type!=='PLAN' && vis.type!=='PRIVATE')) { throw new ErrorType(422,'可见性类型无效（PUBLIC/PLAN/PRIVATE）') }
-        if(vis.type==='PLAN' && (!Array.isArray(vis.planIds) || !vis.planIds.length || vis.planIds.some(id=>!db.plans.some(p=>p.id===id)))) { throw new ErrorType(422,'指定套餐可见性需选择有效套餐') }
-        if(vis.type!=='PLAN') item.visibility={ type:vis.type, planIds:[] }
+        item.visibility=normalizeVisibility(item.visibility)
+        if(item.isDefault!==undefined && typeof item.isDefault!=='boolean') fail('默认专家标记须为布尔值')
+        if(item.mcpToolIds!==undefined && (!Array.isArray(item.mcpToolIds) || item.mcpToolIds.some(id=>!db.tools.some(t=>t.id===id && item.mcpServerIds!.includes(t.serverId))))) fail('绑定的 MCP 工具不存在或未绑定所属服务')
         if(item.isDefault && item.status!==1) fail('默认专家必须启用')
         if(old?.isDefault && !item.isDefault) fail('请通过另一专家的设为默认操作切换默认专家')
+        if(!item.isDefault && items.filter(e=>e.id!==item.id && e.isDefault).length>1) fail('当前存在多个默认专家，请先通过设为默认操作修正')
       }
       if(module==='skill') {
+        item.visibility=normalizeVisibility(item.visibility)
         if(!String(item.content||'').trim()) fail('SKILL.md 内容不能为空')
         if(item.files===undefined) item.files=[]
         if(!Array.isArray(item.files) || item.files.some(f=>!f || typeof f.name!=='string' || !f.name.trim() || typeof f.content!=='string')) fail('附件文件须包含名称与内容')
@@ -256,47 +299,42 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(!Array.isArray(item.toolFilter)) item.toolFilter=[]
         if(item.toolFilter.some(t=>typeof t!=='string' || !t.trim())) fail('工具过滤清单须为非空字符串数组')
         // v9：MCP 前台可见性归一化（仅控制 C 端展示，不影响专家绑定调用；缺省视为全员可见）
-        const mvis=item.visibility || { type:'PUBLIC' as const, planIds:[] as number[] }
-        if(mvis.type!=='PUBLIC' && mvis.type!=='PLAN' && mvis.type!=='PRIVATE') fail('可见性类型无效（PUBLIC/PLAN/PRIVATE）')
-        if(mvis.type==='PLAN' && (!Array.isArray(mvis.planIds) || !mvis.planIds.length || mvis.planIds.some(id=>!db.plans.some(p=>p.id===id)))) fail('指定套餐可见性需选择有效套餐')
-        item.visibility= mvis.type==='PLAN' ? { type:mvis.type, planIds:[...new Set(mvis.planIds)] } : { type:mvis.type, planIds:[] }
+        item.visibility=normalizeVisibility(item.visibility)
+        if(restore) {
+          if(!Array.isArray(restore.tools)) fail('该历史版本缺少工具快照，无法完整恢复；请使用包含工具快照的版本',409)
+          const ids=new Set<number>();const names=new Set<string>()
+          for(const tool of restore.tools) {
+            if(!tool || !Number.isSafeInteger(tool.id) || tool.id<=0 || tool.serverId!==item.id || typeof tool.name!=='string' || !tool.name.trim() || typeof tool.enabled!=='boolean' || ids.has(tool.id) || names.has(tool.name)) fail('历史工具快照无效或包含重复 ID/名称')
+            if((tool.method!==undefined && (typeof tool.method!=='string' || !['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','TRACE'].includes(tool.method))) || (tool.path!==undefined && (typeof tool.path!=='string' || !tool.path.startsWith('/'))) || (tool.summary!==undefined && typeof tool.summary!=='string') || (tool.source!==undefined && !['API_IMPORT','MCP_MOCK'].includes(tool.source))) fail('历史工具定义无效')
+            if(db.tools.some(t=>t.id===tool.id && t.serverId!==item.id)) fail('历史工具 ID 已被其他服务占用',409)
+            if(tool.enabled && item.connType==='OpenAPI' && !(item.apiOperations||[]).some(op=>op.name===tool.name && (!item.toolFilter?.length || item.toolFilter.includes(op.name)))) fail('历史启用工具与 API 定义或过滤配置不一致')
+            ids.add(tool.id);names.add(tool.name)
+          }
+          assertToolsRemovable(db.tools.filter(t=>t.serverId===item.id && !ids.has(t.id)).map(t=>t.id))
+        }
       }
-      const before=old?snapshot(old):null
+      const before=old?configSnapshot(module,old):null
+      const store=versionStore(module)
+      const vMeta=versionMeta(ctx,ctx.body,store,item.id)
+      const skipVersion=!restore && Boolean((input as Record<string,unknown>).skipVersion)
+      if(!skipVersion) assertVersionNameUnique(store,item.id,vMeta.versionName)
       touch(item)
-      // v5：导入（skipVersion 标记，非持久化字段）不产生版本记录；保存前校验同资源内版本名称唯一（重复 422）
-      const vMeta = versionMeta(ctx,ctx.body, module==='expert'?db.expertVersions:module==='skill'?db.skillVersions:module==='mcp'?db.mcpVersions:module==='plan'?db.planVersions:undefined, item.id)
-      const skipVersion = Boolean((input as Record<string,unknown>).skipVersion)
-      if(module==='expert' && item.isDefault) items.filter(e=>e.id!==item.id && e.isDefault).forEach(e=>{ const prev=snapshot(e);e.isDefault=false;touch(e);audit(ctx.adminId,'expert.default','expert',e.id,prev,e) })
+      // 至此全部校验已完成；后续同步提交内容、默认关系、工具、历史和审计。
+      if(module==='expert' && item.isDefault) items.filter(e=>e.id!==item.id && e.isDefault).forEach(e=>{
+        const prev=snapshot(e);e.isDefault=false;touch(e)
+        const meta=versionMeta(ctx,{},db.expertVersions,e.id)
+        ;(db.expertVersions[String(e.id)] ||= []).push({ version:e.version,...meta,note:'切换默认专家',createdAt:e.updatedAt,snapshot:snapshot(e) })
+        audit(ctx.adminId,'expert.default','expert',e.id,prev,snapshot(e))
+      })
+      if(module==='mcp' && old) preserveMcpBaseline(ctx,old,vMeta.versionName)
       if(old) Object.assign(old,item); else items.push(item)
-      if(module==='expert') {
-        if(!skipVersion) {
-          assertVersionNameUnique(db.expertVersions,item.id,vMeta.versionName)
-          ;(db.promptHistory[item.id] ||= []).push({ version:item.version,systemPrompt:item.systemPrompt!,createdAt:item.updatedAt })
-          ;(db.expertVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
-        }
+      if(module==='mcp' && restore) db.tools=[...db.tools.filter(t=>t.serverId!==item.id),...structuredClone(restore.tools!)]
+      if(!skipVersion) {
+        if(module==='expert') (db.promptHistory[item.id] ||= []).push({ version:item.version,systemPrompt:item.systemPrompt!,createdAt:item.updatedAt })
+        ;(store[String(item.id)] ||= []).push({ version:item.version,...vMeta,note:String(input.note || (restore?`恢复自 v${restore.restoredFrom}`:old?'保存配置':'创建配置')),createdAt:item.updatedAt,snapshot:configSnapshot(module,item) })
       }
-      if(module==='skill') {
-        if(!skipVersion) {
-          assertVersionNameUnique(db.skillVersions,item.id,vMeta.versionName)
-          ;(db.skillVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
-        }
-      }
-      if(module==='mcp') {
-        // v5：MCP 配置变更生成快照（含连接配置与工具绑定），支持历史/差异/恢复
-        if(!skipVersion) {
-          assertVersionNameUnique(db.mcpVersions,item.id,vMeta.versionName)
-          ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
-        }
-      }
-      if(module==='plan') {
-        // v17：套餐配置变更生成快照（含营销/计费字段），支持历史/差异/恢复
-        if(!skipVersion) {
-          assertVersionNameUnique(db.planVersions,item.id,vMeta.versionName)
-          ;(db.planVersions[String(item.id)] ||= []).push({ version:item.version, ...vMeta, note:String(input.note || (old?'保存配置':'创建配置')), createdAt:item.updatedAt, snapshot:snapshot(item) })
-        }
-      }
-      // v5：审计 JSON 含 platforms（业务字段）与 versionName（本次发布版本名；skipVersion 无版本记录时省略）
-      audit(ctx.adminId,`${module}.${old?'update':'create'}`,module,item.id,before, skipVersion ? item : { ...publicItem(item), versionName:vMeta.versionName })
+      const after={ ...publicItem(configSnapshot(module,item)),...(!skipVersion?{ versionName:vMeta.versionName }:{}),...(restore?{ restoredFrom:restore.restoredFrom }:{}) }
+      audit(ctx.adminId,restore?`${module}.version.restore`:`${module}.${old?'update':'create'}`,module,item.id,before,after)
       return publicItem(item)
     }
     saveFns[module as 'plan'|'expert'|'skill'|'mcp'] = save
@@ -304,12 +342,13 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     route('PUT',`/${kind}/:id/status`,ctx=>save({...ctx,body:{ status:(ctx.body as Record<string,unknown>).status, confirmReferences:(ctx.body as Record<string,unknown>).confirmReferences }}))
     route('DELETE',`/${kind}/:id`,ctx=>{
       perm(ctx,`${module}:edit`);const item=find(items,ctx.params.id)
-      const confirm=(ctx.body as Record<string,unknown> | undefined)?.confirmReferences
       if(module==='plan') {
         if(db.users.some(u=>u.planId===item.id) || db.orders.some(o=>o.planId===item.id)) fail('套餐已被用户或订单引用，不能删除',409)
-        const planRefs=db.experts.filter(e=>e.visibility?.type==='PLAN' && e.visibility.planIds?.includes(item.id))
-        if(planRefs.length && !confirm) fail(`套餐被以下专家的可见范围引用：${planRefs.map(r=>r.name).join('、')}；确认删除请勾选引用确认`,409)
-        db.experts.forEach(e=>{ if(e.visibility?.type==='PLAN' && e.visibility.planIds) e.visibility.planIds=e.visibility.planIds.filter(id=>id!==item.id) })
+        const by:string[]=[]
+        for(const [label,resources] of [['专家',db.experts],['技能',db.skills],['MCP 服务',db.servers],['知识库',db.knowledgeBases]] as const) {
+          resources.forEach(r=>{ if(r.visibility?.type==='PLAN' && r.visibility.planIds?.includes(item.id)) by.push(`${label}「${r.name}」`) })
+        }
+        if(by.length) fail(`套餐被以下资源的可见范围引用：${by.join('、')}；请先解除引用，不能删除`,409)
       } else if(module==='expert') {
         const by=entitledBy('EXPERT',[item.id]);if(by.length) entitledFail('专家',by)
         if(item.isDefault) fail('默认专家不能删除，请先切换其他专家为默认',409)
@@ -317,11 +356,11 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       } else if(module==='skill') {
         const by=entitledBy('SKILL',[item.id]);if(by.length) entitledFail('技能',by)
         const refs=db.experts.filter(e=>e.skillIds?.includes(item.id))
-        if(refs.length && !confirm) fail(`技能被以下专家引用：${refs.map(r=>r.name).join('、')}；确认删除请勾选引用确认`,409)
-        db.experts.forEach(e=>{ e.skillIds=(e.skillIds||[]).filter(id=>id!==item.id) })
+        if(refs.length) fail(`技能被以下专家引用：${refs.map(r=>r.name).join('、')}；请先解除引用，不能删除`,409)
       } else {
         const toolIds=db.tools.filter(t=>t.serverId===item.id).map(t=>t.id)
         const by=entitledBy('MCP_TOOL',toolIds);if(by.length) entitledFail('MCP 服务',by)
+        assertToolsRemovable(toolIds)
         const refs=db.experts.filter(e=>e.mcpServerIds?.includes(item.id))
         if(refs.length) fail(`MCP 服务被专家引用（${refs.map(r=>r.name).join('、')}），不能删除`,409)
         db.tools=db.tools.filter(t=>t.serverId!==item.id)
@@ -342,7 +381,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   const maskKey = (apiKey?: string): string => (apiKey ? `****${apiKey.slice(-4)}` : '')
   const publicModel = (m: LlmModelRow): LlmModel => {
     const { apiKey: _apiKey, ...rest } = m
-    return { ...rest, apiKeyMasked: maskKey(m.apiKey) }
+    return { ...rest, modelId:m.modelId || m.code, apiKeyMasked: maskKey(m.apiKey) }
   }
   const findModel = (id:string):LlmModelRow=>db.models.find(m=>m.id===Number(id)) || fail('模型不存在',404)
   route('GET','/models',ctx=>{
@@ -377,14 +416,17 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     // api_key：填写则更新；留空/未传=不修改（新建即未配置）；状态：编辑未传沿用原值，新建/显式传入按 0|1
     const apiKey = typeof input.apiKey==='string' && input.apiKey.trim() ? input.apiKey.trim() : old?.apiKey
     const status = input.status===undefined ? (old?.status ?? 1) : (input.status===0?0:1)
-    const item:LlmModelRow={ id:old?.id ?? nextMockId(), code, name, provider, endpoint, apiKey, defaultParams, remark:String(input.remark || '').trim(), status, createdAt:old?.createdAt || nowStr(), updatedAt:nowStr() }
+    const modelId=input.modelId===undefined?(old?.modelId || code):input.modelId
+    if(typeof modelId!=='string' || !modelId.trim() || /[\u0000-\u001f\u007f]/.test(modelId)) fail('供应商模型 modelId 须为非空标识，不能包含控制字符')
+    if(db.models.some(m=>m.id!==old?.id && (m.endpoint||'').replace(/\/+$/,'')===endpoint.replace(/\/+$/,'') && (m.modelId||m.code)===modelId)) fail('同一接入地址的供应商模型已存在')
+    const item:LlmModelRow={ id:old?.id ?? nextMockId(), code, modelId, name, provider, endpoint, apiKey, defaultParams, remark:String(input.remark || '').trim(), status, createdAt:old?.createdAt || nowStr(), updatedAt:nowStr() }
     const before=old?publicModel(old):null
     if(old) { const legacy=old as unknown as Record<string,unknown>; delete legacy.maxContext; delete legacy.capabilities; Object.assign(old,item) } else db.models.push(item)
     audit(ctx.adminId,`model.${old?'update':'create'}`,'model',item.id,before,publicModel(item))
     return publicModel(item)
   }
   route('POST','/models',saveModel);route('PUT','/models/:id',saveModel)
-  // 批量接入（渠道式）：「链接 + 密钥」探测出的模型清单勾选后一次落库；共享 endpoint/apiKey/provider，重复编码自动跳过
+  // 批量接入（渠道式）：「链接 + 密钥」探测出的模型清单勾选后一次落库；共享 endpoint/apiKey/provider，同渠道按 modelId 去重，内部 code 冲突追加后缀
   route('POST','/models/batch',ctx=>{
     perm(ctx,'model:edit')
     const b=(ctx.body || {}) as Record<string,unknown>
@@ -396,11 +438,21 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const apiKey=typeof b.apiKey==='string' && b.apiKey.trim() ? b.apiKey.trim() : undefined
     const status=(b.status===0?0:1) as 0|1
     const created:LlmModel[]=[];const skipped:string[]=[]
+    const pending:LlmModelRow[]=[]
     for(const it of arr){
+      if(!it || typeof it!=='object') fail('批量模型条目须为对象')
       const raw=String(it.code || '').trim()
-      const code=raw.replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')
-      if(!code || db.models.some(m=>m.code===code)) { skipped.push(raw || '(空)'); continue }
-      const item:LlmModelRow={ id:nextMockId(), code, name:String(it.name || '').trim() || code, provider, endpoint, apiKey, defaultParams:{ temperature:0.7, max_tokens:4096 }, remark:String(b.remark || '').trim(), status, createdAt:nowStr(), updatedAt:nowStr() }
+      const modelId=it.modelId===undefined?raw:it.modelId
+      if(typeof modelId!=='string' || !modelId.trim() || /[\u0000-\u001f\u007f]/.test(modelId)) fail('供应商模型 modelId 须为非空标识，不能包含控制字符')
+      // 同渠道按原始 modelId 去重；清洗后的 code 冲突仅追加后缀，不丢失模型。
+      const existing=[...db.models,...pending]
+      if(existing.some(m=>(m.endpoint||'').replace(/\/+$/,'')===endpoint.replace(/\/+$/,'') && (m.modelId||m.code)===modelId)) { skipped.push(modelId);continue }
+      const base=raw.replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'') || 'model'
+      let code=base
+      for(let n=2;existing.some(m=>m.code===code);n++) code=`${base}-${n}`
+      pending.push({ id:nextMockId(), code, modelId, name:String(it.name || '').trim() || modelId, provider, endpoint, apiKey, defaultParams:{ temperature:0.7, max_tokens:4096 }, remark:String(b.remark || '').trim(), status, createdAt:nowStr(), updatedAt:nowStr() })
+    }
+    for(const item of pending) {
       db.models.push(item);created.push(publicModel(item))
       audit(ctx.adminId,'model.create','model',item.id,null,publicModel(item))
     }
@@ -523,7 +575,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     fail(`模型探测失败。${errors.join('；')}。${hint}`, 422)
   })
 
-  route('PUT','/experts/:id/default',ctx=>{ perm(ctx,'expert:edit');const item=find(db.experts,ctx.params.id);if(item.status!==1) fail('停用专家不能设为默认');for(const e of db.experts){ if(Boolean(e.isDefault)!==(e.id===item.id)){const before=snapshot(e);e.isDefault=e.id===item.id;touch(e);audit(ctx.adminId,'expert.default','expert',e.id,before,e)}};return publicItem(item) })
+  route('PUT','/experts/:id/default',ctx=>saveFns.expert!({...ctx,body:{ isDefault:true,note:'设为默认专家' }}))
   route('GET','/experts/:id/prompt-versions',ctx=>{perm(ctx,'expert:view');find(db.experts,ctx.params.id);return (db.promptHistory[ctx.params.id] || []).map(h=>({ ...h, systemPrompt:String(redact(h.systemPrompt)) }))})
 
   // -------------------------------------------------- 版本历史（专家全量 / 技能 SKILL.md）
@@ -532,98 +584,34 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const custom=String((input as Record<string,unknown>).versionName || '').trim()
     return custom || `恢复自 ${hist.versionName || `v${hist.version}`}`
   }
-  const RESTORE_FIELDS = ['code','name','status','platforms','description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','content','files','paramSchema','execConfig'] as readonly (keyof ConfigItem)[]
+  const restoreVersion = (ctx:Context, module:Module, items:ConfigItem[]) => {
+    perm(ctx,`${module}:edit`)
+    const item=find(items,ctx.params.id)
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const store=versionStore(module)
+    const hist=(store[String(item.id)] || []).find(v=>v.version===Number(input.version))
+    if(!hist) fail('版本不存在',404)
+    let versionName=restoreNameOf(input,hist)
+    if(!String(input.versionName || '').trim()) {
+      const base=versionName
+      for(let n=2;(store[String(item.id)] || []).some(v=>v.versionName===versionName);n++) versionName=`${base}-${n}`
+    }
+    const snap=snapshot(hist.snapshot)
+    if(module==='mcp' && snap.tools===undefined && hist.version===item.version) snap.tools=structuredClone(db.tools.filter(t=>t.serverId===item.id))
+    return saveFns[module]!({...ctx,body:{ versionName,note:input.note,confirmReferences:input.confirmReferences }},{ snapshot:snap,restoredFrom:hist.version,tools:snap.tools })
+  }
   route('GET','/experts/:id/versions',ctx=>{perm(ctx,'expert:view');const item=find(db.experts,ctx.params.id);return (db.expertVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
-  route('POST','/experts/:id/restore',ctx=>{
-    perm(ctx,'expert:edit');const item=find(db.experts,ctx.params.id)
-    const input=(ctx.body || {}) as Record<string,unknown>
-    const hist=(db.expertVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
-    if(!hist) { throw new ErrorType(404,'版本不存在') }
-    const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    for(const key of RESTORE_FIELDS) if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]})
-    // 引用复验：旧快照可能引用已删除的资源，清理悬空引用（不阻断恢复）
-    const skillIdSet=new Set(db.skills.map(s=>s.id))
-    item.skillIds=(item.skillIds||[]).filter(id=>skillIdSet.has(id))
-    const serverIdSet=new Set(db.servers.map(s=>s.id))
-    item.mcpServerIds=(item.mcpServerIds||[]).filter(id=>serverIdSet.has(id))
-    // v9：清理悬空 MCP 工具裁剪（服务不存在/未绑定/工具不属该服务 → 剔除；清空后删除键）
-    if(item.mcpToolSelection && typeof item.mcpToolSelection==='object' && !Array.isArray(item.mcpToolSelection)){
-      const cleaned: Record<string, number[]>={}
-      for(const [k,v] of Object.entries(item.mcpToolSelection)){
-        const sid=Number(k)
-        if(!item.mcpServerIds!.includes(sid)) continue
-        const ids=Array.isArray(v)?v.filter(id=>db.tools.some(t=>t.id===id&&t.serverId===sid)):[]
-        if(ids.length) cleaned[k]=[...new Set(ids)]
-      }
-      if(Object.keys(cleaned).length) item.mcpToolSelection=cleaned
-      else delete item.mcpToolSelection
-    } else if(item.mcpToolSelection!==undefined) delete item.mcpToolSelection
-    // v7：清理悬空知识库引用（不阻断恢复）
-    const kbIdSet=new Set(db.knowledgeBases.map(k=>k.id))
-    item.knowledgeBaseIds=(item.knowledgeBaseIds||[]).filter(id=>kbIdSet.has(id))
-    if(item.baseModel && !db.models.some(m=>m.code===item.baseModel)) delete item.baseModel
-    const vis=item.visibility
-    if(vis && vis.type==='PLAN' && vis.planIds) vis.planIds=vis.planIds.filter(id=>db.plans.some(p=>p.id===id))
-    if(item.isDefault && item.status!==1) fail('该版本为默认专家但处于停用状态，恢复前请先恢复启用状态版本')
-    touch(item)
-    ;(db.promptHistory[item.id] ||= []).push({ version:item.version,systemPrompt:item.systemPrompt!,createdAt:item.updatedAt })
-    const restoredName=restoreNameOf(input,hist)
-    ;(db.expertVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
-    audit(ctx.adminId,'expert.version.restore','expert',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
-  })
+  route('POST','/experts/:id/restore',ctx=>restoreVersion(ctx,'expert',db.experts))
   route('GET','/skills/:id/versions',ctx=>{perm(ctx,'skill:view');const item=find(db.skills,ctx.params.id);return (db.skillVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
-  route('POST','/skills/:id/restore',ctx=>{
-    perm(ctx,'skill:edit');const item=find(db.skills,ctx.params.id)
-    const input=(ctx.body || {}) as Record<string,unknown>
-    const hist=(db.skillVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
-    if(!hist) { throw new ErrorType(404,'版本不存在') }
-    const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    for(const key of ['code','name','status','platforms','description','content','files','group','scenarioId','paramSchema','execConfig'] as Array<keyof ConfigItem>) if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]})
-    touch(item)
-    const restoredName=restoreNameOf(input,hist)
-    ;(db.skillVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
-    audit(ctx.adminId,'skill.version.restore','skill',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
-  })
+  route('POST','/skills/:id/restore',ctx=>restoreVersion(ctx,'skill',db.skills))
 
   // -------------------------------------------------- 套餐版本历史（v17 补齐：营销/计费字段快照，恢复生成新版本）
-  const PLAN_RESTORE_FIELDS = ['code','name','status','platforms','price','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays'] as readonly (keyof ConfigItem)[]
   route('GET','/plans/:id/versions',ctx=>{perm(ctx,'plan:view');const item=find(db.plans,ctx.params.id);return (db.planVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
-  route('POST','/plans/:id/restore',ctx=>{
-    perm(ctx,'plan:edit');const item=find(db.plans,ctx.params.id)
-    const input=(ctx.body || {}) as Record<string,unknown>
-    const hist=(db.planVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
-    if(!hist) { throw new ErrorType(404,'版本不存在') }
-    const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    snap.durationMode ??= snap.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'
-    normalizeDuration(snap)
-    for(const key of PLAN_RESTORE_FIELDS) Object.assign(item,{[key]:snap[key]})
-    // 恢复后与保存语义对齐：权益按资源侧可见性重新派生、前台权限归一化（悬空引用自动剔除，不阻断恢复）
-    item.entitlements=derivePlanEntitlements(item.id)
-    item.frontendPerms=normalizeFrontendPerms(item.frontendPerms)
-    touch(item)
-    let restoredName=restoreNameOf(input,hist)
-    // v17：版本名称唯一——自填名称重复直接 422；自动生成的「恢复自 …」重名时追加 -N 序号
-    if(String(input.versionName || '').trim()) assertVersionNameUnique(db.planVersions,item.id,restoredName)
-    else { let n=2; while((db.planVersions[String(item.id)] || []).some(v=>v.versionName===restoredName)) restoredName=`${restoredName}-${n++}` }
-    ;(db.planVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
-    audit(ctx.adminId,'plan.version.restore','plan',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
-  })
+  route('POST','/plans/:id/restore',ctx=>restoreVersion(ctx,'plan',db.plans))
 
   // -------------------------------------------------- MCP 版本历史（v5 补齐：连接配置与工具绑定快照，恢复生成新版本）
-  const MCP_RESTORE_FIELDS = ['code','name','status','platforms','connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'] as readonly (keyof ConfigItem)[]
   route('GET','/mcp/servers/:id/versions',ctx=>{perm(ctx,'mcp:view');const item=find(db.servers,ctx.params.id);return (db.mcpVersions[String(item.id)] || []).slice().sort((a,b)=>b.version-a.version).map(v=>({ ...v, snapshot:publicItem(v.snapshot) }))})
-  route('POST','/mcp/servers/:id/restore',ctx=>{
-    perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id)
-    const input=(ctx.body || {}) as Record<string,unknown>
-    const hist=(db.mcpVersions[String(item.id)] || []).find(v=>v.version===Number(input.version))
-    if(!hist) { throw new ErrorType(404,'版本不存在') }
-    const before=snapshot(item);const snap=JSON.parse(JSON.stringify(hist.snapshot)) as ConfigItem
-    for(const key of MCP_RESTORE_FIELDS) { if(snap[key]!==undefined) Object.assign(item,{[key]:snap[key]}); else delete (item as unknown as Record<string,unknown>)[key] }
-    touch(item)
-    const restoredName=restoreNameOf(input,hist)
-    ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version, versionName:restoredName, operator:db.admins.find(a=>a.id===ctx.adminId)?.username || 'unknown', note:String(input.note || ''), createdAt:item.updatedAt, snapshot:snapshot(item) })
-    audit(ctx.adminId,'mcp.version.restore','mcp',item.id,before,{ restoredFrom:hist.version,version:item.version,versionName:restoredName,platforms:item.platforms });return publicItem(item)
-  })
+  route('POST','/mcp/servers/:id/restore',ctx=>restoreVersion(ctx,'mcp',db.servers))
 
   // -------------------------------------------------- v17：积分加油包商品 + 全局计费设置（复用套餐权限）
   const saveCreditPackage = (ctx:Context)=>{
@@ -634,8 +622,9 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     if(!name) fail('加油包名称必填')
     const credits=Number(input.credits ?? 0)
     if(!Number.isInteger(credits) || credits<=0) fail('积分数量须为大于 0 的整数')
+    // R02 拍板：付费积分包一律无赠送积分；购买赠分属常规促销，已移除，运营特批走订单特批并审计
     const bonusCredits=Number(input.bonusCredits ?? 0)
-    if(!Number.isInteger(bonusCredits) || bonusCredits<0) fail('赠送积分须为非负整数')
+    if(!Number.isInteger(bonusCredits) || bonusCredits!==0) fail('按已拍板规则，付费积分包不含赠送积分，请保持赠送积分为 0；运营特批请走订单特批流程')
     const price=Number(input.price ?? 0)
     if(!Number.isFinite(price) || price<0) fail('售价须为不小于 0 的数字')
     const originalPrice=input.originalPrice===undefined || input.originalPrice===null?undefined:Number(input.originalPrice)
@@ -650,8 +639,9 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const item:CreditPackage= old
       ? { ...old, name, credits, bonusCredits, price, originalPrice, badge:badge||undefined, sort, status:status as 0|1, remark:remark||undefined, updatedAt:nowStr() }
       : { id:nextMockId(), name, credits, bonusCredits, price, originalPrice, badge:badge||undefined, sort, status:status as 0|1, remark:remark||undefined, createdAt:nowStr(), updatedAt:nowStr() }
+    const before=old?structuredClone(old):null
     if(old) Object.assign(old,item); else db.creditPackages.push(item)
-    audit(ctx.adminId,`credit-package.${old?'update':'create'}`,'credit_package',item.id,old||null,item);return item
+    audit(ctx.adminId,`credit-package.${old?'update':'create'}`,'credit_package',item.id,before,structuredClone(item));return item
   }
   route('GET','/credit-packages',ctx=>{perm(ctx,'plan:view');return [...db.creditPackages].sort((a,b)=>a.sort-b.sort || a.id-b.id)})
   route('POST','/credit-packages',saveCreditPackage);route('PUT','/credit-packages/:id',saveCreditPackage)
@@ -664,7 +654,10 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const before=db.billingSettings?{ ...db.billingSettings }:null
     const registerBonus=Number(input.registerBonus)
     if(!Number.isInteger(registerBonus) || registerBonus<0) fail('注册赠送积分须为非负整数')
-    if(!['FULL_PRICE','PRORATED'].includes(String(input.upgradePolicy))) fail('升级计费策略无效（FULL_PRICE/PRORATED）')
+    // R02 拍板：注册仅赠送 100 分一批，无其他注册赠分来源；运营特批/反馈奖励属独立特批，不走该配置
+    if(registerBonus!==100) fail('按已拍板规则，注册赠送积分固定为 100；运营特批请走订单特批流程并审计')
+    // R01 拍板：升级按实付价折算补差、负数取 0；FULL_PRICE 不再是可选策略，旧枚举仅作迁移兼容
+    if(String(input.upgradePolicy)!=='PRORATED') fail('按已拍板规则，升级计费固定为按实付价折算（PRORATED），不支持整价重购')
     const slider=(input.creditSlider && typeof input.creditSlider==='object' && !Array.isArray(input.creditSlider)?input.creditSlider:{}) as Record<string,unknown>
     if(typeof slider.enabled!=='boolean') fail('积分滑杆开关须为布尔值')
     const min=Number(slider.min);const max=Number(slider.max);const step=Number(slider.step)
@@ -713,11 +706,31 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   // -------------------------------------------------- 技能统计 / MCP 工具与连接
   route('GET','/skills/:id/stats',ctx=>{perm(ctx,'skill:view');const item=find(db.skills,ctx.params.id);const calls=db.skillCalls.filter(c=>c.skillId===item.id && Date.now()-Date.parse(c.createdAt)<=30*86400000);return { calls7:calls.filter(c=>Date.now()-Date.parse(c.createdAt)<=7*86400000).length,calls30:calls.length,successRate:calls.length?calls.filter(c=>c.success).length/calls.length:0,source:'Mock 本地调用记录' }})
   route('GET','/mcp/tools',ctx=>{if(!['mcp:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);return db.tools})
-  route('PUT','/mcp/tools/:id/enabled',ctx=>{perm(ctx,'mcp:edit');const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404);const enabled=(ctx.body as Record<string,unknown>).enabled;if(typeof enabled!=='boolean') fail('enabled须为布尔值');const before={...tool};const server=db.servers.find(s=>s.id===tool.serverId)!;if(enabled && server.connType==='OpenAPI' && !(server.apiOperations||[]).some(op=>op.name===tool.name && (!server.toolFilter?.length || server.toolFilter.includes(op.name)))) fail('接口定义已移除或被过滤，请重新导入并发现工具');const input=(ctx.body || {}) as Record<string,unknown>;const vMeta=versionMeta(ctx,input,db.mcpVersions,server.id);assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName);tool.enabled=enabled as boolean;touch(server);(db.mcpVersions[String(server.id)] ||= []).push({version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:snapshot(server)});audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,tool);return tool})
+  route('PUT','/mcp/tools/:id/enabled',ctx=>{
+    perm(ctx,'mcp:edit')
+    const tool=db.tools.find(t=>t.id===Number(ctx.params.id)) || fail('工具不存在',404)
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const enabled=input.enabled
+    if(typeof enabled!=='boolean') fail('enabled须为布尔值')
+    const before=structuredClone(tool)
+    const server=find(db.servers,String(tool.serverId))
+    if(enabled && server.connType==='OpenAPI' && !(server.apiOperations||[]).some(op=>op.name===tool.name && (!server.toolFilter?.length || server.toolFilter.includes(op.name)))) fail('接口定义已移除或被过滤，请重新导入并发现工具')
+    const vMeta=versionMeta(ctx,input,db.mcpVersions,server.id)
+    assertVersionNameUnique(db.mcpVersions,server.id,vMeta.versionName)
+    preserveMcpBaseline(ctx,server,vMeta.versionName)
+    tool.enabled=enabled;touch(server)
+    ;(db.mcpVersions[String(server.id)] ||= []).push({ version:server.version,...vMeta,note:String(input.note||'更新工具启用状态'),createdAt:server.updatedAt,snapshot:configSnapshot('mcp',server) })
+    audit(ctx.adminId,'mcp.tool.enabled','mcp_tool',tool.id,before,structuredClone(tool))
+    return tool
+  })
   route('POST','/mcp/servers/:id/discover',ctx=>{
     perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id)
     if(item.status!==1) fail('请先启用服务')
     const filter=(item.toolFilter||[]).filter(t=>t.trim())
+    const input=(ctx.body || {}) as Record<string,unknown>
+    const vMeta=versionMeta(ctx,input,db.mcpVersions,item.id)
+    assertVersionNameUnique(db.mcpVersions,item.id,vMeta.versionName)
+    preserveMcpBaseline(ctx,item,vMeta.versionName)
     if(item.connType==='OpenAPI') {
       const operations=(item.apiOperations||[]).filter(op=>!filter.length || filter.includes(op.name))
       const names=new Set(operations.map(op=>op.name))
@@ -743,6 +756,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       touch(item)
       audit(ctx.adminId,'mcp.discover','mcp',item.id,null,{ generated:names,source:'MCP Mock 示例工具，无网络调用' })
     }
+    ;(db.mcpVersions[String(item.id)] ||= []).push({ version:item.version,...vMeta,note:String(input.note||'发现工具'),createdAt:item.updatedAt,snapshot:configSnapshot('mcp',item) })
     return db.tools.filter(t=>t.serverId===item.id)
   })
   route('POST','/mcp/servers/:id/health-check',ctx=>{perm(ctx,'mcp:edit');const item=find(db.servers,ctx.params.id);item.healthStatus=item.status===1?'HEALTHY':'UNAVAILABLE';item.lastHealthAt=nowStr();item.healthDetail='Mock 模拟检查，未请求真实服务';audit(ctx.adminId,'mcp.health','mcp',item.id,null,{healthStatus:item.healthStatus});return publicItem(item)})
@@ -777,9 +791,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   route('POST','/scenarios',saveScenario);route('PUT','/scenarios/:id',saveScenario)
   route('DELETE','/scenarios/:id',ctx=>{
     if(!['skill:edit','expert:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);const item=db.scenarios.find(s=>s.id===Number(ctx.params.id)) || fail('场景不存在',404)
-    // 删除场景仅解除技能/专家的分组归属（清空 scenarioId=未分组），不影响资源本身
-    db.skills.forEach(sk=>{ if(sk.scenarioId===item.id) sk.scenarioId=undefined })
-    db.experts.forEach(ex=>{ if(ex.scenarioId===item.id) ex.scenarioId=undefined })
+    const refs=[...db.skills.filter(sk=>sk.scenarioId===item.id).map(sk=>`技能「${sk.name}」`),...db.experts.filter(ex=>ex.scenarioId===item.id).map(ex=>`专家「${ex.name}」`)]
+    if(refs.length) fail(`场景被以下资源引用：${refs.join('、')}；请先解除引用，不能删除`,409)
     db.scenarios.splice(db.scenarios.indexOf(item),1)
     audit(ctx.adminId,'scenario.delete','scenario',item.id,item,null);return null
   })
@@ -799,9 +812,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const platform=String(input.platform||'').trim()
     if(platform && !PLATFORMS.includes(platform as PlatformType)) fail('所属平台无效')
     // v14：前端可见性归一化（与专家/MCP 同款三段；旧调用方只传 access=PRIVATE 时兼容）→ access 由其派生（旧消费方兼容）
-    const visRaw=input.visibility as {type?:unknown;planIds?:unknown}|undefined
-    const visType=visRaw && ['PUBLIC','PLAN','PRIVATE'].includes(String(visRaw.type)) ? String(visRaw.type) as 'PUBLIC'|'PLAN'|'PRIVATE' : input.access==='PRIVATE' ? 'PRIVATE' : 'PUBLIC'
-    const visibility={ type:visType, planIds:visType==='PLAN' && Array.isArray(visRaw?.planIds) ? (visRaw!.planIds as unknown[]).map(n=>Number(n)).filter(n=>Number.isInteger(n)&&n>0) : [] }
+    const visibility=normalizeVisibility(input.visibility!==undefined ? input.visibility as ConfigItem['visibility'] : input.access!==undefined ? { type:input.access==='PRIVATE'?'PRIVATE':'PUBLIC',planIds:[] } : old?.visibility)
     const access=visibility.type==='PRIVATE'?'PRIVATE':'PUBLIC'
     const tags=Array.isArray(input.tags)?input.tags.map(t=>String(t).trim()).filter(Boolean):[]
     const item:KnowledgeBase = old ? { ...old, name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, visibility, tags, updatedAt:nowStr() } : { id:nextMockId(), name, description:String(input.description||'').trim(), platform:(platform||undefined) as PlatformType|undefined, access, visibility, tags, fileCount:0, status:1, createdAt:nowStr(), updatedAt:nowStr() }
@@ -818,10 +829,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   })
   route('DELETE','/knowledge-bases/:id',ctx=>{
     perm(ctx,'knowledge:edit');const item=db.knowledgeBases.find(k=>k.id===Number(ctx.params.id)) || fail('知识库不存在',404)
-    const confirm=(ctx.body as Record<string,unknown> | undefined)?.confirmReferences
     const refs=db.experts.filter(e=>e.knowledgeBaseIds?.includes(item.id))
-    if(refs.length && !confirm) fail(`知识库被以下专家引用：${refs.map(r=>r.name).join('、')}；确认删除请勾选引用确认`,409)
-    db.experts.forEach(e=>{ e.knowledgeBaseIds=(e.knowledgeBaseIds||[]).filter(id=>id!==item.id) })
+    if(refs.length) fail(`知识库被以下专家引用：${refs.map(r=>r.name).join('、')}；请先解除引用，不能删除`,409)
     // v8：级联删除库内文档
     db.kbFiles=db.kbFiles.filter(f=>f.kbId!==item.id)
     db.knowledgeBases.splice(db.knowledgeBases.indexOf(item),1)

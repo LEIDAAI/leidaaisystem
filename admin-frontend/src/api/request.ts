@@ -2,7 +2,11 @@ import axios, { AxiosError, type AxiosAdapter, type AxiosResponse, type Internal
 import { ElMessage } from 'element-plus'
 
 import { API_BASE, USE_MOCK } from '../utils/constants'
-import { readStoredToken, clearStoredToken } from '../utils/token'
+import { captureSession, isSessionCurrent, isSessionReady, clearStoredToken, type SessionSnapshot } from '../utils/token'
+
+declare module 'axios' {
+  interface AxiosRequestConfig { sessionSnapshot?: SessionSnapshot }
+}
 import type { ApiResponse } from './types'
 
 
@@ -20,6 +24,7 @@ export class ApiError extends Error {
 /** mock 模式自定义 adapter：拦截请求交由 handlers.ts 处理，返回契约包装结构 */
 const mockAdapter: AxiosAdapter = async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
   const { handleMockRequest } = await import('./mock/handlers')
+  assertCurrentSession(config)
   const data = await handleMockRequest(config)
   return { data, status: 200, statusText: 'OK', headers: {}, config }
 }
@@ -34,9 +39,18 @@ if (USE_MOCK) http.defaults.adapter = mockAdapter
 let onSessionExpired: (() => void) | null = null
 export function setSessionExpiredHandler(fn: () => void): void { onSessionExpired = fn }
 
+function assertCurrentSession(config?: InternalAxiosRequestConfig): void {
+  if (config?.sessionSnapshot && !isSessionCurrent(config.sessionSnapshot)) {
+    throw new ApiError(-2, '会话已变化，已忽略旧请求')
+  }
+  if (config?.sessionSnapshot && !['/auth/login', '/auth/me', '/auth/logout'].includes(config.url || '') && !isSessionReady(config.sessionSnapshot)) {
+    throw new ApiError(-2, '身份尚未校验，请重试加载身份后操作')
+  }
+}
+
 function clearSessionAndRedirect(): void {
-  onSessionExpired?.()
-  clearStoredToken()
+  if (onSessionExpired) onSessionExpired()
+  else clearStoredToken()
   // hash 路由：登录页在 /#/login，静态托管下不能改 pathname；携带 redirect 便于登录后回到原页面
   if (!window.location.hash.startsWith('#/login')) {
     const current = window.location.hash.startsWith('#/') ? window.location.hash.slice(1) : '/'
@@ -45,8 +59,11 @@ function clearSessionAndRedirect(): void {
 }
 
 http.interceptors.request.use((config) => {
-  const token = readStoredToken()
+  config.sessionSnapshot ??= captureSession()
+  assertCurrentSession(config)
+  const token = config.sessionSnapshot.token
   if (token) config.headers.Authorization = `Bearer ${token}`
+  else config.headers.delete('Authorization')
   return config
 })
 
@@ -60,6 +77,7 @@ const CODE_FALLBACKS: Record<number, string> = {
 
 http.interceptors.response.use(
   async (response) => {
+    assertCurrentSession(response.config)
     if (response.config.responseType === 'blob') {
       const blob = response.data as Blob
       if (!blob.type.includes('json')) return response
@@ -68,6 +86,7 @@ http.interceptors.response.use(
       if (typeof parsed.code !== 'number') return response
       response.data = parsed
     }
+    assertCurrentSession(response.config)
     const res = response.data as ApiResponse
     if (res.code === 0) return response
     if (res.code === 401) {
@@ -78,11 +97,14 @@ http.interceptors.response.use(
     return Promise.reject(new ApiError(res.code, res.msg || '请求失败'))
   },
   async (error: AxiosError<ApiResponse>) => {
+    if (error instanceof ApiError) throw error
+    assertCurrentSession(error.config)
     const status = error.response?.status
     let body = error.response?.data
     if (body instanceof Blob) {
       try { body = JSON.parse(await body.text()) as ApiResponse } catch { body = undefined }
     }
+    assertCurrentSession(error.config)
     if (status === 401 || body?.code === 401) {
       clearSessionAndRedirect()
     } else {
@@ -94,29 +116,40 @@ http.interceptors.response.use(
   }
 )
 
+function requestSession(url: string): SessionSnapshot {
+  const sessionSnapshot = captureSession()
+  assertCurrentSession({ url, sessionSnapshot } as InternalAxiosRequestConfig)
+  return sessionSnapshot
+}
+
 export async function get<T>(url: string, params?: object): Promise<T> {
-  const res = await http.get<ApiResponse<T>>(url, { params })
+  const res = await http.get<ApiResponse<T>>(url, { params, sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data.data
 }
 
 export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.post<ApiResponse<T>>(url, body)
+  const res = await http.post<ApiResponse<T>>(url, body, { sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data.data
 }
 
 export async function put<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.put<ApiResponse<T>>(url, body)
+  const res = await http.put<ApiResponse<T>>(url, body, { sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data.data
 }
 
 export async function del<T>(url: string, body?: unknown): Promise<T> {
-  const res = await http.delete<ApiResponse<T>>(url, { data: body })
+  const res = await http.delete<ApiResponse<T>>(url, { data: body, sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data.data
 }
 
 export async function exportBlob(url: string, params?: object): Promise<Blob> {
   if (USE_MOCK) return get<Blob>(url, params)
-  const res = await http.get<Blob>(url, { params, responseType: 'blob' })
+  const res = await http.get<Blob>(url, { params, responseType: 'blob', sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data
 }
 
@@ -126,6 +159,7 @@ export async function exportBlob(url: string, params?: object): Promise<Blob> {
  */
 export async function exportFile<T>(url: string, params?: object): Promise<T | Blob> {
   if (USE_MOCK) return get<T>(url, params)
-  const res = await http.get<Blob>(url, { params, responseType: 'blob' })
+  const res = await http.get<Blob>(url, { params, responseType: 'blob', sessionSnapshot: requestSession(url) })
+  assertCurrentSession(res.config)
   return res.data
 }

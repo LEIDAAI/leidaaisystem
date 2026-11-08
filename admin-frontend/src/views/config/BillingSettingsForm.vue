@@ -3,13 +3,14 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { getBillingSettings, saveBillingSettings, type BillingSettings } from '../../api/config'
 
-/** 全局计费设置表单（v17）：注册赠送积分 / 套餐升级补差策略 / 前台积分购买滑杆 */
 const props = defineProps<{ settings: BillingSettings | null; canEdit: boolean; sliderOnly?: boolean }>()
 const emit = defineEmits<{ saved: [] }>()
 const saving = ref(false)
 const formRef = ref<FormInstance>()
-const draft = ref<BillingSettings>({ registerBonus: 0, upgradePolicy: 'FULL_PRICE', creditSlider: { enabled: false, min: 0, max: 0, step: 0, defaultValue: 0, unitPrice: 0 } })
-
+const draft = ref<BillingSettings>({ registerBonus: 100, upgradePolicy: 'PRORATED', creditSlider: { enabled: false, min: 0, max: 0, step: 0, defaultValue: 0, unitPrice: 0 } })
+const savedSnapshot = ref('')
+const snapshot = (value: BillingSettings) => JSON.stringify(props.sliderOnly ? value.creditSlider : value)
+const dirty = computed(() => Boolean(savedSnapshot.value) && snapshot(draft.value) !== savedSnapshot.value)
 const previewCredits = ref(0)
 const sliderValid = computed(() => {
   const { min, max, step, defaultValue, unitPrice } = draft.value.creditSlider
@@ -24,57 +25,52 @@ watch(() => ({ ...draft.value.creditSlider }), ({ min, max, step }) => {
 }, { immediate: true })
 
 const rules: FormRules = {
-  registerBonus: [
-    { required: true, message: '请输入注册赠送积分', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isInteger(v) && v >= 0)) ? cb() : cb(new Error('须为非负整数')), trigger: 'blur' }
-  ],
   'creditSlider.min': [
-    { required: true, message: '请输入下限', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isInteger(v) && v > 0)) ? cb() : cb(new Error('须为正整数')), trigger: 'blur' }
+    { validator: (_r, v, cb) => Number.isSafeInteger(v) && v > 0 ? cb() : cb(new Error('下限须为正整数')), trigger: 'blur' }
   ],
   'creditSlider.max': [
-    { required: true, message: '请输入上限', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isInteger(v) && v > draft.value.creditSlider.min)) ? cb() : cb(new Error('须为正整数且大于下限')), trigger: 'blur' }
+    { validator: (_r, v, cb) => Number.isSafeInteger(v) && v > draft.value.creditSlider.min ? cb() : cb(new Error('上限须为正整数且大于下限')), trigger: 'blur' }
   ],
   'creditSlider.step': [
-    { required: true, message: '请输入步长', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || (Number.isSafeInteger(v) && v > 0 && (draft.value.creditSlider.max - draft.value.creditSlider.min) % v === 0)) ? cb() : cb(new Error('步长须为正整数且能整除上限与下限之差')), trigger: 'blur' }
+    { validator: (_r, v, cb) => Number.isSafeInteger(v) && v > 0 && (draft.value.creditSlider.max - draft.value.creditSlider.min) % v === 0 ? cb() : cb(new Error('步长须为正整数且能整除上下限差值')), trigger: 'blur' }
   ],
   'creditSlider.defaultValue': [
-    { required: true, message: '请输入默认积分', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => {
+    { validator: (_r, v, cb) => {
       const { min, max, step } = draft.value.creditSlider
-      return Number.isSafeInteger(v) && Number(v) >= min && Number(v) <= max && (Number(v) - min) % step === 0 ? cb() : cb(new Error('默认积分须在上下限内且从下限起按步长对齐'))
+      return Number.isSafeInteger(v) && v >= min && v <= max && (v - min) % step === 0 ? cb() : cb(new Error('默认积分须在上下限内且从下限起按步长对齐'))
     }, trigger: 'blur' }
   ],
   'creditSlider.unitPrice': [
-    { required: true, message: '请输入单价', trigger: 'blur' },
-    { validator: (_r, v: number | undefined, cb) => (v === undefined || v > 0) ? cb() : cb(new Error('单价须大于 0')), trigger: 'blur' }
+    { validator: (_r, v, cb) => typeof v === 'number' && Number.isFinite(v) && v > 0 ? cb() : cb(new Error('单价须为大于 0 的数字')), trigger: 'blur' }
   ]
 }
 
-watch(
-  () => props.settings,
-  (s) => {
-    if (s) {
-      draft.value = JSON.parse(JSON.stringify(s))
-      draft.value.creditSlider.defaultValue ??= draft.value.creditSlider.min
-      previewCredits.value = draft.value.creditSlider.defaultValue
-      nextTick(() => formRef.value?.clearValidate())
-    }
-  },
-  { immediate: true, deep: true }
-)
+watch(() => props.settings, (settings) => {
+  if (!settings || dirty.value) return
+  const value: BillingSettings = JSON.parse(JSON.stringify(settings))
+  value.creditSlider.defaultValue ??= value.creditSlider.min
+  savedSnapshot.value = snapshot(value)
+  draft.value = { ...value, registerBonus: 100, upgradePolicy: 'PRORATED' }
+  previewCredits.value = value.creditSlider.defaultValue
+  nextTick(() => formRef.value?.clearValidate())
+}, { immediate: true, deep: true })
 
 async function save(): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value || !props.settings) return
   try { await formRef.value?.validate() } catch { return }
+  if (draft.value.creditSlider.enabled && !sliderValid.value) {
+    ElMessage.warning('请检查滑块范围、步长、默认积分及单价')
+    return
+  }
+  const sent: BillingSettings = JSON.parse(JSON.stringify(draft.value))
+  const sentSnapshot = snapshot(sent)
   saving.value = true
   try {
-    if (draft.value.creditSlider.enabled && !sliderValid.value) { ElMessage.warning('请检查滑块范围、步长及单价，上下限差值必须能被步长整除'); return }
     const latest = await getBillingSettings()
-    const payload = props.sliderOnly ? { ...latest, creditSlider: { ...draft.value.creditSlider } } : { ...latest, ...draft.value, creditSlider: { ...draft.value.creditSlider } }
-    await saveBillingSettings(JSON.parse(JSON.stringify(payload)))
+    const payload = { ...latest, registerBonus: 100, upgradePolicy: 'PRORATED' as const, creditSlider: { ...sent.creditSlider } }
+    const saved = await saveBillingSettings(payload)
+    savedSnapshot.value = snapshot(saved)
+    if (snapshot(draft.value) === sentSnapshot) draft.value = JSON.parse(JSON.stringify(saved))
     ElMessage.success('计费设置已保存')
     emit('saved')
   } finally {
@@ -83,48 +79,67 @@ async function save(): Promise<void> {
 }
 </script>
 <template>
-  <el-form ref="formRef" :model="draft" :rules="rules" label-width="140px" :disabled="!canEdit" style="max-width: 640px">
-    <el-form-item v-if="!sliderOnly" label="注册赠送积分" prop="registerBonus">
-      <el-input-number v-model="draft.registerBonus" :min="0" :precision="0" />
-      <p class="setting-hint">新用户注册成功后默认赠送的 AI 积分数量，0 表示不赠送。</p>
-    </el-form-item>
-    <el-form-item v-if="!sliderOnly" label="套餐升级策略" prop="upgradePolicy">
-      <el-radio-group v-model="draft.upgradePolicy">
-        <el-radio value="FULL_PRICE">升级补差价收全价</el-radio>
-        <el-radio value="PRORATED">按剩余天数折算</el-radio>
-      </el-radio-group>
-      <p class="setting-hint">FULL_PRICE：升级时按目标套餐价格收取差价，旧套餐剩余价值不折算；PRORATED：按旧套餐剩余天数折算抵扣后收取差价。</p>
-    </el-form-item>
-    <el-form-item label="积分购买滑杆">
-      <el-switch v-model="draft.creditSlider.enabled" active-text="启用" inactive-text="停用" />
-      <p class="setting-hint">配置自定义积分数量；下方为后台交互预览，独立前台尚待接入此契约。统一单价，不采用前台当前硬编码的阶梯折扣。</p>
-    </el-form-item>
-    <template v-if="draft.creditSlider.enabled">
-      <el-form-item label="滑杆下限" prop="creditSlider.min"><el-input-number v-model="draft.creditSlider.min" :min="1" :precision="0" /></el-form-item>
-      <el-form-item label="滑杆上限" prop="creditSlider.max"><el-input-number v-model="draft.creditSlider.max" :min="1" :precision="0" /><p class="setting-hint">上限须大于下限。</p></el-form-item>
-      <el-form-item label="滑杆步长" prop="creditSlider.step"><el-input-number v-model="draft.creditSlider.step" :min="1" :precision="0" /></el-form-item>
-      <el-form-item label="默认积分" prop="creditSlider.defaultValue"><el-input-number v-model="draft.creditSlider.defaultValue" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :precision="0" /><p class="setting-hint">须从下限起按步长对齐；修改后预览回到该积分数。</p></el-form-item>
-      <el-form-item label="积分单价（元）" prop="creditSlider.unitPrice"><el-input-number v-model="draft.creditSlider.unitPrice" :min="0" :precision="4" :step="0.01" /></el-form-item>
-    </template>
-    <el-form-item v-if="draft.creditSlider.enabled && sliderValid" label="左右拖动预览">
-      <div style="width:100%;padding:0 12px">
-        <el-slider v-model="previewCredits" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :step="draft.creditSlider.step" :disabled="false" />
-        <div>{{ draft.creditSlider.min.toLocaleString() }} ～ {{ draft.creditSlider.max.toLocaleString() }} 积分 · 步长 {{ draft.creditSlider.step }}</div>
-        <strong>{{ previewCredits.toLocaleString() }} 积分 / ¥{{ previewPrice }}</strong>
-        <p class="setting-hint">总价 = 积分 × 统一单价，按分四舍五入。支持十万以上范围；此处不创建订单。</p>
-      </div>
-    </el-form-item>
-    <el-alert v-if="!draft.creditSlider.enabled" title="自定义积分包已停用，不提供购买预览。" type="info" :closable="false" style="margin-bottom:16px" />
-    <el-form-item>
-      <el-button v-if="canEdit" type="primary" :loading="saving" @click="save">保存设置</el-button>
-    </el-form-item>
+  <el-form ref="formRef" :model="draft" :rules="rules" label-width="140px" :disabled="!canEdit || saving" class="billing-form">
+    <section v-if="!sliderOnly" class="setting-group">
+      <h3>注册赠分</h3>
+      <el-form-item label="注册赠送积分">
+        <el-input-number :model-value="100" disabled :controls="false" />
+        <p class="setting-hint">固定为注册成功赠送 100 分一批。常规购买不另赠积分；运营特批须通过独立权限、原因和审计操作。</p>
+      </el-form-item>
+    </section>
+
+    <section v-if="!sliderOnly" class="setting-group">
+      <h3>升级报价与未来期规则</h3>
+      <el-form-item label="固定报价规则"><strong>按实付价折算剩余价值，补差负数取 0</strong></el-form-item>
+      <ul class="billing-rules">
+        <li>标准版 / 高级版 / 旗舰版功能一致，仅积分额度不同；单账号制，无席位。</li>
+        <li>月转年即时转换：抵扣月付剩余价值，自转换日起按 365 天重置年付锚点。</li>
+        <li>降级、年转月到期排队生效；已付未来期按付款时价格锁价、排队顺延。</li>
+        <li>当期和未来期一律不退款；首版无自动续费，到期前 7 天提醒。</li>
+      </ul>
+      <el-alert title="以上为已拍板规则。当前保存报价策略标记，不代表实付抵扣、未来期队列、发分、提醒或支付履约引擎已落地，仍须交易服务联调验收。" type="info" :closable="false" />
+    </section>
+
+    <section class="setting-group">
+      <h3>自定义积分包滑块</h3>
+      <p class="setting-hint group-hint">积分包仅有效会员可购，付费积分 365 天有效，不随会员到期清零。固定包沿商品价格，自定义包按本设置单价计算。</p>
+      <el-form-item label="积分购买滑块">
+        <el-switch v-model="draft.creditSlider.enabled" active-text="启用" inactive-text="停用" />
+        <p class="setting-hint">下方为后台交互预览；前台购买校验、有效期批次及到账须接入购买链路。</p>
+      </el-form-item>
+      <template v-if="draft.creditSlider.enabled">
+        <el-form-item label="滑块下限" prop="creditSlider.min"><el-input-number v-model="draft.creditSlider.min" :min="1" :precision="0" /></el-form-item>
+        <el-form-item label="滑块上限" prop="creditSlider.max"><el-input-number v-model="draft.creditSlider.max" :min="1" :precision="0" /></el-form-item>
+        <el-form-item label="滑块步长" prop="creditSlider.step"><el-input-number v-model="draft.creditSlider.step" :min="1" :precision="0" /></el-form-item>
+        <el-form-item label="默认积分" prop="creditSlider.defaultValue"><el-input-number v-model="draft.creditSlider.defaultValue" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :precision="0" /><p class="setting-hint">须从下限起按步长对齐；修改后预览回到该积分数。</p></el-form-item>
+        <el-form-item label="积分单价（元）" prop="creditSlider.unitPrice"><el-input-number v-model="draft.creditSlider.unitPrice" :min="0" :precision="4" :step="0.01" /></el-form-item>
+      </template>
+      <el-form-item v-if="draft.creditSlider.enabled && sliderValid" label="拖动预览">
+        <div class="slider-preview">
+          <el-slider v-model="previewCredits" :min="draft.creditSlider.min" :max="draft.creditSlider.max" :step="draft.creditSlider.step" :disabled="false" />
+          <div>{{ draft.creditSlider.min.toLocaleString() }} ～ {{ draft.creditSlider.max.toLocaleString() }} 积分 · 步长 {{ draft.creditSlider.step }}</div>
+          <strong>{{ previewCredits.toLocaleString() }} 积分 / ¥{{ previewPrice }}</strong>
+          <p class="setting-hint">总价 = 积分 × 单价，按分四舍五入。此处不创建订单。</p>
+        </div>
+      </el-form-item>
+      <el-alert v-if="!draft.creditSlider.enabled" title="自定义积分包已停用，不提供购买预览。" type="info" :closable="false" />
+    </section>
+
+    <div class="save-bar">
+      <span role="status" :class="{ dirty }">{{ saving ? '正在保存…' : dirty ? '有未保存修改' : '已保存 / 无未保存修改' }}</span>
+      <el-button v-if="canEdit" type="primary" :disabled="!settings || !dirty" :loading="saving" @click="save">保存设置</el-button>
+    </div>
   </el-form>
 </template>
 
 <style scoped>
-.setting-hint {
-  margin: 6px 0 0;
-  color: #c0c4cc;
-  font-size: 12px;
-}
+.billing-form { max-width: 880px; }
+.setting-group { margin-bottom: 20px; padding: 16px 20px; border: 1px solid #dcdfe6; border-radius: 8px; }
+.setting-group h3 { margin: 0 0 16px; color: #303133; font-size: 16px; }
+.setting-hint { width: 100%; margin: 6px 0 0; color: #606266; font-size: 13px; line-height: 1.65; }
+.group-hint { margin-bottom: 18px; }
+.billing-rules { padding-left: 22px; color: #303133; line-height: 1.9; }
+.slider-preview { width: 100%; padding: 0 12px; }
+.save-bar { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid #dcdfe6; background: #fff; box-shadow: 0 -4px 12px #00000008; color: #606266; }
+.dirty { color: #9a6700; font-weight: 600; }
 </style>

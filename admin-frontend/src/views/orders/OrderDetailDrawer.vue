@@ -25,16 +25,30 @@ const visible = computed({
 const loading = ref(false)
 const detail = ref<OrderDetail | null>(null)
 
-watch(visible, async (value) => {
-  if (!value || props.orderId === null) return
-  loading.value = true
+const loadError = ref(false)
+let requestSeq = 0
+async function loadDetail(): Promise<void> {
+  const id = props.orderId
+  const seq = ++requestSeq
   detail.value = null
+  loadError.value = false
+  loading.value = false
+  if (!props.modelValue || id === null) return
+  loading.value = true
+  const current = () => seq === requestSeq && props.modelValue && props.orderId === id
   try {
-    detail.value = await getOrderDetail(props.orderId)
+    const result = await getOrderDetail(id)
+    if (current()) {
+      if (result.id !== id) throw new Error('订单详情与请求对象不一致')
+      detail.value = result
+    }
+  } catch {
+    if (current()) loadError.value = true
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
-})
+}
+watch(() => [props.modelValue, props.orderId], () => { void loadDetail() }, { immediate: true, flush: 'sync' })
 
 const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
 /** v11 订单来源中文标签 */
@@ -62,7 +76,7 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           <el-descriptions-item label="近7日消耗">{{ detail.last7DaysUsage }}</el-descriptions-item>
           <el-descriptions-item label="商品金额">{{ formatAmount(detail.goodsAmount) }}</el-descriptions-item>
           <el-descriptions-item label="优惠金额">{{ formatAmount(detail.discountAmount) }}</el-descriptions-item>
-          <el-descriptions-item label="实付金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
+          <el-descriptions-item label="应付 / 成交金额">{{ formatAmount(detail.amount) }}</el-descriptions-item>
           <el-descriptions-item label="支付时间">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
           <el-descriptions-item label="下单时间">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="到期时间">{{ formatOrderExpiry(detail, now).time }}</el-descriptions-item>
@@ -94,7 +108,10 @@ const TYPE_LABELS: Record<string, string> = { PAY: '支付' }
           </el-table-column>
         </el-table>
       </template>
-      <el-empty v-else-if="!loading" description="暂无数据" />
+      <el-alert v-else-if="!loading && loadError" title="订单详情加载失败" type="error" :closable="false">
+        <el-button size="small" @click="loadDetail">重试</el-button>
+      </el-alert>
+      <el-empty v-else-if="!loading" description="请选择要查看的订单" />
     </div>
   </el-drawer>
 </template>

@@ -117,7 +117,7 @@ async function sendReal(message: string): Promise<void> {
   // 推理模型（如 glm-5.3）思考链耗时长且波动大，前端上限放宽到 60s
   const timer = setTimeout(() => ctrl.abort(), 60000)
   const base = model.endpoint.replace(/\/+$/, '')
-  const payload = JSON.stringify({ model: model.code, messages: msgs, temperature })
+  const payload = JSON.stringify({ model: model.modelId || model.code, messages: msgs, temperature })
   const init = (extraHeaders: Record<string, string>): RequestInit => ({
     method: 'POST', signal: ctrl.signal,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...extraHeaders },
@@ -159,7 +159,7 @@ async function sendReal(message: string): Promise<void> {
   }
   messages.value.push({
     role: 'assistant', content: reply, mode: 'real',
-    trace: { matchedSkills: [], toolCalls: [], model: model.code, latencyMs: Math.round(performance.now() - started) }
+    trace: { matchedSkills: [], toolCalls: [], model: model.modelId || model.code, latencyMs: Math.round(performance.now() - started) }
   })
 }
 

@@ -6,7 +6,8 @@
  * 编辑进入全屏 SkillEditor（文件树 + 编辑|预览 + 自动保存）；停用/删除遇 409 引用确认后携带 confirmReferences 重试。
  * v7 分组：上方 Tab 切换（全部 / 未分组 / 各平台，平台下再切场景）；「加入场景分组」改为下拉框选择；右上「场景管理」维护平台下的场景。
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CheckboxValueType } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -19,7 +20,7 @@ import {
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
 import { zipFiles } from '@/utils/zip'
-import { BINARY_EXT, parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
+import { BINARY_EXT, parseSkillEntries, parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
 import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
 import { visTagOf } from '@/utils/visibility'
@@ -39,17 +40,26 @@ const canClone = computed(() => auth.hasPerm('skill:clone'))
 const items = ref<ConfigItem[]>([])
 const keyword = ref('')
 const loading = ref(false)
+const loadError = ref('')
 const filtered = computed(() => items.value.filter((i) => !keyword.value || `${i.name} ${i.code} ${i.description || ''}`.includes(keyword.value)))
 
+let loadSeq = 0
+let pageActive = true
 async function load(): Promise<void> {
+  const seq = ++loadSeq
   loading.value = true
+  loadError.value = ''
   try {
-    items.value = await listConfig('skills')
-    scenarios.value = await listScenarios()
+    const [list, sceneList] = await Promise.all([listConfig('skills'), listScenarios()])
+    if (!pageActive || seq !== loadSeq) return
+    items.value = list
+    scenarios.value = sceneList
     selected.value = selected.value.filter((id) => items.value.some((i) => i.id === id)) // 清理已不存在的勾选
     if (typeof activeScenario.value === 'number' && !scenarioById(activeScenario.value)) activeScenario.value = 'all' // 二级场景已删除时回退
+  } catch (e) {
+    if (seq === loadSeq && pageActive) loadError.value = e instanceof Error ? e.message : '技能加载失败'
   } finally {
-    loading.value = false
+    if (seq === loadSeq && pageActive) loading.value = false
   }
 }
 void load()
@@ -57,14 +67,14 @@ void load()
 // -------------------------------------------------------------- 勾选导出（v7）：导出 ZIP / JSON 仅导出勾选行
 const selected = ref<number[]>([])
 const selectedItems = computed(() => items.value.filter((i) => selected.value.includes(i.id)))
-const selectedInView = computed(() => filtered.value.filter((i) => selected.value.includes(i.id)))
-const allSelected = computed(() => filtered.value.length > 0 && selectedInView.value.length === filtered.value.length)
+const selectedInView = computed(() => viewRows.value.filter((i) => selected.value.includes(i.id)))
+const allSelected = computed(() => viewRows.value.length > 0 && selectedInView.value.length === viewRows.value.length)
 const indeterminate = computed(() => selectedInView.value.length > 0 && !allSelected.value)
 
 function toggleAllSelected(v: CheckboxValueType): void {
   const add = Boolean(v)
   const ids = new Set(selected.value)
-  filtered.value.forEach((i) => (add ? ids.add(i.id) : ids.delete(i.id)))
+  viewRows.value.forEach((i) => (add ? ids.add(i.id) : ids.delete(i.id)))
   selected.value = [...ids]
 }
 
@@ -198,10 +208,34 @@ function blankDraft(): Partial<ConfigItem> {
   return { code: '', name: '', description: '', content: '', files: [], platforms: ['1688'], status: 1 }
 }
 
+const skillEditor = ref<InstanceType<typeof SkillEditor>>()
+let editSeq = 0
 async function edit(item?: ConfigItem): Promise<void> {
+  const seq = ++editSeq
   const detail = item ? await get<ConfigItem>(`/skills/${item.id}`) : blankDraft()
+  if (!pageActive || seq !== editSeq) return
   editItem.value = JSON.parse(JSON.stringify(detail))
   editorVisible.value = true
+}
+onBeforeRouteLeave(async (to) => {
+  if (editorVisible.value && skillEditor.value && !(await skillEditor.value.prepareLeave(`前往「${String(to.meta.title || to.path)}」`))) return false
+  if (importVisible.value || groupDialog.value || sceneDlg.value) {
+    try { await ElMessageBox.confirm('离开技能管理后，未提交的导入和分组设置将丢失。', '离开确认', { confirmButtonText: '离开', cancelButtonText: '继续编辑' }) }
+    catch { return false }
+  }
+  return true
+})
+onBeforeUnmount(() => { pageActive = false; ++loadSeq; ++editSeq })
+async function previewImport(drafts: SkillImportDraft[]): Promise<void> {
+  if (!pageActive) return
+  const skipped = drafts.flatMap((d) => d.skipped || [])
+  if (skipped.length) {
+    try { await ElMessageBox.confirm(`以下 ${skipped.length} 项不会导入，请核对后继续：\n${skipped.join('\n')}`, '导入跳过项', { type: 'warning', confirmButtonText: '继续预览', cancelButtonText: '取消导入' }) }
+    catch { return }
+  }
+  if (!pageActive) return
+  importDrafts.value = drafts
+  importVisible.value = true
 }
 
 // -------------------------------------------------------------- 工具栏操作
@@ -228,12 +262,12 @@ async function onImportChange(e: Event): Promise<void> {
   input.value = ''
   if (!file) return
   try {
-    importDrafts.value = /\.zip$/i.test(file.name) ? await parseSkillZipFile(file) : await parseSkillJsonFile(file)
+    const drafts = /\.zip$/i.test(file.name) ? await parseSkillZipFile(file) : await parseSkillJsonFile(file)
+    await previewImport(drafts)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
     return
   }
-  importVisible.value = true
 }
 
 /** 从文件夹导入：解析 SKILL.md + 文本附属文件，预填编辑器（不直接入库），可视化调整后再发布 */
@@ -243,23 +277,17 @@ async function onFolderChange(e: Event): Promise<void> {
   input.value = ''
   if (!files.length) return
   const rel = (f: File): string => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
-  const rootName = rel(files[0]).split('/')[0] || 'imported-skill'
-  const skillMd = files.find((f) => /(^|\/)SKILL\.md$/i.test(rel(f)))
-  if (!skillMd) {
+  if (!files.some((f) => /(^|\/)SKILL\.md$/i.test(rel(f)))) {
     ElMessage.warning('所选文件夹中未找到 SKILL.md（技能主文档）')
     return
   }
-  const content = await skillMd.text()
-  const extraFiles: Array<{ name: string; content: string }> = []
-  for (const f of files) {
-    const p = rel(f)
-    if (f === skillMd || BINARY_EXT.test(p)) continue
-    extraFiles.push({ name: p.split('/').slice(1).join('/') || f.name, content: await f.text() })
+  try {
+    const entries: Record<string, string> = Object.create(null) as Record<string, string>
+    for (const f of files) entries[rel(f)] = BINARY_EXT.test(rel(f)) ? '' : await f.text()
+    await previewImport(parseSkillEntries(entries, rel(files[0]).split('/')[0] || 'imported-skill'))
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '文件夹读取失败')
   }
-  // 预填编辑器（不直接入库），可视化调整后再发布
-  editItem.value = { code: '', name: rootName, description: '', content, files: extraFiles, platforms: ['1688'], status: 1 }
-  editorVisible.value = true
-  ElMessage.success(`已解析文件夹「${rootName}」：SKILL.md + ${extraFiles.length} 个附属文件，请在编辑器中完善后发布`)
 }
 
 /** 导出 ZIP：仅勾选的技能 → {code}/SKILL.md + {code}/{file.name}（未勾选时提示） */
@@ -370,7 +398,9 @@ function boundExpertCount(row: ConfigItem): number {
 </script>
 <template>
   <el-alert v-if="USE_MOCK" title="Mock 配置中心：技能内容、导入导出与统计均为本地模拟。" type="info" :closable="false" style="margin-bottom:16px" />
+  <el-alert v-if="loadError" :title="`技能加载失败：${loadError}`" type="error" :closable="false" style="margin-bottom:12px"><el-button link type="primary" @click="load">重新加载</el-button></el-alert>
   <el-card shadow="never">
+    <p class="muted" style="margin:0 0 12px">当前分组 {{ viewRows.length }} 项 · 已上架 {{ viewRows.filter((r) => r.status === 1).length }} 项 · 已勾选 {{ selected.length }} 项</p>
     <div class="toolbar">
       <el-input v-model="keyword" placeholder="搜索名称 / 编码 / 描述" clearable style="width:260px" />
       <el-button @click="load">刷新列表</el-button>
@@ -469,14 +499,14 @@ function boundExpertCount(row: ConfigItem): number {
           </el-dropdown>
         </div>
       </div>
-      <el-empty v-if="!viewRows.length && !loading" :description="activeTab === 'all' ? '暂无技能，点击右上「创建」开始' : '当前分组暂无技能'" />
+      <el-empty v-if="!viewRows.length && !loading" :description="loadError ? '加载失败，请重新加载技能' : keyword ? '没有匹配的技能，请调整搜索条件' : activeTab === 'all' ? '尚未创建技能，可新建或导入 SKILL.md 技能包' : '当前分组暂无技能，可切换分组或为技能设置所属场景'" />
     </div>
   </el-card>
 
   <input ref="importInput" type="file" accept=".json,.zip,application/json,application/zip" style="display:none" @change="onImportChange" />
   <input ref="folderInput" type="file" webkitdirectory style="display:none" @change="onFolderChange" />
 
-  <SkillEditor v-model="editorVisible" :item="editItem" :can-edit="canEdit" @saved="load" />
+  <SkillEditor v-if="editorVisible" ref="skillEditor" v-model="editorVisible" :item="editItem" :can-edit="canEdit" @saved="load" />
   <VersionDrawer v-model="versionDrawer" kind="skills" :item="historyItem" :can-edit="canEdit" @restored="load" />
   <SkillImportDialog v-model="importVisible" :drafts="importDrafts" :existing-codes="items.map((i) => i.code)" @imported="load" />
 

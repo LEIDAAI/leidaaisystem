@@ -9,7 +9,8 @@
  * v10：新建/编辑支持「场景」多选——下拉选历史场景 / 输入新名称自动注册进场景库（归属所选平台），对齐前台平台→场景两级；列表行展示场景标签。
  * v15：详情文档行新增显式「编辑」入口，点击直接进入富文本编辑（原先须先点行进预览再切换，入口不可见）。
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Document as DocumentIcon } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -48,6 +49,8 @@ function platMetaOf(p?: string): { label: string; color: string; bg: string; bor
 const items = ref<KnowledgeBase[]>([])
 const keyword = ref('')
 const loading = ref(false)
+const loadError = ref('')
+const filesError = ref('')
 const filtered = computed(() => items.value.filter((i) => !keyword.value || `${i.name} ${i.description || ''}`.includes(keyword.value)))
 
 /** 列表加载竞态守卫：连续保存/刷新时丢弃乱序返回的旧响应 */
@@ -56,10 +59,13 @@ const loadGuard = createSeqGuard()
 async function load(): Promise<void> {
   const seq = loadGuard.next()
   loading.value = true
+  loadError.value = ''
   try {
     const list = await listKnowledgeBases()
     if (!loadGuard.isCurrent(seq)) return
     items.value = list
+  } catch (e) {
+    if (loadGuard.isCurrent(seq)) loadError.value = e instanceof Error ? e.message : '知识库加载失败'
   } finally {
     if (loadGuard.isCurrent(seq)) loading.value = false
   }
@@ -172,6 +178,11 @@ const filteredFiles = computed(() => {
 })
 
 async function openDetail(row: KnowledgeBase): Promise<void> {
+  if (!(await confirmDocumentLeave())) return
+  files.value = []
+  fileQuery.value = ''
+  currentFileId.value = null
+  fileMode.value = 'preview'
   current.value = row
   view.value = 'detail'
   await loadFiles()
@@ -182,22 +193,30 @@ const filesGuard = createSeqGuard()
 
 async function loadFiles(): Promise<void> {
   if (!current.value) return
+  const targetId = current.value.id
   const seq = filesGuard.next()
   loadingFiles.value = true
+  filesError.value = ''
   try {
-    const list = await listKnowledgeFiles(current.value.id)
-    if (!filesGuard.isCurrent(seq)) return
+    const list = await listKnowledgeFiles(targetId)
+    if (!filesGuard.isCurrent(seq) || current.value?.id !== targetId) return
     files.value = list
   } catch (e) {
     if (!filesGuard.isCurrent(seq)) return
-    if (e instanceof ApiError) ElMessage.error(e.message)
-    else throw e
+    filesError.value = e instanceof Error ? e.message : '文档加载失败'
   } finally {
     if (filesGuard.isCurrent(seq)) loadingFiles.value = false
   }
 }
 
 async function backToList(): Promise<void> {
+  if (!(await confirmDocumentLeave())) return
+  filesGuard.next()
+  loadingFiles.value = false
+  files.value = []
+  currentFileId.value = null
+  fileMode.value = 'preview'
+  docDlg.value = false
   view.value = 'list'
   current.value = null
   await load()
@@ -205,19 +224,24 @@ async function backToList(): Promise<void> {
 
 // -------------------------------------------------------------- 详情视图：上传文档
 const uploadRef = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
+const uploadTarget = ref<{ id: number; name: string } | null>(null)
+let pageActive = true
 
-/** 同名文档自动追加 -1/-2 后缀（保留扩展名） */
-function uniqueName(name: string): string {
-  if (!files.value.some((f) => f.name === name)) return name
+/** 同名文档自动追加 -1/-2 后缀，名称集合固定属于本次上传目标库。 */
+function uniqueName(name: string, used: Set<string>): string {
+  if (!used.has(name)) return name
   const dot = name.lastIndexOf('.')
   const base = dot > 0 ? name.slice(0, dot) : name
   const ext = dot > 0 ? name.slice(dot) : ''
   let i = 1
-  while (files.value.some((f) => f.name === `${base}-${i}${ext}`)) i++
+  while (used.has(`${base}-${i}${ext}`)) i++
   return `${base}-${i}${ext}`
 }
 
 function triggerUpload(): void {
+  if (!current.value || uploading.value) return
+  uploadTarget.value = { id: current.value.id, name: current.value.name }
   uploadRef.value?.click()
 }
 
@@ -225,21 +249,33 @@ async function onUploadChange(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
   const list = Array.from(input.files || [])
   input.value = ''
-  if (!list.length || !current.value) return
+  const target = uploadTarget.value
+  if (!list.length || !target || uploading.value || !canEdit.value) return
+  uploading.value = true
   let ok = 0
-  for (const file of list) {
-    try {
-      const content = await file.text()
-      await saveKnowledgeFile(current.value.id, { name: uniqueName(file.name), content })
-      ok++
-    } catch (err) {
-      if (err instanceof ApiError) ElMessage.error(`「${file.name}」上传失败：${err.message}`)
-      else throw err
+  const failures: string[] = []
+  try {
+    const existing = await listKnowledgeFiles(target.id)
+    const used = new Set(existing.map((f) => f.name))
+    for (const file of list) {
+      try {
+        const name = uniqueName(file.name, used)
+        const content = await file.text()
+        await saveKnowledgeFile(target.id, { name, content })
+        used.add(name)
+        ok++
+      } catch (err) {
+        failures.push(`${file.name}：${err instanceof Error ? err.message : '读取或上传失败'}`)
+      }
     }
-  }
-  if (ok) {
-    ElMessage.success(`已上传 ${ok} 个文档`)
-    await loadFiles()
+    if (failures.length) ElMessage.warning({ message: `上传到「${target.name}」：成功 ${ok} 个，失败 ${failures.length} 个。${failures.join('；')}`, duration: 10000 })
+    else ElMessage.success(`已向「${target.name}」上传 ${ok} 个文档`)
+    if (pageActive && current.value?.id === target.id && view.value !== 'list') await loadFiles()
+  } catch (err) {
+    ElMessage.error(`无法读取「${target.name}」现有文档，本批未上传：${err instanceof Error ? err.message : '请求失败'}`)
+  } finally {
+    uploading.value = false
+    uploadTarget.value = null
   }
 }
 
@@ -256,16 +292,19 @@ async function submitDoc(): Promise<void> {
   if (!current.value) return
   const name = docName.value.trim()
   if (!name) { ElMessage.warning('请输入文档名称'); return }
+  const targetKbId = current.value.id
   let saved: KnowledgeFile
   try {
-    saved = await saveKnowledgeFile(current.value.id, { name, content: '' })
+    saved = await saveKnowledgeFile(targetKbId, { name, content: '' })
   } catch (e) {
     if (e instanceof ApiError) { ElMessage.error(e.message); return }
     throw e
   }
+  if (!pageActive || current.value?.id !== targetKbId) return
   docDlg.value = false
   await loadFiles()
-  openFile(saved)
+  if (current.value?.id !== targetKbId) return
+  await openFile(saved)
   startEdit()
 }
 
@@ -274,54 +313,83 @@ const currentFileId = ref<number | null>(null)
 const fileMode = ref<'preview' | 'edit'>('preview')
 const editName = ref('')
 const editContent = ref('')
+const editBaseline = ref('')
+const fileSaving = ref(false)
+const documentDirty = computed(() => fileMode.value === 'edit' && JSON.stringify([editName.value, editContent.value]) !== editBaseline.value)
+async function confirmDocumentLeave(): Promise<boolean> {
+  if (fileSaving.value) { ElMessage.warning('文档正在保存，请稍后再离开'); return false }
+  if (!documentDirty.value) return true
+  try {
+    await ElMessageBox.confirm('当前文档有未保存修改，离开后将丢失。', '未保存修改', { type: 'warning', confirmButtonText: '放弃修改并离开', cancelButtonText: '继续编辑' })
+    return true
+  } catch { return false }
+}
+onBeforeRouteLeave(async (to) => {
+  if (!(await confirmDocumentLeave())) return false
+  if (dlg.value || docDlg.value) {
+    try { await ElMessageBox.confirm(`即将前往「${String(to.meta.title || to.path)}」，未保存的表单内容将丢失。`, '离开确认', { confirmButtonText: '离开', cancelButtonText: '继续编辑' }) }
+    catch { return false }
+  }
+  return true
+})
+onBeforeUnmount(() => { pageActive = false; loadGuard.next(); filesGuard.next() })
 
 const currentFile = computed(() => files.value.find((f) => f.id === currentFileId.value) || null)
 const previewHtml = computed(() => contentToHtml(currentFile.value?.content || ''))
 
-function openFile(f: KnowledgeFile): void {
+async function openFile(f: KnowledgeFile): Promise<void> {
+  if (!(await confirmDocumentLeave())) return
   currentFileId.value = f.id
   fileMode.value = 'preview'
   view.value = 'preview'
 }
 
-function switchFile(f: KnowledgeFile): void {
-  currentFileId.value = f.id
-  fileMode.value = 'preview'
+async function switchFile(f: KnowledgeFile): Promise<void> {
+  await openFile(f)
 }
 
 /** 文档行「编辑」快捷入口：直接进入富文本编辑，无需先进预览再切换（v15） */
-function editFile(f: KnowledgeFile): void {
-  openFile(f)
-  startEdit()
+async function editFile(f: KnowledgeFile): Promise<void> {
+  await openFile(f)
+  if (currentFileId.value === f.id && !documentDirty.value) startEdit()
 }
 
 function startEdit(): void {
-  if (!currentFile.value) return
+  if (!currentFile.value || fileMode.value === 'edit') return
   editName.value = currentFile.value.name
   editContent.value = contentToHtml(currentFile.value.content)
+  editBaseline.value = JSON.stringify([editName.value, editContent.value])
   fileMode.value = 'edit'
 }
 
 async function saveFileEdit(): Promise<void> {
-  if (!current.value || !currentFile.value) return
+  if (!current.value || !currentFile.value || fileSaving.value) return
   if (!editName.value.trim()) { ElMessage.warning('请输入文档名称'); return }
+  const targetKbId = current.value.id
+  const payload = { id: currentFile.value.id, name: editName.value.trim(), content: editContent.value }
+  const sentSnapshot = JSON.stringify([editName.value, editContent.value])
+  fileSaving.value = true
   try {
-    const saved = await saveKnowledgeFile(current.value.id, { id: currentFile.value.id, name: editName.value.trim(), content: editContent.value })
+    const saved = await saveKnowledgeFile(targetKbId, payload)
+    if (!pageActive || current.value?.id !== targetKbId || currentFileId.value !== payload.id) return
     const idx = files.value.findIndex((f) => f.id === saved.id)
     if (idx >= 0) files.value[idx] = saved
-    fileMode.value = 'preview'
-    ElMessage.success('已保存')
+    editBaseline.value = sentSnapshot
+    if (!documentDirty.value) fileMode.value = 'preview'
+    ElMessage.success('已保存发送时的文档内容')
   } catch (e) {
     if (e instanceof ApiError) ElMessage.error(e.message)
     else throw e
-  }
+  } finally { fileSaving.value = false }
 }
 
-function cancelEdit(): void {
-  fileMode.value = 'preview'
+async function cancelEdit(): Promise<void> {
+  if (await confirmDocumentLeave()) fileMode.value = 'preview'
 }
 
 async function backToDetail(): Promise<void> {
+  if (!(await confirmDocumentLeave())) return
+  fileMode.value = 'preview'
   view.value = 'detail'
   await loadFiles()
 }
@@ -349,6 +417,8 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
 <template>
   <el-alert v-if="USE_MOCK" title="Mock 配置中心：知识库为本地模拟数据。" type="info" :closable="false" style="margin-bottom:16px" />
 
+  <el-alert v-if="loadError && view === 'list'" :title="`知识库加载失败：${loadError}`" type="error" :closable="false"><el-button link type="primary" @click="load">重新加载</el-button></el-alert>
+  <el-alert v-if="filesError && view !== 'list'" :title="`文档加载失败：${filesError}`" type="error" :closable="false"><el-button link type="primary" @click="loadFiles">重新加载</el-button></el-alert>
   <!-- ============================== 列表视图 ============================== -->
   <el-card v-if="view === 'list'" shadow="never">
     <div class="toolbar">
@@ -385,7 +455,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
           <el-button v-if="canEdit" link type="danger" @click="remove(row)">删除</el-button>
         </div>
       </div>
-      <el-empty v-if="!filtered.length && !loading" description="暂无知识库，点击右上「创建知识库」开始" />
+      <el-empty v-if="!filtered.length && !loading" :description="loadError ? '加载失败，请重新加载知识库' : keyword ? '没有匹配的知识库，请调整搜索条件' : '尚未创建知识库，创建后可上传文档并绑定专家'" />
     </div>
   </el-card>
 
@@ -416,7 +486,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
       <div class="spacer" />
       <template v-if="canEdit">
         <input ref="uploadRef" type="file" accept=".txt,.md,.markdown" multiple style="display:none" @change="onUploadChange" />
-        <el-button @click="triggerUpload">上传文档</el-button>
+        <el-button :loading="uploading" @click="triggerUpload">{{ uploading ? `正在上传到「${uploadTarget?.name}」` : '上传文档' }}</el-button>
         <el-button type="primary" @click="newDoc">新建文档</el-button>
       </template>
     </div>
@@ -433,7 +503,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
       </div>
       <el-empty
         v-if="!filteredFiles.length && !loadingFiles"
-        :description="fileQuery ? '未找到匹配的文档' : '暂无文档，可上传 txt/md 文件或新建文档'"
+        :description="filesError ? '文档加载失败，请点击重新加载' : fileQuery ? '未找到匹配的文档，请调整搜索条件' : '此库尚无可检索文档，可上传 txt/md 或新建文档'"
       />
     </div>
   </el-card>
@@ -460,7 +530,7 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
             <span v-if="currentFile" class="muted">· {{ formatDateTime(currentFile.updatedAt) }}</span>
           </div>
           <div class="preview-actions" @click.stop>
-            <el-button size="small" :type="fileMode === 'preview' ? 'primary' : ''" @click="fileMode = 'preview'">预览</el-button>
+            <el-button size="small" :type="fileMode === 'preview' ? 'primary' : ''" @click="cancelEdit">预览</el-button>
             <el-button v-if="canEdit" size="small" :type="fileMode === 'edit' ? 'primary' : ''" @click="startEdit">编辑</el-button>
             <el-button v-if="canEdit && currentFile" size="small" type="danger" plain @click="removeFile(currentFile)">删除</el-button>
           </div>
@@ -475,7 +545,8 @@ async function removeFile(f: KnowledgeFile): Promise<void> {
           <TiptapDocEditor v-model="editContent" :can-edit="canEdit" :min-height="420" placeholder="开始编写文档…" />
           <div class="edit-footer">
             <el-button @click="cancelEdit">取消</el-button>
-            <el-button type="primary" @click="saveFileEdit">保存</el-button>
+            <span class="muted">{{ documentDirty ? '有未保存修改' : '内容未修改' }}</span>
+            <el-button type="primary" :loading="fileSaving" @click="saveFileEdit">保存</el-button>
           </div>
         </div>
       </section>

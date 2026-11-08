@@ -1,12 +1,13 @@
-import { post } from './request'
-import { API_BASE, USE_MOCK } from '../utils/constants'
+import { exportBlob, post } from './request'
+import { USE_MOCK } from '../utils/constants'
 
 /**
  * 专家介绍附件：图片 / PDF / Word / Excel / PPT / 文本类。
  * 元数据（id/名称/类型/大小/时间）随专家配置一起保存（进入版本快照可恢复）；
  * 文件实体 mock 模式存 IndexedDB（见 mock/fileStore.ts），真实模式走后端 /files 接口。
  */
-export interface IntroFileMeta { id: string; name: string; type: string; size: number; uploadedAt: string }
+export interface IntroFileMeta { id: string; name: string; type: string; size: number; uploadedAt: string; url?: string }
+export interface UploadedFileResponse { id: string | number; name?: string; type?: string; size?: number; uploadedAt?: string; url?: string }
 
 /** 允许上传的文件类型（图片/PDF/文档/表格/演示/文本） */
 export const FILE_ACCEPT = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv'
@@ -27,7 +28,18 @@ export async function uploadIntroFile(file: File): Promise<IntroFileMeta> {
   } else {
     const fd = new FormData()
     fd.append('file', file)
-    await post('/files', fd)
+    const uploaded = await post<UploadedFileResponse>('/files', fd)
+    if (!uploaded || !['string', 'number'].includes(typeof uploaded.id) || !String(uploaded.id).trim() || (typeof uploaded.id === 'number' && !Number.isFinite(uploaded.id))) {
+      throw new Error('上传响应缺少有效的文件 ID，未保存附件引用，请联系服务端检查 /files 响应')
+    }
+    return {
+      id: String(uploaded.id),
+      name: uploaded.name || file.name,
+      type: uploaded.type || file.type || guessType(file.name),
+      size: typeof uploaded.size === 'number' && Number.isFinite(uploaded.size) && uploaded.size >= 0 ? uploaded.size : file.size,
+      uploadedAt: uploaded.uploadedAt || meta.uploadedAt,
+      ...(uploaded.url ? { url: uploaded.url } : {})
+    }
   }
   return meta
 }
@@ -40,21 +52,28 @@ export async function introFileObjectUrl(id: string): Promise<string> {
     if (!rec) throw new Error('文件不存在或已被清理')
     return URL.createObjectURL(rec.blob)
   }
-  return `${API_BASE}/files/${id}`
+  const blob = await exportBlob(`/files/${encodeURIComponent(id)}`)
+  return URL.createObjectURL(blob)
 }
 
 /** 读取文本类文件内容（txt/md/csv 等在线预览用） */
 export async function introFileText(id: string): Promise<string> {
   const url = await introFileObjectUrl(id)
-  const res = await fetch(url)
-  return res.text()
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error('文件读取失败，请重试')
+    return await res.text()
+  } finally { if (url.startsWith('blob:')) URL.revokeObjectURL(url) }
 }
 
 /** 读取二进制文件 ArrayBuffer（Excel 等在线预览用） */
 export async function introFileArrayBuffer(id: string): Promise<ArrayBuffer> {
   const url = await introFileObjectUrl(id)
-  const res = await fetch(url)
-  return res.arrayBuffer()
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error('文件读取失败，请重试')
+    return await res.arrayBuffer()
+  } finally { if (url.startsWith('blob:')) URL.revokeObjectURL(url) }
 }
 
 /** 删除附件实体（元数据由调用方从 draft.introductionFiles 移除后随专家保存） */

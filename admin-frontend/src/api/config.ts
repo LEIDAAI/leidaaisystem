@@ -76,6 +76,8 @@ export function hostOf(endpoint?: string): string {
 export interface LlmModel {
   id: number
   code: string
+  /** 供应商原始模型标识；旧数据缺失时使用 code */
+  modelId?: string
   name: string
   provider: string
   endpoint?: string
@@ -93,7 +95,7 @@ export interface LlmModel {
 export interface ConfigItem {
   id: number; code: string; name: string; status: number; version: number; updatedAt: string
   refreshStatus: 'PENDING' | 'APPLIED' | 'FAILED'; appliedVersion: number; refreshMessage: string
-  price?: number; durationDays?: number; entitlements?: Entitlement[]; salesCount?: number
+  price?: number; firstPurchasePrice?: number | null; durationDays?: number; entitlements?: Entitlement[]; salesCount?: number
   durationMode?: 'LIFETIME' | 'CUSTOM_DAYS' | 'MEMBERSHIP'
   /** 套餐类型（v11）：NORMAL 常规 / GIFT 赠送（赠送订单只能选 GIFT 套餐；GIFT 价格必须为 0、时长支持长期有效 durationDays=0） */
   planType?: 'NORMAL' | 'GIFT'
@@ -109,7 +111,7 @@ export interface ConfigItem {
   /** 核心卖点清单（营销展示，最多 20 条） */
   features?: string[]
   /** 月付/年付计费周期报价（GIFT 赠送套餐不配置） */
-  billingCycles?: Array<{ cycle: 'MONTHLY' | 'YEARLY'; price: number; originalPrice?: number; label?: string }>
+  billingCycles?: Array<{ cycle: 'MONTHLY' | 'YEARLY'; price: number; firstPurchasePrice?: number; originalPrice?: number; label?: string }>
   /** 展示排序（非负整数，小值靠前，缺省 0） */
   sort?: number
   /** AI 积分发放模式（v17）：ONCE 购买一次性发放 / MONTHLY 按月发放；赠送套餐强制 ONCE */
@@ -152,11 +154,13 @@ export interface ConfigItem {
   transport?: 'STREAMABLE_HTTP' | 'SSE' | 'STDIO'; endpoint?: string; command?: string; args?: string[]
   authConfig?: AuthConfig
   apiOperations?: ApiOperation[]
+  /** 仅 MCP 版本快照携带，包含工具稳定 ID、定义和启停状态 */
+  tools?: Tool[]
   healthStatus?: string; lastHealthAt?: string; healthDetail?: string
   // ---- 平台维度（v5，专家/技能/MCP 通用）：多选数组，至少一个 ----
   platforms?: PlatformType[]
   // ---- 模型管理（v5，模型注册行）----
-  provider?: string; remark?: string
+  provider?: string; modelId?: string; remark?: string
   /** API Key 掩码回显（****abcd）；明文 apiKey 仅经 saveConfig 载荷提交，响应永不回显 */
   apiKeyMasked?: string; apiKey?: string; defaultParams?: Record<string, unknown>; createdAt?: string
   // ---- 旧版遗留字段（增量迁移保留，仅兼容展示，不再要求填写）----
@@ -204,11 +208,13 @@ export interface KnowledgeFile {
 }
 export type ConfigKind = 'plans' | 'experts' | 'skills' | 'mcp/servers' | 'models' | 'scenarios' | 'knowledge-bases'
 /** 保存载荷：业务字段 + 版本名称/变更说明（进版本历史）+ 引用确认；capabilities 在专家为布尔开关对象、在模型为标签数组 */
-export type ConfigSavePayload = Partial<Omit<ConfigItem, 'capabilities'>> & { capabilities?: Record<string, boolean> | string[]; versionName?: string; note?: string; confirmReferences?: boolean; /** v6：自动保存跳过版本记录（touch 仍 version+1 但不生成快照） */ skipVersion?: boolean }
+export type BillingCycleInput = Omit<NonNullable<ConfigItem['billingCycles']>[number], 'firstPurchasePrice'> & { firstPurchasePrice?: number | null }
+export type ConfigSavePayload = Partial<Omit<ConfigItem, 'capabilities' | 'billingCycles'>> & { billingCycles?: BillingCycleInput[]; capabilities?: Record<string, boolean> | string[]; versionName?: string; note?: string; confirmReferences?: boolean; /** v6：自动保存跳过版本记录（touch 仍 version+1 但不生成快照） */ skipVersion?: boolean }
 export const listConfig = (kind: ConfigKind) => get<ConfigItem[]>(`/${kind}`)
 export const saveConfig = (kind: ConfigKind, item: ConfigSavePayload) => item.id ? put<ConfigItem>(`/${kind}/${item.id}`, item) : post<ConfigItem>(`/${kind}`, item)
 export const deleteConfig = (kind: ConfigKind, id: number, body?: unknown) => del(`/${kind}/${id}`, body)
 export const configAction = (kind: ConfigKind, id: number, action: string, body?: unknown) => post<ConfigItem>(`/${kind}/${id}/${action}`, body)
+export const setDefaultExpert = (id: number) => put<ConfigItem>(`/experts/${id}/default`)
 export const listResources = () => get<Entitlement[]>('/entitlement-resources')
 export const listTools = () => get<Tool[]>('/mcp/tools')
 export const toggleTool = (id: number, enabled: boolean, version?: { versionName: string; note: string }) => put(`/mcp/tools/${id}/enabled`, { enabled, ...version })
@@ -278,13 +284,13 @@ export const saveModelStatus = (id: number, status: number) => put<LlmModel>(`/m
 /** 模型连通测试（Mock 演示模拟，不发真实网络请求） */
 export interface ModelTestResult { result: 'SUCCESS' | 'FAILED'; detail: string; latencyMs: number; testedAt: string }
 export const testModelConnection = (id: number) => post<ModelTestResult>(`/models/${id}/test`)
-/** 渠道批量接入：探测清单勾选后一次落库（共享 endpoint/apiKey/provider，重复编码由服务端跳过） */
-export interface BatchCreateModelsPayload { endpoint: string; apiKey?: string; provider: string; remark?: string; status?: number; items: Array<{ code: string; name: string }> }
+/** 渠道批量接入：探测清单勾选后一次落库（共享 endpoint/apiKey/provider，同渠道按原始 modelId 去重，内部 code 冲突追加后缀） */
+export interface BatchCreateModelsPayload { endpoint: string; apiKey?: string; provider: string; remark?: string; status?: number; items: Array<{ code: string; name: string; modelId?: string }> }
 export interface BatchCreateModelsResult { created: number; skipped: string[]; list: LlmModel[] }
 export const createModelsBatch = (payload: BatchCreateModelsPayload) => post<BatchCreateModelsResult>('/models/batch', payload)
 
 // ---------------------------------------------------------------- 模型端点探测（填地址 + Key 自动发现模型列表）
-/** 端点返回的单个模型：id 为 OpenAI 兼容模型标识（存为模型编码），displayName 取 display_name/name 兜底 id */
+/** 端点返回的单个模型：id 原样保存为 modelId，内部 code 独立生成；displayName 取 display_name/name 兜底 id */
 export interface ProbedModel { id: string; displayName: string; ownedBy?: string }
 export interface ProbeModelsResult { models: ProbedModel[]; resolvedUrl: string; via: string }
 /**

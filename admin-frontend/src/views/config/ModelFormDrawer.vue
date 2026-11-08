@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { saveConfig, probeModels, createModelsBatch, type ConfigItem, type ProbedModel } from '@/api/config'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -12,7 +12,7 @@ import { USE_MOCK } from '@/utils/constants'
  * Mock 模式提供演示地址快捷填充（demo.* 域名返回模拟模型清单，不发真实网络请求）。
  */
 type ModelDraft = Partial<ConfigItem> & { apiKey?: string; temperature?: number; maxTokens?: number }
-const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean; existingCodes?: string[] }>()
+const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean; existingCodes?: string[]; existingModels?: Partial<ConfigItem>[] }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 const saving = ref(false)
 const draft = ref<ModelDraft>({})
@@ -28,15 +28,29 @@ const probeFilter = ref('')
 const checkedModels = ref<string[]>([])
 const selectedProbe = ref('')
 const providerTouched = ref(false)
+let formSession = 0
+let probeSeq = 0
+let baseline = ''
+const formSnapshot = (): string => JSON.stringify([draft.value, mode.value, checkedModels.value])
+const probeSource = ref('')
+const channelSource = (): string => JSON.stringify([draft.value.endpoint?.trim() || '', draft.value.apiKey?.trim() || ''])
+function internalCode(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'model'
+}
+watch(() => [draft.value.endpoint, draft.value.apiKey], () => {
+  ++probeSeq
+  probing.value = false
+  probed.value = []; checkedModels.value = []; probeSource.value = ''; selectedProbe.value = ''
+})
 
 const filteredProbed = computed(() =>
   probed.value.filter((m) => !probeFilter.value || `${m.displayName} ${m.id}`.toLowerCase().includes(probeFilter.value.toLowerCase()))
 )
 
 /** 渠道拉取列表中与库内重复的编码标注（入库时服务端会跳过） */
-const existingSet = computed(() => new Set(props.existingCodes || []))
 function isExisting(id: string): boolean {
-  return existingSet.value.has(id)
+  const endpoint = (draft.value.endpoint || '').trim().replace(/\/+$/, '')
+  return (props.existingModels || []).some((m) => (m.modelId || m.code) === id && (m.endpoint || '').trim().replace(/\/+$/, '') === endpoint)
 }
 
 /** 供应商字典（可扩展：allow-create） */
@@ -60,9 +74,15 @@ async function fetchModels(): Promise<void> {
   if (!props.canEdit || probing.value) return
   const endpoint = draft.value.endpoint?.trim() || ''
   if (!endpoint) { ElMessage.warning('请先填写接入地址（OpenAI 兼容 base URL）'); return }
+  const session = formSession
+  const seq = ++probeSeq
+  const source = channelSource()
+  const apiKey = draft.value.apiKey?.trim() || ''
   probing.value = true
   try {
-    const res = await probeModels(endpoint, draft.value.apiKey?.trim() || '')
+    const res = await probeModels(endpoint, apiKey)
+    if (session !== formSession || seq !== probeSeq || source !== channelSource() || !props.modelValue) return
+    probeSource.value = source
     probed.value = res.models
     probedResolved.value = res.resolvedUrl
     probeVia.value = res.via
@@ -70,7 +90,7 @@ async function fetchModels(): Promise<void> {
     probeFilter.value = ''
     if (!res.models.length) ElMessage.warning('端点可达，但未返回任何模型')
   } catch { /* 拦截器已提示 */ } finally {
-    probing.value = false
+    if (session === formSession && seq === probeSeq) probing.value = false
   }
 }
 
@@ -85,7 +105,8 @@ function clearChecked(): void {
 function applyProbe(id: string): void {
   const m = probed.value.find((x) => x.id === id)
   if (!m) return
-  draft.value.code = m.id
+  draft.value.code = internalCode(m.id)
+  draft.value.modelId = m.id
   draft.value.name = m.displayName
   if (!providerTouched.value) draft.value.provider = 'OpenAI兼容'
 }
@@ -93,6 +114,9 @@ function applyProbe(id: string): void {
 watch(
   () => [props.modelValue, props.item] as const,
   ([visible]) => {
+    ++formSession
+    ++probeSeq
+    probing.value = false
     if (!visible) return
     draft.value = {
       status: 1, provider: '智谱', endpoint: '', remark: '',
@@ -100,25 +124,30 @@ watch(
     }
     // API Key 明文不出接口：编辑时仅提示掩码，输入框留空
     draft.value.apiKey = ''
+    draft.value.modelId = draft.value.modelId || draft.value.code || ''
     const params = draft.value.defaultParams && typeof draft.value.defaultParams === 'object' && !Array.isArray(draft.value.defaultParams) ? draft.value.defaultParams : {}
     draft.value.temperature = typeof params.temperature === 'number' ? params.temperature : 0.7
     draft.value.maxTokens = typeof params.max_tokens === 'number' ? params.max_tokens : 4096
     mode.value = 'channel'
     probed.value = []; probedResolved.value = ''; probeVia.value = ''; probeFilter.value = ''
     checkedModels.value = []; selectedProbe.value = ''; providerTouched.value = false
+    probeSource.value = ''
+    baseline = formSnapshot()
   },
   { immediate: true }
 )
 
 /** 渠道批量入库：所选模型共享 endpoint/apiKey/provider（重复编码由服务端跳过） */
 async function saveBatch(): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value) return
+  if (!probeSource.value || probeSource.value !== channelSource()) { ElMessage.warning('接入地址或密钥已变化，请重新探测模型后再入库'); return }
   if (!draft.value.endpoint?.trim()) { ElMessage.warning('请先填写接入地址'); return }
   if (!checkedModels.value.length) { ElMessage.warning('请勾选要添加的模型'); return }
   const items = checkedModels.value.map((id) => {
     const m = probed.value.find((x) => x.id === id)
-    return { code: id, name: m?.displayName || id }
+    return { code: internalCode(id), modelId: id, name: m?.displayName || id }
   })
+  const session = formSession
   saving.value = true
   try {
     const r = await createModelsBatch({
@@ -128,6 +157,8 @@ async function saveBatch(): Promise<void> {
       remark: draft.value.remark || '',
       items
     })
+    if (session !== formSession || !props.modelValue) return
+    baseline = formSnapshot()
     ElMessage.success(`已添加 ${r.created} 个模型${r.skipped.length ? `；跳过已存在：${r.skipped.join('、')}` : ''}`)
     emit('saved')
     emit('update:modelValue', false)
@@ -137,7 +168,7 @@ async function saveBatch(): Promise<void> {
 }
 
 async function save(): Promise<void> {
-  if (!props.canEdit) return
+  if (!props.canEdit || saving.value) return
   // 提交前置校验：编码/显示名必填，编码唯一性提前拦截（服务端也会校验）
   if (!String(draft.value.code || '').trim()) { ElMessage.warning('请填写模型编码'); return }
   if (!String(draft.value.name || '').trim()) { ElMessage.warning('请填写显示名'); return }
@@ -148,15 +179,18 @@ async function save(): Promise<void> {
     temperature: typeof draft.value.temperature === 'number' ? draft.value.temperature : 0.7,
     max_tokens: typeof draft.value.maxTokens === 'number' ? Math.round(draft.value.maxTokens) : 4096
   }
+  const session = formSession
   saving.value = true
   try {
     await saveConfig('models', {
-      id: draft.value.id, code: draft.value.code, name: draft.value.name, provider: draft.value.provider,
+      id: draft.value.id, code: draft.value.code, modelId: draft.value.modelId || draft.value.code, name: draft.value.name, provider: draft.value.provider,
       endpoint: draft.value.endpoint,
       // api_key：填写则更新，留空=不修改（服务端保留原值）
       apiKey: draft.value.apiKey?.trim() || undefined,
       defaultParams, remark: draft.value.remark, status: draft.value.status
     })
+    if (session !== formSession || !props.modelValue) return
+    baseline = formSnapshot()
     ElMessage.success('模型已保存')
     emit('saved')
     emit('update:modelValue', false)
@@ -164,11 +198,27 @@ async function save(): Promise<void> {
     saving.value = false
   }
 }
+async function prepareLeave(destination = '关闭模型抽屉'): Promise<boolean> {
+  if (saving.value) { ElMessage.warning('模型正在保存，请完成后再离开'); return false }
+  if (props.canEdit && formSnapshot() !== baseline) {
+    try { await ElMessageBox.confirm(`即将${destination}，未保存的模型配置将丢失。`, '未保存修改', { confirmButtonText: '放弃修改并离开', cancelButtonText: '继续编辑', type: 'warning' }) }
+    catch { return false }
+  }
+  return true
+}
+async function closeDrawer(done?: () => void): Promise<void> {
+  if (!(await prepareLeave())) return
+  ++formSession
+  ++probeSeq
+  emit('update:modelValue', false)
+  done?.()
+}
+defineExpose({ prepareLeave })
 </script>
 <template>
-  <el-drawer :model-value="modelValue" :title="isEdit ? '编辑模型' : '新建模型'" size="640px" destroy-on-close @update:model-value="emit('update:modelValue', $event)">
+  <el-drawer :model-value="modelValue" :title="isEdit ? '编辑模型' : '新建模型'" size="640px" destroy-on-close :before-close="closeDrawer" :close-on-click-modal="false">
     <el-alert v-if="isEdit" title="模型编码（code）创建后不可修改；专家基础模型以 code 关联。" type="info" :closable="false" style="margin-bottom:12px" />
-    <el-form label-width="110px" :disabled="!canEdit">
+    <el-form label-width="110px" :disabled="!canEdit || saving">
       <el-form-item v-if="!isEdit" label="接入方式">
         <el-radio-group v-model="mode">
           <el-radio-button value="channel">渠道批量接入</el-radio-button>
@@ -227,6 +277,7 @@ async function save(): Promise<void> {
 
       <template v-else>
         <el-form-item label="模型编码" required><el-input v-model="draft.code" :disabled="Boolean(item?.id)" placeholder="如 glm-5.3 / qwen-max" /></el-form-item>
+        <el-form-item label="供应商模型 ID" required><el-input v-model="draft.modelId" placeholder="如 vendor/model，按供应商原始 ID 填写" /><p class="muted">真实调用发送此 ID；内部编码用于专家关联。</p></el-form-item>
         <el-form-item label="显示名" required><el-input v-model="draft.name" placeholder="如 GLM-5.3" /></el-form-item>
         <el-form-item v-if="!isEdit" label="自动发现">
           <div style="display:flex;gap:10px;align-items:center;width:100%">
@@ -252,7 +303,7 @@ async function save(): Promise<void> {
       <el-form-item label="状态"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用（专家表单不再可选）" /></el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="emit('update:modelValue', false)">关闭</el-button>
+      <el-button :disabled="saving" @click="closeDrawer()">关闭</el-button>
       <el-button v-if="canEdit && !isEdit && mode === 'channel'" type="primary" :loading="saving" :disabled="!checkedModels.length" @click="saveBatch">添加所选 {{ checkedModels.length }} 个模型</el-button>
       <el-button v-else-if="canEdit" type="primary" :loading="saving" @click="save">保存模型</el-button>
     </template>

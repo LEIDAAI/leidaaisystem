@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
-import { formatOrderExpiry, formatOrderDuration } from '../../utils/format'
+import { formatOrderExpiry, formatOrderDuration, isValidMoney } from '../../utils/format'
 import { createExcelBlob, excelDateTime, type ExcelColumn } from '../../utils/excel'
 import { registerConfigHandlers, validateEntitlements } from './config-handlers'
 import { registerOperationsHandlers } from './operations-handlers'
@@ -18,6 +18,7 @@ import {
   permissionCodesOf,
   persistMockDB,
   readMockMembership,
+  readMockOrderExpiry,
   roleRefsOf,
   type MockAdmin,
   type MockFeedback,
@@ -104,6 +105,52 @@ function assertPerm(ctx: MockContext, code: string): void {
   }
 }
 
+function isSuperAdmin(adminId: number): boolean {
+  const admin = db.admins.find(a => a.id === adminId)
+  return !!admin && db.roles.some(r => admin.roleIds.includes(r.id) && r.status === 1 && r.code === 'SUPER_ADMIN')
+}
+
+function canManageRole(adminId: number, role: Pick<typeof db.roles[number], 'code' | 'permissionIds'>): boolean {
+  if (isSuperAdmin(adminId)) return true
+  if (role.code === 'SUPER_ADMIN') return false
+  const codes = new Set(permissionCodesOf(adminId))
+  return role.permissionIds.every(id => {
+    const permission = db.permissions.find(p => p.id === id)
+    return !!permission && codes.has(permission.code)
+  })
+}
+
+function assertAdminScope(ctx: MockContext, admin: MockAdmin): void {
+  if (admin.roleIds.some(id => {
+    const role = db.roles.find(r => r.id === id)
+    return !role || !canManageRole(ctx.adminId, role)
+  })) throw new MockApiError(403, '不能维护超出自身权限范围的管理员')
+}
+
+function assignableRoleIds(ctx: MockContext, value: unknown): number[] {
+  if (!Array.isArray(value) || !value.length || value.some(id => !Number.isSafeInteger(id))) {
+    throw new MockApiError(422, '请选择有效的启用角色')
+  }
+  const ids = [...new Set(value as number[])]
+  for (const id of ids) {
+    const role = db.roles.find(r => r.id === id)
+    if (!role || role.status !== 1) throw new MockApiError(422, '请选择有效的启用角色')
+    if (!canManageRole(ctx.adminId, role)) throw new MockApiError(403, '不能分配超出自身权限范围的角色')
+  }
+  return ids
+}
+
+function validatedPermissionIds(ctx: MockContext, value: unknown): number[] {
+  if (!Array.isArray(value) || value.some(id => !Number.isSafeInteger(id) || !db.permissions.some(p => p.id === id))) {
+    throw new MockApiError(422, '权限参数无效')
+  }
+  const ids = [...new Set(value as number[])]
+  if (!canManageRole(ctx.adminId, { permissionIds: ids, code: '' })) {
+    throw new MockApiError(403, '不能授予超出自身范围的权限')
+  }
+  return ids
+}
+
 function recordAudit(
   adminId: number,
   action: string,
@@ -139,12 +186,14 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; assetsFrozen: boolean } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   const membership = o.durationMode === 'MEMBERSHIP' ? readMockMembership(user) : undefined
   return {
     ...rest,
+    expiresAt: readMockOrderExpiry(o, user),
+    assetsFrozen: user?.status === 0,
     ...(membership ? { membership, expiresAt: membership.expiresAt, durationMonths: null, durationDays: undefined } : {}),
     phone: user?.phone || '—',
     wechatNickname: user ? (user.wechatNickname || '-') : '-'
@@ -218,17 +267,25 @@ route('GET', '/admins', (ctx) => {
   }
 })
 
+route('GET', '/admin-role-options', (ctx) => {
+  const permissions = permissionCodesOf(ctx.adminId)
+  if (!permissions.includes('admin:manage') && !permissions.includes('admin:edit')) throw new MockApiError(403, '无权限读取可分配角色')
+  return db.roles
+    .filter(role => (isSuperAdmin(ctx.adminId) || role.status === 1) && canManageRole(ctx.adminId, role))
+    .sort((a, b) => a.id - b.id)
+    .map(role => ({ id: role.id, code: role.code, name: role.name, status: role.status }))
+})
+
 route('POST', '/admins', (ctx) => {
   assertPerm(ctx, 'admin:edit')
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const username = String(b.username ?? '').trim()
   const password = String(b.password ?? '')
   const displayName = String(b.displayName ?? '').trim()
-  const roleIds = Array.isArray(b.roleIds) ? (b.roleIds as number[]) : []
+  const roleIds = assignableRoleIds(ctx, b.roleIds)
   if (!username || !displayName) throw new MockApiError(422, '用户名和显示名不能为空')
   if (password.length < 6) throw new MockApiError(422, '初始密码长度至少 6 位')
   if (db.admins.some((a) => a.username === username)) throw new MockApiError(422, '用户名已存在')
-  if (!roleIds.length || roleIds.some(id => !db.roles.some(r => r.id === id && r.status === 1))) throw new MockApiError(422, '请选择有效的启用角色')
   const admin: MockAdmin = {
     id: nextMockId(),
     username,
@@ -247,11 +304,11 @@ route('POST', '/admins', (ctx) => {
 route('PUT', '/admins/:id', (ctx) => {
   assertPerm(ctx, 'admin:edit')
   const admin = findOr404(db.admins, ctx.params.id, '管理员')
+  assertAdminScope(ctx, admin)
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const displayName = String(b.displayName ?? admin.displayName).trim()
-  const roleIds = Array.isArray(b.roleIds) ? b.roleIds as number[] : admin.roleIds
+  const roleIds = Object.prototype.hasOwnProperty.call(b, 'roleIds') ? assignableRoleIds(ctx, b.roleIds) : [...admin.roleIds]
   if (!displayName) throw new MockApiError(422, '显示名不能为空')
-  if (!roleIds.length || roleIds.some(id => !db.roles.some(r => r.id === id))) throw new MockApiError(422, '请选择有效角色')
   if (admin.id === 1 && !roleIds.includes(1)) throw new MockApiError(422, '内置管理员必须保留超级管理员角色')
   const before = { displayName: admin.displayName, roleIds: [...admin.roleIds] }
   admin.displayName = displayName
@@ -266,9 +323,10 @@ route('PUT', '/admins/:id', (ctx) => {
 route('PUT', '/admins/:id/status', (ctx) => {
   assertPerm(ctx, 'admin:edit')
   const admin = findOr404(db.admins, ctx.params.id, '管理员')
+  assertAdminScope(ctx, admin)
   const status = Number((ctx.body as Record<string, unknown>)?.status)
   if (status !== 0 && status !== 1) throw new MockApiError(422, '状态参数无效')
-  if (admin.id === ctx.adminId && status === 0) throw new MockApiError(422, '不能禁用当前登录账号')
+  if ((admin.id === ctx.adminId || admin.id === 1) && status === 0) throw new MockApiError(422, '不能禁用当前登录账号或内置管理员')
   const before = { status: admin.status }
   admin.status = status
   if (status === 0) {
@@ -283,6 +341,7 @@ route('PUT', '/admins/:id/status', (ctx) => {
 route('PUT', '/admins/:id/password', (ctx) => {
   assertPerm(ctx, 'admin:edit')
   const admin = findOr404(db.admins, ctx.params.id, '管理员')
+  assertAdminScope(ctx, admin)
   const password = String((ctx.body as Record<string, unknown>)?.password ?? '')
   if (password.length < 6) throw new MockApiError(422, '新密码长度至少 6 位')
   admin.password = password
@@ -293,8 +352,10 @@ route('PUT', '/admins/:id/password', (ctx) => {
 route('DELETE', '/admins/:id', (ctx) => {
   assertPerm(ctx, 'admin:edit')
   const admin = findOr404(db.admins, ctx.params.id, '管理员')
-  if (admin.id === ctx.adminId) throw new MockApiError(422, '不能删除当前登录账号')
+  assertAdminScope(ctx, admin)
+  if (admin.id === ctx.adminId || admin.id === 1) throw new MockApiError(422, '不能删除当前登录账号或内置管理员')
   db.admins.splice(db.admins.indexOf(admin), 1)
+  for (const [token, id] of db.tokens) if (id === admin.id) db.tokens.delete(token)
   recordAudit(ctx.adminId, 'admin.delete', 'admin', admin.id, { username: admin.username }, null)
   return null
 })
@@ -321,7 +382,8 @@ route('POST', '/roles', (ctx) => {
   const code = String(b.code ?? '').trim()
   const name = String(b.name ?? '').trim()
   const remark = String(b.remark ?? '')
-  const permissionIds = Array.isArray(b.permissionIds) ? (b.permissionIds as number[]) : []
+  const permissionIds = validatedPermissionIds(ctx, b.permissionIds ?? [])
+  if (code === 'SUPER_ADMIN') throw new MockApiError(422, '不能创建内置超级管理员角色')
   if (!code || !name) throw new MockApiError(422, '角色编码和名称不能为空')
   if (db.roles.some((r) => r.code === code)) throw new MockApiError(422, '角色编码已存在')
   const role = {
@@ -341,11 +403,13 @@ route('POST', '/roles', (ctx) => {
 route('PUT', '/roles/:id', (ctx) => {
   assertPerm(ctx, 'role:manage')
   const role = findOr404(db.roles, ctx.params.id, '角色')
+  if (!canManageRole(ctx.adminId, role)) throw new MockApiError(403, '不能维护超出自身权限范围的角色')
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const code = String(b.code ?? role.code)
   const name = String(b.name ?? role.name)
   const remark = String(b.remark ?? role.remark)
-  const permissionIds = Array.isArray(b.permissionIds) ? (b.permissionIds as number[]) : [...role.permissionIds]
+  const permissionIds = validatedPermissionIds(ctx, b.permissionIds ?? role.permissionIds)
+  if (code === 'SUPER_ADMIN' && role.code !== 'SUPER_ADMIN') throw new MockApiError(422, '不能改为内置超级管理员角色')
   if (!code || !name) throw new MockApiError(422, '角色编码和名称不能为空')
   if (db.roles.some((r) => r.code === code && r.id !== role.id)) throw new MockApiError(422, '角色编码已存在')
   if (role.code === 'SUPER_ADMIN' && (code !== role.code || db.permissions.some(p => !permissionIds.includes(p.id)))) throw new MockApiError(422, '内置超级管理员的编码与完整权限不可修改')
@@ -365,6 +429,7 @@ route('PUT', '/roles/:id', (ctx) => {
 route('PUT', '/roles/:id/status', (ctx) => {
   assertPerm(ctx, 'role:manage')
   const role = findOr404(db.roles, ctx.params.id, '角色')
+  if (!canManageRole(ctx.adminId, role)) throw new MockApiError(403, '不能维护超出自身权限范围的角色')
   const status = Number((ctx.body as Record<string, unknown>)?.status)
   if (status !== 0 && status !== 1) throw new MockApiError(422, '状态参数无效')
   if (role.code === 'SUPER_ADMIN') throw new MockApiError(422, '内置超级管理员角色不可禁用')
@@ -377,6 +442,7 @@ route('PUT', '/roles/:id/status', (ctx) => {
 route('DELETE', '/roles/:id', (ctx) => {
   assertPerm(ctx, 'role:manage')
   const role = findOr404(db.roles, ctx.params.id, '角色')
+  if (!canManageRole(ctx.adminId, role)) throw new MockApiError(403, '不能维护超出自身权限范围的角色')
   if (role.code === 'SUPER_ADMIN') throw new MockApiError(422, '内置超级管理员角色不可删除')
   if (db.admins.some((a) => a.roleIds.includes(role.id))) {
     throw new MockApiError(409, '该角色已绑定管理员账号，无法删除')
@@ -432,7 +498,9 @@ route('GET', '/users', (ctx) => {
       chatCount: db.chats.filter((c) => c.userId === u.id).length,
       registeredAt: u.registeredAt,
       lastLoginAt: u.lastLoginAt,
-      expireAt: readMockMembership(u).expiresAt
+      expireAt: readMockMembership(u).expiresAt,
+      membership: readMockMembership(u),
+      assetsFrozen: u.status === 0
     }))
   }
 })
@@ -453,7 +521,9 @@ route('GET', '/users/:id', (ctx) => {
     plan: {
       planId: u.planId,
       planName: u.planName,
-      expireAt: readMockMembership(u).expiresAt
+      expireAt: readMockMembership(u).expiresAt,
+      membership: readMockMembership(u),
+      assetsFrozen: u.status === 0
     },
     entitlements: u.entitlements.map((e) => ({ ...e })),
     orders: {
@@ -478,13 +548,32 @@ route('PUT', '/users/:id/status', (ctx) => {
   assertPerm(ctx, 'user:ban')
   const u = findOr404(db.users, ctx.params.id, '用户')
   const b = (ctx.body ?? {}) as Record<string, unknown>
-  if (b.banned !== true) throw new MockApiError(422, '仅支持封禁用户')
-  const reason = String(b.reason ?? '')
-  if (!reason.trim()) throw new MockApiError(422, '请填写封禁原因')
-  const before = { status: u.status }
-  u.status = 0
-  recordAudit(ctx.adminId, 'user.ban', 'user', u.id, before, {
+  if (typeof b.banned !== 'boolean') throw new MockApiError(422, '封禁参数须为布尔值')
+  const reason = typeof b.reason === 'string' ? b.reason.trim() : ''
+  if (!reason || reason.length > 200) throw new MockApiError(422, '请填写不超过 200 字的封禁或解封原因')
+  const status = b.banned ? 0 : 1
+  if (u.status === status) throw new MockApiError(409, b.banned ? '用户已封禁' : '用户已解除封禁')
+  if (u.status !== 0 && u.status !== 1) throw new MockApiError(409, '当前账户状态不支持封禁或解封')
+  const before = { status: u.status, membershipExpireAt: u.membershipExpireAt }
+  const at = Date.now()
+  u.frozenPeriods ||= []
+  if (b.banned) {
+    u.frozenPeriods.push({ startedAt: at, endedAt: null })
+  } else {
+    const period = u.frozenPeriods.find(p => p.endedAt === null)
+    if (period) {
+      period.endedAt = at
+      const expiry = dayjs(u.membershipExpireAt).valueOf()
+      if (Number.isFinite(expiry) && expiry > period.startedAt) {
+        u.membershipExpireAt = dayjs(expiry + Math.max(0, at - period.startedAt)).format('YYYY-MM-DD HH:mm:ss')
+      }
+    }
+  }
+  u.status = status
+  recordAudit(ctx.adminId, b.banned ? 'user.ban' : 'user.unban', 'user', u.id, before, {
     status: u.status,
+    assetsFrozen: b.banned,
+    membershipExpireAt: u.membershipExpireAt,
     reason
   })
   return null
@@ -493,6 +582,7 @@ route('PUT', '/users/:id/status', (ctx) => {
 route('PUT', '/users/:id/entitlements', (ctx) => {
   assertPerm(ctx, 'user:entitlement')
   const u = findOr404(db.users, ctx.params.id, '用户')
+  if (u.status !== 1) throw new MockApiError(409, '账户权益已冻结，解除封禁后才能调整')
   const items = ctx.body
   if (!Array.isArray(items)) throw new MockApiError(422, '权益数据格式错误')
   const before = u.entitlements.map((e) => ({ ...e }))
@@ -547,7 +637,8 @@ route('POST', '/orders/manual', (ctx) => {
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const phone = String(b.phone ?? '').trim()
   const planId = Number(b.planId)
-  const amount = Number(b.amount)
+  if (!isValidMoney(b.amount)) throw new MockApiError(422, '请填写非负支付金额，最多两位小数')
+  const amount = Math.round(b.amount * 100) / 100
   if (!phone) throw new MockApiError(422, '请填写手机号')
   const u = findUserByPhone(phone)
   const plan = db.plans.find((p) => p.id === planId)
@@ -557,8 +648,9 @@ route('POST', '/orders/manual', (ctx) => {
   if (plan.durationMode === 'MEMBERSHIP') throw new MockApiError(422, '常规套餐不支持会员期内有效')
   const credits = Number(plan.credits ?? 0)
   if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, 'AI 积分无效')
-  // v17：允许 0 元线下减免单（仅拒绝负数金额）
-  if (!Number.isFinite(amount) || amount < 0) throw new MockApiError(422, '支付金额不能为负数')
+  const durationMode = plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS')
+  const durationDays = durationMode === 'LIFETIME' ? 0 : plan.durationDays ?? 30
+  if (!Number.isSafeInteger(durationDays) || durationDays < 0 || (durationMode !== 'LIFETIME' && durationDays === 0)) throw new MockApiError(422, '套餐有效天数无效')
   const at = nowStr()
   const id = nextMockId()
   const order: MockOrder = {
@@ -572,10 +664,10 @@ route('POST', '/orders/manual', (ctx) => {
     goodsAmount: amount,
     discountAmount: 0,
     remainingCredits: Math.round(credits),
-    durationMonths: Number(plan.durationDays) === 0 ? 0 : Math.max(1, Math.round(Number(plan.durationDays || 30) / 30)),
-    durationMode: plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS'),
-    durationDays: Number(plan.durationDays ?? 30),
-    expiresAt: Number(plan.durationDays) === 0 ? null : dayjs(at).add(Number(plan.durationDays ?? 30), 'day').format('YYYY-MM-DD HH:mm:ss'),
+    durationMonths: durationDays === 0 ? 0 : null,
+    durationMode,
+    durationDays,
+    expiresAt: durationDays === 0 ? null : dayjs(at).add(durationDays, 'day').format('YYYY-MM-DD HH:mm:ss'),
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
@@ -589,14 +681,15 @@ route('POST', '/orders/manual', (ctx) => {
   return null
 })
 
-/** v11 创建赠送订单：金额全 0、无支付流水；套餐为长期有效（durationDays=0）时时长锁定 0（长期有效），否则 1-36 个月 */
+/** 运营特批：独立授权、必填原因、金额全 0、无支付流水。 */
 route('POST', '/orders/gift', (ctx) => {
   assertPerm(ctx, 'order:create')
+  assertPerm(ctx, 'order:gift')
   const b = (ctx.body ?? {}) as Record<string, unknown>
   const phone = String(b.phone ?? '').trim()
   const planId = Number(b.planId)
-  const durationMonths = b.durationMonths === null ? NaN : Number(b.durationMonths)
-  const credits = Number(b.credits)
+  let durationMonths = typeof b.durationMonths === 'number' ? b.durationMonths : NaN
+  const credits = b.credits
   const remark = String(b.remark ?? '').trim()
   if (!phone) throw new MockApiError(422, '请填写手机号')
   const u = findUserByPhone(phone)
@@ -604,16 +697,19 @@ route('POST', '/orders/gift', (ctx) => {
   if (!plan) throw new MockApiError(422, '套餐不存在')
   if (plan.planType !== 'GIFT') throw new MockApiError(422, '赠送订单只能选择赠送套餐，请先在套餐管理创建')
   if (plan.status !== 1) throw new MockApiError(422, '套餐已停用')
-  if (!Number.isFinite(credits) || credits < 0) throw new MockApiError(422, '赠送 AI 积分无效')
-  if (remark.length > 200) throw new MockApiError(422, '备注最多 200 字')
+  if (typeof credits !== 'number' || !Number.isSafeInteger(credits) || credits < 0) throw new MockApiError(422, '赠送 AI 积分须为非负整数')
+  if (!remark || remark.length > 200) throw new MockApiError(422, '运营特批须填写不超过 200 字的原因')
   const durationMode = plan.durationMode ?? (plan.durationDays === 0 ? 'LIFETIME' : 'CUSTOM_DAYS')
   const isMembership = durationMode === 'MEMBERSHIP'
   const isLifetime = durationMode === 'LIFETIME'
+  if (b.durationMonths === undefined && !isMembership) {
+    durationMonths = isLifetime ? 0 : Math.max(1, Math.ceil(Number(plan.durationDays ?? 30) / 30))
+  }
   if (isMembership) {
     if (!['ACTIVE', 'LIFETIME'].includes(readMockMembership(u).status)) throw new MockApiError(422, '当前用户无有效会员，无法赠送会员期内有效套餐')
   } else if (isLifetime) {
     if (durationMonths !== 0) throw new MockApiError(422, '该套餐为长期有效，赠送时长固定为长期有效')
-  } else if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 36) {
+  } else if (typeof durationMonths !== 'number' || !Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 36) {
     throw new MockApiError(422, '赠送时长须为 1-36 个月')
   }
   const at = nowStr()
@@ -635,13 +731,38 @@ route('POST', '/orders/gift', (ctx) => {
     last7DaysUsage: 0,
     payChannel: 'OFFLINE',
     status: 'PAID',
-    remark: remark || '新客体验赠送',
+    creditBatchType: 'OPS_EXCEPTION',
+    remark,
     paidAt: at,
     createdAt: at,
     transactions: []
   }
   db.orders.unshift(order)
-  recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMode, durationMonths: order.durationMonths, credits, remark })
+  recordAudit(ctx.adminId, 'order.create.gift', 'order', order.orderNo, null, { phone, planId, durationMode, durationMonths: order.durationMonths, credits, reason: remark, creditBatchType: 'OPS_EXCEPTION' })
+  return null
+})
+
+/** 仅允许线上待支付订单更改应付价；记录折让与审计，不触及已支付流水 */
+route('PUT', '/orders/:id/price', (ctx) => {
+  assertPerm(ctx, 'order:price')
+  const o = findOr404(db.orders, ctx.params.id, '订单')
+  if (o.source !== 'ONLINE' || o.status !== 'PENDING' || o.paidAt || o.transactions.length > 0) {
+    throw new MockApiError(409, '仅线上待支付且未产生支付流水的订单可改价')
+  }
+  const b = (ctx.body ?? {}) as Record<string, unknown>
+  const amount = b.amount
+  const expectedAmount = b.expectedAmount
+  const reason = typeof b.reason === 'string' ? b.reason.trim() : ''
+  if (typeof expectedAmount !== 'number' || expectedAmount !== o.amount) throw new MockApiError(409, '订单金额已变化，请刷新后重新改价')
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || amount > o.goodsAmount || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+    throw new MockApiError(422, '改价金额须为 0 至商品金额之间的数字，最多两位小数')
+  }
+  if (amount === o.amount) throw new MockApiError(422, '新价格须与当前应付金额不同')
+  if (!reason || reason.length > 200) throw new MockApiError(422, '请输入不超过 200 字的改价原因')
+  const before = { amount: o.amount, goodsAmount: o.goodsAmount, discountAmount: o.discountAmount }
+  o.amount = amount
+  o.discountAmount = Math.round((o.goodsAmount - amount) * 100) / 100
+  recordAudit(ctx.adminId, 'order.price', 'order', o.orderNo, before, { amount: o.amount, goodsAmount: o.goodsAmount, discountAmount: o.discountAmount, reason })
   return null
 })
 
@@ -757,6 +878,8 @@ route('PUT', '/feedbacks/:id/status', (ctx) => {
   if (status === 'ADOPTED') {
     if (!Number.isFinite(rewardPoints) || rewardPoints < 0) throw new MockApiError(422, '奖励积分无效')
     if (!handleRemark) throw new MockApiError(422, '采纳反馈须填写处理说明')
+    // R02 拍板：反馈奖励属运营特批积分，非购买赠分；发放须说明特批原因（处理说明即特批原因），并留审计
+    if (rewardPoints > 0 && handleRemark.length < 6) throw new MockApiError(422, '发放特批奖励须在处理说明中写明特批原因（至少 6 个字）')
   }
   const before = { status: f.status, rewardPoints: f.rewardPoints, handleRemark: f.handleRemark, handledBy: f.handledBy, handledAt: f.handledAt }
   const admin = db.admins.find((a) => a.id === ctx.adminId)
@@ -769,7 +892,9 @@ route('PUT', '/feedbacks/:id/status', (ctx) => {
     status: f.status,
     rewardPoints: f.rewardPoints,
     handleRemark: f.handleRemark,
-    handledBy: f.handledBy
+    handledBy: f.handledBy,
+    // 明确标注特批性质，便于审计区分常规购买赠分与运营特批
+    rewardType: f.rewardPoints > 0 ? 'OPS_EXCEPTION' : null
   })
   return toFeedbackItem(f)
 })
@@ -792,7 +917,7 @@ route('GET', '/audit-logs', (ctx) => {
   const objectId = qStr(ctx.query, 'objectId')
   const start = qStr(ctx.query, 'start')
   const end = qStr(ctx.query, 'end')
-  let list = [...db.auditLogs].sort((a, b) => b.id - a.id)
+  let list = [...db.auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)
   if (adminUserId !== '') list = list.filter((l) => l.adminUserId === adminUserId)
   if (action) list = list.filter((l) => l.action.includes(action))
   if (objectType) list = list.filter((l) => l.objectType === objectType)
