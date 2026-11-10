@@ -20,7 +20,7 @@ import {
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
 import { zipFiles } from '@/utils/zip'
-import { BINARY_EXT, parseSkillEntries, parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
+import { parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
 import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
 import { visTagOf } from '@/utils/visibility'
@@ -240,18 +240,16 @@ async function previewImport(drafts: SkillImportDraft[]): Promise<void> {
 
 // -------------------------------------------------------------- 工具栏操作
 const importInput = ref<HTMLInputElement | null>(null)
-const folderInput = ref<HTMLInputElement | null>(null)
 
 async function onCreate(command: string): Promise<void> {
   if (command === 'create') { void edit(); return }
   if (command === 'manage-scenarios') { sceneDlg.value = true; return }
   if (command === 'import-file') { importInput.value?.click(); return }
-  if (command === 'import-folder') { folderInput.value?.click(); return }
   if (command === 'export-zip') { void exportSelectedZip(); return }
   if (command === 'export-json') { void exportSelectedJson(); return }
 }
 
-// -------------------------------------------------------------- 导入文件（JSON / ZIP）→ 解析预览批量导入（v7）
+// -------------------------------------------------------------- 导入（JSON / ZIP）→ 解析预览批量导入（v7）
 const importDrafts = ref<SkillImportDraft[]>([])
 const importVisible = ref(false)
 
@@ -267,26 +265,6 @@ async function onImportChange(e: Event): Promise<void> {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : String(err))
     return
-  }
-}
-
-/** 从文件夹导入：解析 SKILL.md + 文本附属文件，预填编辑器（不直接入库），可视化调整后再发布 */
-async function onFolderChange(e: Event): Promise<void> {
-  const input = e.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  input.value = ''
-  if (!files.length) return
-  const rel = (f: File): string => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
-  if (!files.some((f) => /(^|\/)SKILL\.md$/i.test(rel(f)))) {
-    ElMessage.warning('所选文件夹中未找到 SKILL.md（技能主文档）')
-    return
-  }
-  try {
-    const entries: Record<string, string> = Object.create(null) as Record<string, string>
-    for (const f of files) entries[rel(f)] = BINARY_EXT.test(rel(f)) ? '' : await f.text()
-    await previewImport(parseSkillEntries(entries, rel(files[0]).split('/')[0] || 'imported-skill'))
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '文件夹读取失败')
   }
 }
 
@@ -410,15 +388,7 @@ function boundExpertCount(row: ConfigItem): number {
       <el-button @click="load">刷新列表</el-button>
       <div class="spacer" />
       <el-button v-if="canEdit" type="primary" @click="onCreate('create')">创建技能</el-button>
-      <el-dropdown v-if="canEdit" trigger="click" @command="onCreate">
-        <el-button>导入 ▾</el-button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="import-file">导入文件（JSON / ZIP）</el-dropdown-item>
-            <el-dropdown-item command="import-folder">从文件夹导入</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <el-button v-if="canEdit" @click="importInput?.click()">导入</el-button>
       <el-dropdown v-if="canExport" trigger="click" @command="onCreate">
         <el-button>导出（已勾选 {{ selected.length }}）▾</el-button>
         <template #dropdown>
@@ -508,7 +478,6 @@ function boundExpertCount(row: ConfigItem): number {
   </el-card>
 
   <input ref="importInput" type="file" accept=".json,.zip,application/json,application/zip" style="display:none" @change="onImportChange" />
-  <input ref="folderInput" type="file" webkitdirectory style="display:none" @change="onFolderChange" />
 
   <SkillEditor v-if="editorVisible" ref="skillEditor" v-model="editorVisible" :item="editItem" :can-edit="canEdit" @saved="load" />
   <VersionDrawer v-model="versionDrawer" kind="skills" :item="historyItem" :can-edit="canEdit" @restored="load" />
