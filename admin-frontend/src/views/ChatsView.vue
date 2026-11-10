@@ -32,10 +32,8 @@ async function loadExperts(){const request=++expertRequest;expertLoading.value=t
 async function load(){const request=++listRequest;loading.value=true;listError.value=false;try{const data=await listChatUsers({expertIds:query.expertIds.join(','),phone:query.phone,keyword:query.keyword,start:query.start,end:query.end,page:query.page,pageSize:query.pageSize,scope:'user-aggregate'});if(request!==listRequest)return;if(!data.list.length&&query.page>1){query.page=Math.max(1,Math.ceil(data.total/query.pageSize));await load();return}userRows.value=data.list;total.value=data.total}catch{if(request===listRequest){listError.value=true;userRows.value=[];total.value=0}}finally{if(request===listRequest)loading.value=false}}
 async function search(){if(query.start&&query.end&&query.start>query.end){ElMessage.warning('开始日期不能晚于结束日期');return}query.page=1;await load()}
 function resetSearch(){Object.assign(query,{phone:'',expertIds:[],keyword:'',start:'',end:'',page:1,pageSize:20});load()}
-/** 聚合行的最新对话 → ChatItem（供打开对话详情） */
 /** 二级视图分页（服务端真实分页，不再一次拉 100 条） */
 const userQuery=reactive({page:1,pageSize:20}),userTotal=ref(0)
-function asChat(row:UserChatRow):ChatItem{return {id:row.latest.id,userId:row.userId,expertId:row.latest.expertId,title:row.latest.title,expertName:row.latest.expertName,summary:row.latest.summary,messageCount:row.latest.messageCount,createdAt:row.latest.createdAt,deletedAt:row.latest.deletedAt,deleteReason:row.latest.deleteReason,wechatNickname:row.wechatNickname,phone:row.phone}}
 async function openUser(row:UserChatRow){view.value='user';curUser.value=row;userQuery.page=1;askCache.value={};askLoading.value={};askErrors.value={};++expansionVersion;await loadUserChats()}
 async function loadUserChats(){const userId=curUser.value?.userId;if(userId===undefined)return;const request=++userRequest;userChats.value=[];userTotal.value=0;userLoading.value=true;userError.value=false;try{const data=await listChats({userId,deleted:'all',...userQuery});if(request!==userRequest||curUser.value?.userId!==userId||view.value!=='user')return;userChats.value=data.list;userTotal.value=data.total}catch{if(request===userRequest)userError.value=true}finally{if(request===userRequest)userLoading.value=false}}
 async function openChat(row:ChatItem,idx?:number){if(view.value!=='chat')chatFrom.value=view.value;view.value='chat';const request=++detailRequest;curChat.value={...row};askIdx.value=idx??null;loadedChatId.value=undefined;messages.value=[];analysis.value=undefined;openTabs.value=['table'];activeTab.value='table';previewCollapsed.value=false;reportZoom.value=1;detailLoading.value=true;detailError.value=false;try{const [ms,an]=await Promise.all([chatMessages(row.id),chatAnalysis(row.id,idx)]);if(request!==detailRequest||view.value!=='chat'||curChat.value?.id!==row.id)return;messages.value=ms;analysis.value=an;loadedChatId.value=row.id}catch{if(request===detailRequest)detailError.value=true}finally{if(request===detailRequest)detailLoading.value=false}}
@@ -82,7 +80,7 @@ onMounted(()=>{load();loadExperts()})
 <!-- 视图一：用户视角 —— 一行 = 一个用户 + 其最新一条对话，支持手机号搜索 -->
 <el-card v-if="view==='list'" shadow="never">
   <el-form inline @submit.prevent="search">
-    <el-form-item label="手机号"><el-input v-model="query.phone" placeholder="支持片段搜索" clearable style="width:150px"/></el-form-item>
+    <el-form-item label="手机号"><el-input v-model="query.phone" placeholder="多号用顿号、逗号或空格分隔" clearable style="width:210px" @keyup.enter="search"/></el-form-item>
     <el-form-item label="专家"><el-select v-model="query.expertIds" multiple filterable clearable collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :loading="expertLoading" placeholder="选择专家（可多选）" style="width:250px"><el-option v-for="expert in expertOptions" :key="expert.id" :value="String(expert.id)" :label="`${expert.name}（ID: ${expert.id}）`"/></el-select><el-button v-if="expertError" link type="warning" @click="loadExperts">名称加载失败，重试</el-button></el-form-item>
     <el-form-item><el-input v-model="query.keyword" placeholder="消息关键词" clearable/></el-form-item>
     <el-form-item><el-date-picker v-model="query.start" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:145px"/></el-form-item>
@@ -100,7 +98,7 @@ onMounted(()=>{load();loadExperts()})
     <el-table-column label="最新对话" min-width="270"><template #default="{row}"><el-tag size="small">{{row.latest.expertName || '—'}}</el-tag><div class="ellipsis">{{row.latest.summary}}</div></template></el-table-column>
     <el-table-column label="最新对话时间（北京）" min-width="185"><template #default="{row}">{{beijingTime(row.latest.createdAt)}}</template></el-table-column>
     <el-table-column label="最新对话状态" width="115"><template #default="{row}">{{row.latest.deletedAt?'已删除':'正常'}}<small v-if="row.latest.deletedAt"><br/>{{row.latest.deleteReason}}</small></template></el-table-column>
-    <el-table-column label="操作" width="170" fixed="right"><template #default="{row}"><el-button link type="primary" @click="openUser(row)">对话列表</el-button><el-button link type="primary" @click="openChat(asChat(row))">查看分析</el-button></template></el-table-column>
+    <el-table-column label="操作" width="100" fixed="right"><template #default="{row}"><el-button link type="primary" @click="openUser(row)">对话列表</el-button></template></el-table-column>
   </el-table>
   <el-pagination v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="total" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="search" style="margin-top:20px"/>
 </el-card>
@@ -122,6 +120,7 @@ onMounted(()=>{load();loadExperts()})
             <div v-for="(m,i) in askCache[row.id]" :key="i" class="ask-row">
               <el-tag size="small" effect="plain" class="ask-no">第 {{ i + 1 }} 问</el-tag>
               <span class="ask-content" :title="m.content">{{ m.content }}</span>
+              <el-tag size="small" effect="plain" class="ask-expert">{{ row.expertName || '—' }}</el-tag>
               <small class="ask-time">{{ beijingTime(m.createdAt) }}</small>
               <el-button link type="primary" @click="openChat(row, i)">查看分析</el-button>
             </div>
@@ -300,6 +299,7 @@ onMounted(()=>{load();loadExperts()})
 .ask-row:last-child{border-bottom:none}
 .ask-no{flex-shrink:0}
 .ask-content{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#303133;font-size:13px}
+.ask-expert{flex-shrink:0}
 .ask-time{color:#909399;flex-shrink:0}
 /* 三级提问模式：问题横幅 */
 .ask-banner{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;margin-bottom:20px;background:#ecf5ff;border:1px solid #d9ecff;border-radius:8px}

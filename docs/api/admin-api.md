@@ -298,7 +298,7 @@
 |---|---|---|---|
 | GET | /chats/expert-options | chat:view | 专家名称/ID筛选选项，不依赖expert:view；前端多选下拉（v22）可搜索、多选、重置 |
 | GET | /chats | chat:view | 参数 `userId`、`expertIds`（v22 逗号分隔多专家 ID，命中任一即显示；兼容旧单值 `expertId`）、`keyword`(消息内容全文)、`start`/`end`、分页；返回脱敏摘要 |
-| GET | /chats/users | chat:view | 用户聚合列表（一行=一用户+最新对话）。v22 起筛选栏移除会话状态下拉：不传 `deleted` 时返回全部（含已删除，行内展示删除数）；`expertIds` 多选同 /chats；传 `scope=user-aggregate` 标记来源（语义占位）。二级 `/chats` 列表仍显式传 `deleted=all` 展示全部并可在行内恢复 |
+| GET | /chats/users | chat:view | 用户聚合列表（一行=一用户+最新对话）。v22 起筛选栏移除会话状态下拉：不传 `deleted` 时返回全部（含已删除，行内展示删除数）；`expertIds` 多选同 /chats；**v23 `phone` 支持顿号/逗号/分号/空格分隔多号片段搜索（任一片段命中即显示该用户）**；传 `scope=user-aggregate` 标记来源（语义占位）。二级 `/chats` 列表仍显式传 `deleted=all` 展示全部并可在行内恢复 |
 | GET | /chats/{id}/messages | chat:view | 完整消息流（每次调用记审计） |
 | DELETE | /chats/{id} | chat:delete | 软删除，`{reason}` |
 | GET | /chats/{id}/export | chat:export | R8 参数 `format=json` 或 `format=xlsx`（默认 json），独立于 chat:view 授权；仅导出目标会话完整脱敏消息并审计，不扩大至跨会话全量；其他格式返回 422 |
