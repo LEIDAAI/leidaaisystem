@@ -11,7 +11,12 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
   const userOf=(id:number)=>db.users.find(u=>u.id===id)
   const filtered=(ctx:Context)=>db.chats.filter(c=>{
     const q=ctx.query
-    return (!q.userId || c.userId===Number(q.userId)) && (!q.phone || (userOf(c.userId)?.phone || '').includes(String(q.phone).trim())) && (!q.expertId || c.expertId===Number(q.expertId)) && (!q.keyword || c.messages.some(m=>m.content.includes(String(q.keyword)))) && (!q.start || beijingDate(c.createdAt)>=String(q.start)) && (!q.end || beijingDate(c.createdAt)<=String(q.end)) && (q.deleted==='all' || (q.deleted==='true'?!!c.deletedAt:!c.deletedAt))
+    // v22：专家多选（expertIds 逗号分隔，命中任一即显示）；兼容旧单值 expertId
+    const expertIds=String(q.expertIds ?? '').split(',').map(s=>s.trim()).filter(Boolean).map(Number).filter(n=>Number.isFinite(n)&&n>0)
+    const expertMatch=expertIds.length ? expertIds.includes(c.expertId) : (!q.expertId || c.expertId===Number(q.expertId))
+    // 会话状态：用户聚合列表（scope=user-aggregate）不传 deleted 时显示全部（含已删除，行内可见删除数）；二级列表显式传 deleted
+    const deletedFilter=q.deleted===undefined||q.deleted===null||(String(q.deleted)===''&&q.scope==='user-aggregate') ? true : (q.deleted==='all' || (q.deleted==='true'?!!c.deletedAt:!c.deletedAt))
+    return (!q.userId || c.userId===Number(q.userId)) && (!q.phone || (userOf(c.userId)?.phone || '').includes(String(q.phone).trim())) && expertMatch && (!q.keyword || c.messages.some(m=>m.content.includes(String(q.keyword)))) && (!q.start || beijingDate(c.createdAt)>=String(q.start)) && (!q.end || beijingDate(c.createdAt)<=String(q.end)) && deletedFilter
   }).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))
   route('GET','/chats/expert-options',ctx=>{perm(ctx,'chat:view');return db.experts.map(e=>({id:e.id,name:redact(e.name)}))})
   /** 对话管理（用户视角）：按用户聚合，一行 = 一个用户 + 其最新一条对话；支持手机号搜索 */

@@ -14,7 +14,7 @@ const {max:listMax,bind:bindList}=useTableMaxHeight(96)
 const {max:chatsMax,bind:bindChats}=useTableMaxHeight(96)
 /** 三级视图：list 用户聚合列表 → user 某用户的对话列表 → chat 单次对话详情 */
 const view=ref<'list'|'user'|'chat'>('list')
-const query=reactive({phone:'',expertId:'',keyword:'',start:'',end:'',deleted:'',page:1,pageSize:20})
+const query=reactive({phone:'',expertIds:[] as string[],keyword:'',start:'',end:'',page:1,pageSize:20})
 const userRows=ref<UserChatRow[]>([]),total=ref(0),loading=ref(false)
 const curUser=ref<UserChatRow>(),userChats=ref<ChatItem[]>([]),userLoading=ref(false)
 const curChat=ref<ChatItem>(),messages=ref<Message[]>([]),analysis=ref<ChatAnalysis>(),detailLoading=ref(false)
@@ -29,9 +29,9 @@ const loadedChatId=ref<number>()
 const expertOptions=ref<Array<{id:number;name:string}>>([]),expertLoading=ref(false),expertError=ref(false)
 let expertRequest=0
 async function loadExperts(){const request=++expertRequest;expertLoading.value=true;expertError.value=false;try{const options=await get<Array<{id:number;name:string}>>('/chats/expert-options');if(request===expertRequest)expertOptions.value=options}catch{if(request===expertRequest)expertError.value=true}finally{if(request===expertRequest)expertLoading.value=false}}
-async function load(){const request=++listRequest;loading.value=true;listError.value=false;try{const data=await listChatUsers({...query});if(request!==listRequest)return;if(!data.list.length&&query.page>1){query.page=Math.max(1,Math.ceil(data.total/query.pageSize));await load();return}userRows.value=data.list;total.value=data.total}catch{if(request===listRequest){listError.value=true;userRows.value=[];total.value=0}}finally{if(request===listRequest)loading.value=false}}
+async function load(){const request=++listRequest;loading.value=true;listError.value=false;try{const data=await listChatUsers({expertIds:query.expertIds.join(','),phone:query.phone,keyword:query.keyword,start:query.start,end:query.end,page:query.page,pageSize:query.pageSize,scope:'user-aggregate'});if(request!==listRequest)return;if(!data.list.length&&query.page>1){query.page=Math.max(1,Math.ceil(data.total/query.pageSize));await load();return}userRows.value=data.list;total.value=data.total}catch{if(request===listRequest){listError.value=true;userRows.value=[];total.value=0}}finally{if(request===listRequest)loading.value=false}}
 async function search(){if(query.start&&query.end&&query.start>query.end){ElMessage.warning('开始日期不能晚于结束日期');return}query.page=1;await load()}
-function resetSearch(){Object.assign(query,{phone:'',expertId:'',keyword:'',start:'',end:'',deleted:'',page:1,pageSize:20});load()}
+function resetSearch(){Object.assign(query,{phone:'',expertIds:[],keyword:'',start:'',end:'',page:1,pageSize:20});load()}
 /** 聚合行的最新对话 → ChatItem（供打开对话详情） */
 /** 二级视图分页（服务端真实分页，不再一次拉 100 条） */
 const userQuery=reactive({page:1,pageSize:20}),userTotal=ref(0)
@@ -83,11 +83,10 @@ onMounted(()=>{load();loadExperts()})
 <el-card v-if="view==='list'" shadow="never">
   <el-form inline @submit.prevent="search">
     <el-form-item label="手机号"><el-input v-model="query.phone" placeholder="支持片段搜索" clearable style="width:150px"/></el-form-item>
-    <el-form-item label="专家"><el-select v-model="query.expertId" filterable clearable :loading="expertLoading" placeholder="搜索专家名称 / ID" style="width:230px"><el-option v-for="expert in expertOptions" :key="expert.id" :value="String(expert.id)" :label="`${expert.name}（ID: ${expert.id}）`"/></el-select><el-button v-if="expertError" link type="warning" @click="loadExperts">名称加载失败，重试</el-button></el-form-item>
+    <el-form-item label="专家"><el-select v-model="query.expertIds" multiple filterable clearable collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :loading="expertLoading" placeholder="选择专家（可多选）" style="width:250px"><el-option v-for="expert in expertOptions" :key="expert.id" :value="String(expert.id)" :label="`${expert.name}（ID: ${expert.id}）`"/></el-select><el-button v-if="expertError" link type="warning" @click="loadExperts">名称加载失败，重试</el-button></el-form-item>
     <el-form-item><el-input v-model="query.keyword" placeholder="消息关键词" clearable/></el-form-item>
     <el-form-item><el-date-picker v-model="query.start" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:145px"/></el-form-item>
     <el-form-item><el-date-picker v-model="query.end" value-format="YYYY-MM-DD" placeholder="结束日期" style="width:145px"/></el-form-item>
-    <el-form-item><el-select v-model="query.deleted" style="width:130px"><el-option label="正常会话" value=""/><el-option label="已软删除" value="true"/><el-option label="全部" value="all"/></el-select></el-form-item>
     <el-button type="primary" :loading="loading" @click="search">查询</el-button>
     <el-button @click="resetSearch">重置</el-button>
     <small>日期与时间均为北京时间（UTC+08:00）</small>
