@@ -65,7 +65,7 @@ async function logout() {
   <el-container class="admin-layout">
     <el-aside width="208px" class="admin-aside">
       <div class="admin-logo"><svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><rect x="6" y="7" width="28" height="21" rx="5" fill="none" stroke="#00b96b" stroke-width="4"/><circle cx="20" cy="17.5" r="4.5" fill="#f7ba2a"/><rect x="11" y="32" width="18" height="4.5" rx="2.25" fill="#00b96b"/></svg><div>店雷达管理系统</div></div>
-      <el-menu :default-active="route.path" :default-openeds="[String(route.meta.menuGroup || '')]" router class="admin-menu">
+      <el-menu :default-active="route.path" :default-openeds="visibleGroups.map(group => group.title)" router class="admin-menu">
         <el-sub-menu v-for="group in visibleGroups" :key="group.title" :index="group.title">
           <template #title><span>{{ group.title }}</span></template>
           <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
