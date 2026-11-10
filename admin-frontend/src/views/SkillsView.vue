@@ -13,7 +13,7 @@ import type { CheckboxValueType } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { get, ApiError } from '@/api/request'
 import {
-  listConfig, saveConfig, deleteConfig, skillStats, exportConfigJson, cloneSkill,
+  listConfig, saveConfig, deleteConfig, skillStats, cloneSkill,
   listScenarios, saveScenario, deleteScenario, PLATFORMS, platformMeta,
   type ConfigItem, type PlatformType, type Scenario
 } from '@/api/config'
@@ -362,10 +362,14 @@ async function clone(item: ConfigItem): Promise<void> {
   await load()
 }
 
-async function exportJson(item: ConfigItem): Promise<void> {
-  const { filename, content } = await exportConfigJson('skills', item.id)
-  downloadJsonFile(filename, content)
-  ElMessage.success(`已导出 ${filename}`)
+/** 导出 ZIP：单个技能 → {code}/SKILL.md + {code}/{file.name}（与批量 ZIP 同结构，可直接再导入） */
+function exportZip(item: ConfigItem): void {
+  const entries = [
+    { name: `${item.code}/SKILL.md`, content: String(item.content || '') },
+    ...(item.files || []).map((f) => ({ name: `${item.code}/${f.name}`, content: String(f.content || '') }))
+  ]
+  downloadBlobFile(`skill-${item.code}.zip`, zipFiles(entries))
+  ElMessage.success(`已导出技能 ZIP：skill-${item.code}.zip`)
 }
 
 async function stats(item: ConfigItem): Promise<void> {
@@ -383,7 +387,7 @@ function onRowCommand(cmd: string, row: ConfigItem): void {
   if (cmd === 'group') openGroupDialog(row)
   else if (cmd === 'history') history(row)
   else if (cmd === 'clone') void clone(row)
-  else if (cmd === 'export') void exportJson(row)
+  else if (cmd === 'export') exportZip(row)
   else if (cmd === 'stats') void stats(row)
   else if (cmd === 'remove') void remove(row)
 }
@@ -491,7 +495,7 @@ function boundExpertCount(row: ConfigItem): number {
                 <el-dropdown-item v-if="canEdit" command="group">加入场景分组</el-dropdown-item>
                 <el-dropdown-item command="history">版本历史</el-dropdown-item>
                 <el-dropdown-item v-if="canClone" command="clone">克隆</el-dropdown-item>
-                <el-dropdown-item v-if="canExport" command="export">导出 JSON</el-dropdown-item>
+                <el-dropdown-item v-if="canExport" command="export">导出 ZIP</el-dropdown-item>
                 <el-dropdown-item command="stats">统计</el-dropdown-item>
                 <el-dropdown-item v-if="canEdit" command="remove" divided>删除</el-dropdown-item>
               </el-dropdown-menu>
