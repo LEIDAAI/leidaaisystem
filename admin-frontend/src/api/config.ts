@@ -242,6 +242,9 @@ export const deleteScenario = (id: number) => del(`/scenarios/${id}`)
 
 // ---------------------------------------------------------------- 智能体管理（v25）
 export const listAgents = () => get<Agent[]>('/agents')
+/** v26 智能体增删改（skill:edit）：code 创建后不可改；删除前须先转移其技能 */
+export const saveAgent = (item: Partial<Agent> & { id?: number }) => item.id ? put<Agent>(`/agents/${item.id}`, item) : post<Agent>('/agents', item)
+export const deleteAgent = (id: number) => del(`/agents/${id}`)
 
 // ---------------------------------------------------------------- 知识库管理（v7）
 export const listKnowledgeBases = () => get<KnowledgeBase[]>('/knowledge-bases')

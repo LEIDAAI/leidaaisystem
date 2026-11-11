@@ -4,13 +4,13 @@ import { ElMessage } from 'element-plus'
 import { Check } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { configVersions, restoreConfigVersion, type ConfigItem, type ConfigVersion } from '@/api/config'
-import { simpleLineDiff, type DiffLine } from '@/utils/jsonio'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 
 /**
  * 版本历史抽屉（v6 Coze 风格改版）：左侧时间线卡片列表（最新版本带橙色「当前」徽章 + 绿勾保存结果行），
- * 点击卡片在右侧预览该版本快照（技能为 SKILL.md 正文，专家/MCP 为 JSON），可切换「对比上一版」行级 diff；
+ * 点击卡片在右侧预览该版本快照（技能为 SKILL.md 正文，专家/MCP 为 JSON）；
  * 底部「还原为此版本」走版本确认框，恢复以新版本形式写入，不覆盖历史。
+ * v26：移除「对比上一版」开关与行级 diff，预览区只展示选中版本快照。
  */
 const props = defineProps<{ modelValue: boolean; kind: 'experts' | 'skills' | 'mcp/servers' | 'plans'; item: ConfigItem | null; canEdit: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; restored: [] }>()
@@ -18,8 +18,6 @@ const versions = ref<ConfigVersion[]>([])
 const loading = ref(false)
 /** 当前选中（右侧预览）的版本号，打开时默认选最新 */
 const selectedVer = ref<number | null>(null)
-/** 预览区切换：与上一版本的行级 diff */
-const comparePrev = ref(false)
 /** 恢复走版本确认框：待恢复版本与默认版本名（恢复自 <源版本名>） */
 const restoreDialog = ref(false)
 const restoreTarget = ref<{ version: number; defaultName: string } | null>(null)
@@ -28,10 +26,7 @@ const restoring = ref(false)
 const sorted = computed(() => [...versions.value].sort((a, b) => b.version - a.version))
 const selectedIndex = computed(() => sorted.value.findIndex((v) => v.version === selectedVer.value))
 const selected = computed(() => (selectedIndex.value >= 0 ? sorted.value[selectedIndex.value] : null))
-/** 选中版本的上一版本（时间线上更早的一条） */
-const prevSnap = computed(() => (selectedIndex.value >= 0 ? sorted.value[selectedIndex.value + 1] : undefined))
 const isLatest = computed(() => !!selected.value && sorted.value[0]?.version === selected.value.version)
-const canCompare = computed(() => !!selected.value && !!prevSnap.value)
 const previewTitle = computed(() =>
   props.kind === 'skills' ? 'SKILL.md 快照预览' : props.kind === 'mcp/servers' ? '连接配置快照预览（凭据已按服务端策略脱敏）' : props.kind === 'plans' ? '套餐配置快照预览（全量 JSON）' : '全量配置快照预览（凭据/提示词已按服务端策略脱敏）'
 )
@@ -40,10 +35,6 @@ const snapText = (v?: ConfigVersion | null): string => {
   if (props.kind === 'skills') return String(v.snapshot.content || '')
   return JSON.stringify(v.snapshot, null, 2)
 }
-const diffLines = computed<DiffLine[]>(() => {
-  if (!comparePrev.value || !prevSnap.value) return []
-  return simpleLineDiff(snapText(prevSnap.value), snapText(selected.value))
-})
 const shortTime = (t: string): string => (dayjs(t).isValid() ? dayjs(t).format('MM-DD HH:mm') : String(t))
 
 watch(
@@ -57,7 +48,6 @@ watch(
       loading.value = false
     }
     selectedVer.value = sorted.value[0]?.version ?? null
-    comparePrev.value = false
   },
   { immediate: true }
 )
@@ -66,7 +56,6 @@ watch(
 function selectVersion(v: ConfigVersion): void {
   if (selectedVer.value === v.version) return
   selectedVer.value = v.version
-  comparePrev.value = false
 }
 
 /** 恢复走版本确认框，默认生成新版本名「恢复自 <源版本名>」（源版本无名称则用 v{N}） */
@@ -85,7 +74,6 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
     restoreDialog.value = false
     versions.value = await configVersions(props.kind, props.item.id)
     selectedVer.value = sorted.value[0]?.version ?? null
-    comparePrev.value = false
     emit('restored')
   } finally {
     restoring.value = false
@@ -120,20 +108,13 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
           </div>
         </div>
       </div>
-      <!-- 右：选中版本快照预览 / 与上一版行级 diff -->
+      <!-- 右：选中版本快照预览 -->
       <div class="preview">
         <template v-if="selected">
           <div class="preview-head">
             <span class="ptitle">{{ previewTitle }}</span>
-            <el-switch v-model="comparePrev" size="small" :disabled="!canCompare" active-text="对比上一版" />
           </div>
-          <div v-if="comparePrev && prevSnap" class="preview-body">
-            <div v-for="(l, i) in diffLines" :key="i" :class="['diff-line', l.type]">
-              <template v-if="l.type !== 'same'">{{ l.type === 'add' ? '+ ' : '- ' }}{{ l.text }}</template>
-              <template v-else>&nbsp;{{ l.text }}</template>
-            </div>
-          </div>
-          <div v-else class="preview-body">{{ snapText(selected) }}</div>
+          <div class="preview-body">{{ snapText(selected) }}</div>
         </template>
         <el-empty v-else description="点击左侧版本查看快照" :image-size="60" />
       </div>
@@ -181,10 +162,6 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
 .preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .ptitle { font-size: 13px; color: var(--el-text-color-regular); }
 .preview-body { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 10px 12px; font-family: Consolas, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--el-text-color-primary); }
-.diff-line { padding: 1px 8px; white-space: pre-wrap; word-break: break-all; }
-.diff-line.add { background: #f0f9eb; color: #67c23a; }
-.diff-line.del { background: #fef0f0; color: #f56c6c; text-decoration: line-through; }
-.diff-line.same { color: #909399; }
 .drawer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

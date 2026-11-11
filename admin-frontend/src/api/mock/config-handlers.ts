@@ -3,7 +3,7 @@ import { CAPABILITY_KEYS, defaultCapabilities, redact, detectPlatforms, seedBill
 import type { LlmModelRow } from './extension-data'
 import { simulatePreviewChat, type PreviewDraftLike } from './preview-engine'
 import { normalizeFrontendPerms, PLATFORMS, hostOf } from '../config'
-import type { BillingSettings, ConfigItem, ConfigKind, ConfigVersion, CreditPackage, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario, Tool } from '../config'
+import type { Agent, BillingSettings, ConfigItem, ConfigKind, ConfigVersion, CreditPackage, Entitlement, KnowledgeBase, KnowledgeFile, LlmModel, PlatformType, ProbedModel, ProbeModelsResult, Scenario, Tool } from '../config'
 
 export interface Context { params: Record<string,string>; query: Record<string,unknown>; body: unknown; adminId: number; token: string }
 export interface Services {
@@ -819,6 +819,42 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
   route('POST','/scenarios',saveScenario);route('PUT','/scenarios/:id',saveScenario)
   // -------------------------------------------------- v22：智能体（技能归属维度；与平台/场景正交，各智能体互不关联）
   route('GET','/agents',ctx=>{if(!['skill:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);return [...(db.agents||[])].sort((a,b)=>(a.sort??0)-(b.sort??0) || a.id-b.id)})
+  // v26 智能体管理：新增/编辑/删除（skill:edit）。code 创建后不可改；删除前须先转移其技能
+  const agentSlug=(raw:unknown):string=>{const v=String(raw??'').trim().toLowerCase();if(!/^[a-z][a-z0-9-]{1,31}$/.test(v)) fail('智能体编码须为 2~32 位小写字母/数字/短横线且以字母开头');return v}
+  const agentPayload=(ctx:Context,old?:Agent):Agent=>{
+    const b=(ctx.body??{}) as Record<string,unknown>
+    const name=String(b.name??old?.name??'').trim()
+    if(!name||name.length>40) fail('智能体名称须为 1~40 字')
+    const code=old?old.code:agentSlug(b.code)
+    if(old&&b.code!==undefined&&agentSlug(b.code)!==old.code) fail('智能体编码创建后不可修改')
+    if(!old&&(db.agents||[]).some(a=>a.code===code)) fail(`智能体编码「${code}」已存在`)
+    const status=b.status===undefined?(old?.status??1):(Number(b.status)===1?1:0)
+    const sort=b.sort===undefined?(old?.sort??(db.agents||[]).length+1):Math.max(0,Math.trunc(Number(b.sort)||0))
+    const description=String(b.description??old?.description??'').trim().slice(0,200)
+    return { id:old?old.id:nextMockId(), name, code, description, status, sort, createdAt:old?.createdAt??nowStr(), updatedAt:nowStr() }
+  }
+  route('POST','/agents',ctx=>{
+    if(!permissionCodesOf(ctx.adminId).includes('skill:edit')) fail('无权限执行该操作',403)
+    const item=agentPayload(ctx)
+    db.agents=db.agents||[];db.agents.push(item)
+    audit(ctx.adminId,'agent.create','agent',item.id,null,item);return item
+  })
+  route('PUT','/agents/:id',ctx=>{
+    if(!permissionCodesOf(ctx.adminId).includes('skill:edit')) fail('无权限执行该操作',403)
+    const old=(db.agents||[]).find(a=>a.id===Number(ctx.params.id)) || fail('智能体不存在',404)
+    const before={name:old.name,code:old.code,description:old.description,status:old.status,sort:old.sort}
+    const item=agentPayload(ctx,old)
+    Object.assign(old,item)
+    audit(ctx.adminId,'agent.update','agent',old.id,before,{name:old.name,description:old.description,status:old.status,sort:old.sort});return old
+  })
+  route('DELETE','/agents/:id',ctx=>{
+    if(!permissionCodesOf(ctx.adminId).includes('skill:edit')) fail('无权限执行该操作',403)
+    const item=(db.agents||[]).find(a=>a.id===Number(ctx.params.id)) || fail('智能体不存在',404)
+    const refs=db.skills.filter(sk=>sk.agentId===item.id).map(sk=>`技能「${sk.name}」`)
+    if(refs.length) fail(`智能体仍归属以下技能：${refs.join('、')}；请先将技能移至其他智能体或公共池`,409)
+    db.agents.splice(db.agents.indexOf(item),1)
+    audit(ctx.adminId,'agent.delete','agent',item.id,item,null);return null
+  })
   route('DELETE','/scenarios/:id',ctx=>{
     if(!['skill:edit','expert:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);const item=db.scenarios.find(s=>s.id===Number(ctx.params.id)) || fail('场景不存在',404)
     const refs=[...db.skills.filter(sk=>sk.scenarioId===item.id).map(sk=>`技能「${sk.name}」`),...db.experts.filter(ex=>ex.scenarioId===item.id).map(ex=>`专家「${ex.name}」`)]

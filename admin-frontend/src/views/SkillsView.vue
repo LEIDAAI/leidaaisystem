@@ -6,8 +6,8 @@
  * 编辑进入全屏 SkillEditor（文件树 + 编辑|预览 + 自动保存）；停用/删除遇 409 引用确认后携带 confirmReferences 重试。
  * v7 分组：上方 Tab 切换（全部 / 未分组 / 各平台，平台下再切场景）；「加入场景分组」改为下拉框选择；右上「场景管理」维护平台下的场景。
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CheckboxValueType } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -30,6 +30,8 @@ import SkillImportDialog from './config/SkillImportDialog.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
 
 const auth = useAuthStore()
+/** v26：从「智能体管理」页跳转技能页时的定位参数（?tab=agents&agent=<id>） */
+const route = useRoute()
 
 /** 列表限高：视口自适应、列表内部滚动（顶部页签/筛选条保持可见） */
 const { max: rowsMax, bind: bindRows } = useTableMaxHeight(24)
@@ -63,8 +65,11 @@ async function load(): Promise<void> {
   }
   // v25 智能体列表独立加载：失败不影响技能列表，Tab 内提供重试
   await loadAgents()
+  applyRouteQuery()
 }
 void load()
+// v26：路由 query 变化（如从智能体管理页跳回）时同步 Tab 定位
+watch(() => route.query.tab, () => applyRouteQuery())
 
 // -------------------------------------------------------------- 勾选导出（v7）：导出 ZIP / JSON 仅导出勾选行
 const selected = ref<number[]>([])
@@ -96,6 +101,13 @@ const agentLoadError = ref(false)
 const activeTab = ref<string>('all')
 const activeScenario = ref<number | 'all' | 'unassigned'>('all')
 const activeAgent = ref<number | 'all'>('all')
+/** v26：支持从「智能体管理」页跳转定位（?tab=agents&agent=<id>） */
+function applyRouteQuery(): void {
+  if (route.query.tab !== 'agents') return
+  activeTab.value = 'agents'
+  const aid = Number(route.query.agent)
+  activeAgent.value = Number.isFinite(aid) && aid > 0 ? aid : 'all'
+}
 
 const scenariosOf = (p: PlatformType): Scenario[] => scenarios.value.filter((s) => s.platformId === p)
 const scenarioById = (id?: number | null): Scenario | undefined => scenarios.value.find((s) => s.id === id)
