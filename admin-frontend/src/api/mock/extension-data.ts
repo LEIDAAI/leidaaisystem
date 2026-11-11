@@ -44,6 +44,34 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   citations: '引用来源', status_updates: '状态推送', memory: '长期记忆', builtin_tools: '内置工具', usage: '用量统计'
 }
 
+/**
+ * v28：技能附属文件种子（含首段路径隐式文件夹，如 docs/… → 文件夹 docs），
+ * 让技能编辑器文件树与版本历史文件树都有多文件多文件夹的可演示结构
+ */
+export const SKILL_FILES: Record<number, SkillFile[]> = {
+  11: [
+    { name: 'docs/搜索流程.md', content: '# 搜索流程\n\n1. 解析关键词与类目\n2. 分页拉取候选商品\n3. 过滤与去重\n4. 输出候选清单' },
+    { name: 'docs/字段字典.md', content: '# 字段字典\n\n| 字段 | 含义 |\n| --- | --- |\n| keyword | 搜索关键词 |\n| category_id | 1688 类目 ID |\n| page_size | 每页条数 |' },
+    { name: 'references/类目映射.md', content: '# 类目映射\n\n- 厨房收纳 → 家居日用\n- 户外用品 → 运动户外\n- 宠物用品 → 宠物生活' },
+    { name: 'scripts/export-result.md', content: '# 导出说明\n\n导出 CSV 时按「结论 / 证据 / 风险」三列输出，仅导出结论通过的候选。' }
+  ],
+  12: [
+    { name: 'docs/价格模型.md', content: '# 价格模型\n\n到手价 = 报价 × (1 − 优惠) + 运费；跨境成本另计。' },
+    { name: 'references/竞品口径.md', content: '# 竞品口径\n\n同款以标题核心词 + 规格近似匹配，销量取近 30 天。' }
+  ],
+  13: [
+    { name: 'docs/分析步骤.md', content: '# 分析步骤\n\n1. 拉取会话内候选\n2. 计算关键词竞争度\n3. 输出机会与风险清单' }
+  ],
+  14: [
+    { name: 'docs/解析规则.md', content: '# 解析规则\n\n优先解析 SKU 属性与包装规格，缺失时回退标题关键词。' },
+    { name: 'scripts/parse-notes.md', content: '# 解析备注\n\n型号后缀（如 Pro / Max）需单独归一，避免误判为不同 SKU。' }
+  ],
+  17: [
+    { name: 'docs/报告结构.md', content: '# 报告结构\n\n结论前置 → 章节（市场 / 竞品 / 利润 / 风险）→ 数据来源标注。' },
+    { name: 'references/图表规范.md', content: '# 图表规范\n\n所有图表必须标注数据来源与统计口径。' }
+  ]
+}
+
 export function defaultCapabilities(partial: Record<string, boolean> = {}): Record<CapabilityKey, boolean> {
   const caps = {
     file_context: false, file_upload: false, vision: false, web_search: false, image_generation: false,
@@ -376,7 +404,7 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
   const skills: ConfigItem[] = SKILL_SEEDS.map(({ id, code, name, description, content }) => ({
     ...base, id, code, name, description,
     content,
-    files: [],
+    files: SKILL_FILES[id] || [],
     // v5 平台维度：通用分析技能覆盖多平台，1688 专属技能仅 1688
     platforms: ({ 11: ['1688'], 12: ['1688', 'AMAZON', 'TEMU'], 13: ['1688'], 14: ['1688', 'AMAZON', 'TEMU'], 15: ['1688'], 16: ['1688', 'AMAZON', 'TEMU'], 17: ['1688', 'OZON', 'AMAZON', 'TEMU'] } as Record<number, PlatformType[]>)[id] || ['1688'],
     // v7 场景分组：按技能功能分配到对应场景

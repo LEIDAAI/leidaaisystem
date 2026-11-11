@@ -2,7 +2,7 @@ import dayjs from 'dayjs'
 import type { DurationMode, MembershipInfo } from '../types'
 import type { ConfigItem, BillingSettings, CreditPackage } from '../config'
 import { ElMessage } from 'element-plus'
-import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, type Extensions, type Chat } from './extension-data'
+import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, SKILL_FILES, type Extensions, type Chat } from './extension-data'
 
 // =====================================================================
 // Mock 演示数据库：通过 localStorage 保存业务数据与会话。
@@ -674,7 +674,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 22 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 23 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -918,6 +918,15 @@ if (storedVersion < 20) {
     db.billingSettings.upgradePolicy = 'PRORATED'
   }
 }
+if (storedVersion < 23) {
+  // v23：技能附属文件种子（含 docs/ references/ scripts/ 文件夹路径）——存量技能 files 为空时补齐，
+  // 让技能编辑器与版本历史文件树都有多文件多文件夹结构（幂等：已有文件不覆盖）。
+  db.skills.forEach(skill => {
+    const seed = SKILL_FILES[skill.id]
+    if (seed && (!Array.isArray(skill.files) || !skill.files.length)) skill.files = seed.map(f => ({ ...f }))
+  })
+}
+
 if (storedVersion < 21) {
   // v21：自定义积分包阶梯单价（对齐前台拍板：3万0.015/4万0.0115/5万0.0095，总价单调不减）；
   // 存量单价的按单一区间升级；同时清理积分包与套餐周期的演示划线价（无真实原价依据不展示）。
@@ -1005,7 +1014,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 22,
+        version: 23,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

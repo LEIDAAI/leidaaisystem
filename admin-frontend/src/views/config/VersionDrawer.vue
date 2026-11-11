@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Check } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { configVersions, restoreConfigVersion, type ConfigItem, type ConfigVersion } from '@/api/config'
-import { buildSnapshotEntries } from '@/utils/snapshot-entries'
+import { buildSkillTree, buildFieldEntries, flattenTree } from '@/utils/snapshot-entries'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 
 /**
@@ -21,6 +21,8 @@ const loading = ref(false)
 const selectedVer = ref<number | null>(null)
 /** v27：中栏条目清单里当前选中的条目 id（决定右栏显示哪一段内容） */
 const selectedEntryId = ref<string | null>(null)
+/** v28：文件树展开态（id 集合）；默认展开 SKILL.md 根节点 */
+const expandedIds = ref<Set<string>>(new Set(['root']))
 /** 恢复走版本确认框：待恢复版本与默认版本名（恢复自 <源版本名>） */
 const restoreDialog = ref(false)
 const restoreTarget = ref<{ version: number; defaultName: string } | null>(null)
@@ -33,13 +35,23 @@ const isLatest = computed(() => !!selected.value && sorted.value[0]?.version ===
 const previewTitle = computed(() =>
   props.kind === 'skills' ? 'SKILL.md 快照预览' : props.kind === 'mcp/servers' ? '连接配置快照预览（凭据已按服务端策略脱敏）' : props.kind === 'plans' ? '套餐配置快照预览（全量 JSON）' : '全量配置快照预览（凭据/提示词已按服务端策略脱敏）'
 )
-/** v27：当前版本的条目清单（技能=章节+附属文件，其它=快照字段） */
-const entries = computed(() => buildSnapshotEntries(props.kind, selected.value?.snapshot))
-const selectedEntry = computed(() => entries.value.find((e) => e.id === selectedEntryId.value) || null)
+/** v28：技能版本 → 文件树（SKILL.md + 文件夹 + 文件，SKILL.md 可展开出章节）；其它资源 → 快照字段条目 */
+const isSkill = computed(() => props.kind === 'skills')
+const tree = computed(() => (isSkill.value ? buildSkillTree(selected.value?.snapshot) : []))
+const fieldEntries = computed(() => (isSkill.value ? [] : buildFieldEntries(selected.value?.snapshot)))
+/** 展平后的列表（技能=树，字段条目 depth 恒为 0） */
+const listItems = computed(() => {
+  if (isSkill.value) return flattenTree(tree.value, expandedIds.value)
+  return fieldEntries.value.map((e) => ({
+    id: e.id, label: e.label, kind: 'file' as const, hint: e.hint, content: e.content,
+    depth: 0, expandable: false, expanded: false
+  }))
+})
+const selectedEntry = computed(() => listItems.value.find((e) => e.id === selectedEntryId.value) || null)
 /** 右栏内容：优先显示选中条目，未选条目时回退整份快照 */
 const snapText = (v?: ConfigVersion | null): string => {
   if (!v) return ''
-  if (selectedEntry.value) return selectedEntry.value.content
+  if (selectedEntry.value) return selectedEntry.value.content || ''
   if (props.kind === 'skills') return String(v.snapshot.content || '')
   return JSON.stringify(v.snapshot, null, 2)
 }
@@ -57,6 +69,7 @@ watch(
     }
     selectedVer.value = sorted.value[0]?.version ?? null
     selectedEntryId.value = null
+    expandedIds.value = new Set(['root'])
   },
   { immediate: true }
 )
@@ -66,10 +79,18 @@ function selectVersion(v: ConfigVersion): void {
   if (selectedVer.value === v.version) return
   selectedVer.value = v.version
   selectedEntryId.value = null
+  expandedIds.value = new Set(['root'])
 }
-/** v27：选择条目（与右栏内容一一对应） */
-function selectEntry(id: string): void {
-  selectedEntryId.value = selectedEntryId.value === id ? null : id
+/** v28：点击树节点——可展开节点切换展开态；叶子节点选中（与右栏内容一一对应，再点取消） */
+function selectEntry(item: { id: string; expandable: boolean; expanded: boolean; content?: string }): void {
+  if (item.expandable) {
+    const next = new Set(expandedIds.value)
+    if (next.has(item.id)) next.delete(item.id)
+    else next.add(item.id)
+    expandedIds.value = next
+    return
+  }
+  selectedEntryId.value = selectedEntryId.value === item.id ? null : item.id
 }
 
 /** 恢复走版本确认框，默认生成新版本名「恢复自 <源版本名>」（源版本无名称则用 v{N}） */
@@ -89,6 +110,7 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
     versions.value = await configVersions(props.kind, props.item.id)
     selectedVer.value = sorted.value[0]?.version ?? null
     selectedEntryId.value = null
+    expandedIds.value = new Set(['root'])
     emit('restored')
   } finally {
     restoring.value = false
@@ -123,23 +145,27 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
           </div>
         </div>
       </div>
-      <!-- 中：当前版本的条目清单（技能=SKILL.md 章节 + 附属文件；其它=快照字段） -->
+      <!-- 中：当前版本的文件树（技能=SKILL.md+文件夹+文件；其它=快照字段条目） -->
       <div class="entry-list">
         <div class="col-head">
-          <span class="col-title">内容条目</span>
-          <span class="col-count">{{ entries.length }}</span>
+          <span class="col-title">{{ isSkill ? '文件树' : '内容条目' }}</span>
+          <span class="col-count">{{ listItems.length }}</span>
         </div>
         <el-empty v-if="!selected" description="先选择版本" :image-size="48" />
-        <el-empty v-else-if="!entries.length" description="该版本无可展示条目" :image-size="48" />
+        <el-empty v-else-if="!listItems.length" description="该版本无可展示条目" :image-size="48" />
         <ul v-else class="entry-items">
           <li
-            v-for="e in entries"
+            v-for="e in listItems"
             :key="e.id"
             class="entry-item"
-            :class="{ active: selectedEntryId === e.id }"
+            :class="[{ active: selectedEntryId === e.id }, 'kind-' + e.kind]"
+            :style="{ paddingLeft: 6 + e.depth * 14 + 'px' }"
             :title="e.label"
-            @click="selectEntry(e.id)"
+            @click="selectEntry(e)"
           >
+            <span v-if="e.expandable" class="entry-arrow">{{ e.expanded ? '▾' : '▸' }}</span>
+            <span v-else class="entry-arrow placeholder" />
+            <span class="entry-icon">{{ e.kind === 'folder' ? '📁' : e.kind === 'root' ? '📘' : e.kind === 'section' ? '§' : '📄' }}</span>
             <span class="entry-label">{{ e.label }}</span>
             <span v-if="e.hint" class="entry-hint">{{ e.hint }}</span>
           </li>
@@ -191,7 +217,11 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
 .col-title { font-size: 12px; color: var(--el-text-color-regular); font-weight: 600; }
 .col-count { font-size: 12px; color: var(--el-text-color-secondary); }
 .entry-items { list-style: none; margin: 0; padding: 0; }
-.entry-item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--el-text-color-regular); line-height: 1.4; }
+.entry-item { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--el-text-color-regular); line-height: 1.4; }
+.entry-arrow { width: 10px; flex: none; font-size: 10px; color: var(--el-text-color-secondary); }
+.entry-arrow.placeholder { visibility: hidden; }
+.entry-icon { flex: none; font-size: 12px; line-height: 1; }
+.entry-item.kind-folder .entry-label { font-weight: 600; color: var(--el-text-color-primary); }
 .entry-item:hover { background: var(--el-fill-color-light); }
 .entry-item.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
 .entry-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
