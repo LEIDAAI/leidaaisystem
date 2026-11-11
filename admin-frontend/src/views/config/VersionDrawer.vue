@@ -113,6 +113,10 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
         <template v-if="selected">
           <div class="preview-head">
             <span class="ptitle">{{ previewTitle }}</span>
+            <span class="pmeta">
+              <b>{{ selected.versionName || `v${selected.version}` }}</b>
+              <small>{{ shortTime(selected.createdAt) }}<span v-if="selected.operator"> · {{ selected.operator }}</span></small>
+            </span>
           </div>
           <div class="preview-body">{{ snapText(selected) }}</div>
         </template>
@@ -138,8 +142,9 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
   </el-drawer>
 </template>
 <style scoped>
-.hist-wrap { display: flex; gap: 16px; height: 100%; min-height: 0; }
-.hist-list { width: 330px; flex-shrink: 0; overflow: auto; padding-right: 4px; }
+/* v26：两栏之间不再留空白窄带——左侧版本列表右缘直接是 1px 分隔线，预览面板紧贴 */
+.hist-wrap { display: flex; gap: 0; height: 100%; min-height: 0; }
+.hist-list { width: 320px; flex-shrink: 0; overflow: auto; padding-right: 14px; border-right: 1px solid var(--el-border-color-lighter); }
 .timeline { position: relative; }
 .timeline::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: var(--el-border-color-lighter); }
 .vitem { position: relative; padding: 0 0 12px 28px; cursor: pointer; }
@@ -158,9 +163,11 @@ async function onRestoreConfirm(v: { versionName: string; note: string }): Promi
 .vmeta { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12px; color: var(--el-color-success); }
 .vmeta .ok { font-size: 14px; }
 .vnote { margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; padding-left: 14px; }
 .preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .ptitle { font-size: 13px; color: var(--el-text-color-regular); }
+.pmeta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+.pmeta b { font-size: 13px; color: var(--el-text-color-primary); font-weight: 600; }
 .preview-body { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 10px 12px; font-family: Consolas, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--el-text-color-primary); }
 .drawer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
