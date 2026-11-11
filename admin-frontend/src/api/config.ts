@@ -149,6 +149,8 @@ export interface ConfigItem {
   group?: string
   /** 技能场景分组（v7）：关联场景 ID，用于按场景维度分组 */
   scenarioId?: number | null
+  /** v25 归属智能体（与平台/场景正交）：一个技能最多归属一个智能体；null = 未归属（公共技能） */
+  agentId?: number | null
   // ---- MCP（双类型连接模型，附录 12.3）----
   connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[]
   transport?: 'STREAMABLE_HTTP' | 'SSE' | 'STDIO'; endpoint?: string; command?: string; args?: string[]
@@ -174,6 +176,20 @@ export interface Scenario {
   name: string
   platformId: PlatformType
   description?: string
+  createdAt: string
+  updatedAt: string
+}
+/** 智能体（v25）：独立于平台/场景的技能归属维度，一个技能最多归属一个智能体，各智能体互不关联 */
+export interface Agent {
+  id: number
+  name: string
+  /** 稳定编码（youwei / workbuddy / qwen …），创建后不可改 */
+  code: string
+  description?: string
+  /** 1 启用 / 0 停用 */
+  status: 0 | 1
+  /** 展示排序（小值靠前） */
+  sort?: number
   createdAt: string
   updatedAt: string
 }
@@ -223,6 +239,9 @@ export const toggleTool = (id: number, enabled: boolean, version?: { versionName
 export const listScenarios = () => get<Scenario[]>('/scenarios')
 export const saveScenario = (item: Partial<Scenario> & { id?: number }) => item.id ? put<Scenario>(`/scenarios/${item.id}`, item) : post<Scenario>('/scenarios', item)
 export const deleteScenario = (id: number) => del(`/scenarios/${id}`)
+
+// ---------------------------------------------------------------- 智能体管理（v25）
+export const listAgents = () => get<Agent[]>('/agents')
 
 // ---------------------------------------------------------------- 知识库管理（v7）
 export const listKnowledgeBases = () => get<KnowledgeBase[]>('/knowledge-bases')

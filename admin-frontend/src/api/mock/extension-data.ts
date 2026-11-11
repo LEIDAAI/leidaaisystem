@@ -1,7 +1,7 @@
 import dayjs from 'dayjs'
 import { beijingTime } from '../../utils/chat-time'
 import { escapeReportText } from '../../utils/static-chat-report'
-import type { BillingSettings, ConfigItem, CreditPackage, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
+import type { Agent, BillingSettings, ConfigItem, CreditPackage, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
 import { PLATFORMS } from '../config'
 
 export interface Chat { id: number; userId: number; expertId: number; /** 会话标题（用户发起时的主题短句，对齐前台会话名） */ title: string; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
@@ -10,6 +10,8 @@ export interface Extensions {
   models: LlmModelRow[]
   plans: ConfigItem[]; experts: ConfigItem[]; skills: ConfigItem[]; servers: ConfigItem[]; tools: Tool[]
   scenarios: Scenario[]; knowledgeBases: KnowledgeBase[]
+  /** v25：智能体（技能归属维度，各智能体相互独立） */
+  agents: Agent[]
   /** v8：知识库文档（Open WebUI 式文档管理，纯文本内容存 localStorage） */
   kbFiles: KnowledgeFile[]
   chats: Chat[]; promptHistory: Record<string, Array<{ version: number; systemPrompt: string; createdAt: string }>>
@@ -379,6 +381,8 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     platforms: ({ 11: ['1688'], 12: ['1688', 'AMAZON', 'TEMU'], 13: ['1688'], 14: ['1688', 'AMAZON', 'TEMU'], 15: ['1688'], 16: ['1688', 'AMAZON', 'TEMU'], 17: ['1688', 'OZON', 'AMAZON', 'TEMU'] } as Record<number, PlatformType[]>)[id] || ['1688'],
     // v7 场景分组：按技能功能分配到对应场景
     scenarioId: ({ 11: 1, 12: 3, 13: 1, 14: 1, 15: 2, 16: 1, 17: 1 } as Record<number, number>)[id],
+    // v25 归属智能体：存量技能默认归有维AI（id=1），各智能体相互独立
+    agentId: 1,
     paramSchema: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] },
     execConfig: { handler: 'demo', timeoutMs: 30000 }
   }))
@@ -403,6 +407,12 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     { id: 7, name: 'Ozon 选品', platformId: 'OZON', description: 'Ozon 平台商品选择与市场分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     { id: 8, name: 'TikTok 带货', platformId: 'TIKTOK', description: 'TikTok 直播带货选品与内容分析', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     { id: 9, name: 'Shopee 运营', platformId: 'SHOPEE', description: 'Shopee 平台店铺运营与商品管理', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  ]
+  // 智能体（v25）：独立于平台/场景的技能归属维度，三个智能体互不关联
+  const agents: Agent[] = [
+    { id: 1, name: '有维AI', code: 'youwei', description: '有维AI 自有智能体，默认承载现有选品技能', status: 1, sort: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 2, name: 'WorkBuddy', code: 'workbuddy', description: 'WorkBuddy 智能体，技能独立维护', status: 1, sort: 2, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 3, name: '千问', code: 'qwen', description: '千问智能体，技能独立维护', status: 1, sort: 3, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
   ]
   // 知识库（v7）：专家可绑定的知识资源；v8 增加 access 权限（对齐 Open WebUI：私有/公开）
   const knowledgeBases: KnowledgeBase[] = [
@@ -547,6 +557,7 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
     skills,
     servers,
     scenarios,
+    agents,
     knowledgeBases,
     kbFiles,
     tools: [

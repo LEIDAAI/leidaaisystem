@@ -117,7 +117,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','agentId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
       const source=restore?.snapshot || input
       for(const key of fields) if(restore || source[key]!==undefined) Object.assign(item,{[key]:source[key]===undefined?undefined:structuredClone(source[key])})
       if(restore && old && source.code===undefined) item.code=old.code
@@ -262,6 +262,13 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         // v7：场景分组校验（null 视为未分组；非空须为场景管理中的有效场景）
         if(item.scenarioId===null) item.scenarioId=undefined
         if(item.scenarioId!==undefined && !db.scenarios.some(s=>s.id===item.scenarioId)) fail('技能所属场景不存在')
+        // v22：归属智能体校验（null 视为未归属公共技能；非空须为有效智能体）
+        if(item.agentId===null) item.agentId=undefined
+        if(item.agentId!==undefined){
+          const aid=Number(item.agentId)
+          if(!Number.isInteger(aid) || !(db.agents||[]).some(a=>a.id===aid)) fail('归属智能体不存在')
+          item.agentId=aid
+        }
         const refs=db.experts.filter(e=>e.skillIds?.includes(item.id))
         if(old?.status===1 && item.status===0 && refs.length && !input.confirmReferences) fail(`技能被以下专家引用：${refs.map(r=>r.name).join('、')}；如确认停用请勾选引用确认`,409)
       }
@@ -810,6 +817,8 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     audit(ctx.adminId,`scenario.${old?'update':'create'}`,'scenario',item.id,old||null,item);return item
   }
   route('POST','/scenarios',saveScenario);route('PUT','/scenarios/:id',saveScenario)
+  // -------------------------------------------------- v22：智能体（技能归属维度；与平台/场景正交，各智能体互不关联）
+  route('GET','/agents',ctx=>{if(!['skill:view','expert:view'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);return [...(db.agents||[])].sort((a,b)=>(a.sort??0)-(b.sort??0) || a.id-b.id)})
   route('DELETE','/scenarios/:id',ctx=>{
     if(!['skill:edit','expert:edit'].some(p=>permissionCodesOf(ctx.adminId).includes(p))) fail('无权限执行该操作',403);const item=db.scenarios.find(s=>s.id===Number(ctx.params.id)) || fail('场景不存在',404)
     const refs=[...db.skills.filter(sk=>sk.scenarioId===item.id).map(sk=>`技能「${sk.name}」`),...db.experts.filter(ex=>ex.scenarioId===item.id).map(ex=>`专家「${ex.name}」`)]

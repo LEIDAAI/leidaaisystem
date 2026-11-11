@@ -261,7 +261,8 @@
 
 | 方法 | 路径 | 权限点 | 说明 |
 |---|---|---|---|
-| GET | /skills | skill:view | 列表 + 参数 `keyword`、`status`；附 `boundExpertCount`（由 expert.skillIds 统计） |
+| GET | /skills | skill:view | 列表 + 参数 `keyword`、`status`；附 `boundExpertCount`（由 expert.skillIds 统计）；**v25 附 `agentId`（归属智能体，可空）** |
+| GET | /agents | skill:view 或 expert:view | **v25 智能体列表** `{id,name,code,description,status,sort}`，按 sort 升序；技能通过 `agentId` 归属智能体（一个技能最多归属一个，各智能体互不关联） |
 | GET | /skills/{id} | skill:view | 详情（description/content/files；paramSchema/execConfig 为可选高级字段，兼容保留） |
 | POST | /skills | skill:edit | 新建 |
 | PUT | /skills/{id} | skill:edit | 保存（版本更新；发布写快照，skipVersion自动保存不新增历史；可选note） |

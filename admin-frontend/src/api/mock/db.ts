@@ -674,7 +674,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 19 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 22 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -940,6 +940,13 @@ if (storedVersion < 21) {
     }
   })
 }
+if (storedVersion < 22) {
+  // v22：智能体（技能归属维度，各智能体互不关联）——补 agents 集合，存量技能默认归有维AI（id=1）
+  if (!Array.isArray(db.agents) || !db.agents.length) db.agents = seedExtensions().agents
+  db.skills.forEach(skill => {
+    if (!Object.prototype.hasOwnProperty.call(skill, 'agentId')) skill.agentId = 1
+  })
+}
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
 db.users.forEach((user) => {
@@ -998,7 +1005,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 21,
+        version: 22,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

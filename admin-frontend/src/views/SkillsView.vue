@@ -14,8 +14,8 @@ import { useAuthStore } from '@/stores/auth'
 import { get, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, skillStats, cloneSkill,
-  listScenarios, saveScenario, deleteScenario, PLATFORMS, platformMeta,
-  type ConfigItem, type PlatformType, type Scenario
+  listScenarios, saveScenario, deleteScenario, listAgents, PLATFORMS, platformMeta,
+  type ConfigItem, type PlatformType, type Scenario, type Agent
 } from '@/api/config'
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
@@ -61,6 +61,8 @@ async function load(): Promise<void> {
   } finally {
     if (seq === loadSeq && pageActive) loading.value = false
   }
+  // v25 智能体列表独立加载：失败不影响技能列表，Tab 内提供重试
+  await loadAgents()
 }
 void load()
 
@@ -87,24 +89,43 @@ function toggleRowSelected(row: ConfigItem, v: CheckboxValueType): void {
 
 // -------------------------------------------------------------- v7 分组：平台 → 场景 两级（上方 Tab：全部 / 未分组 / 各平台；选中平台后二级切换场景）
 const scenarios = ref<Scenario[]>([])
-/** 一级 Tab：all=全部 / ungrouped=未分组 / 平台值；二级场景 Tab 仅在选中平台时出现 */
+/** v25 智能体（与平台/场景正交）：一级 Tab「智能体管理」→ 二级 Tab 各智能体；各智能体互不关联 */
+const agents = ref<Agent[]>([])
+const agentLoadError = ref(false)
+/** 一级 Tab：all=全部 / ungrouped=未分组 / 平台值 / agents=智能体管理；二级场景 Tab 仅在选中平台时出现 */
 const activeTab = ref<string>('all')
 const activeScenario = ref<number | 'all' | 'unassigned'>('all')
+const activeAgent = ref<number | 'all'>('all')
 
 const scenariosOf = (p: PlatformType): Scenario[] => scenarios.value.filter((s) => s.platformId === p)
 const scenarioById = (id?: number | null): Scenario | undefined => scenarios.value.find((s) => s.id === id)
+const agentById = (id?: number | null): Agent | undefined => agents.value.find((a) => a.id === id)
+
+async function loadAgents(): Promise<void> {
+  agentLoadError.value = false
+  try {
+    agents.value = await listAgents()
+  } catch {
+    agentLoadError.value = true
+  }
+}
 
 /** v14：行内可见性标签（缺省视为全员可见，与保存归一化一致）—— 实现统一抽至 utils/visibility */
 
 function switchTab(tab: string): void {
   activeTab.value = tab
   activeScenario.value = 'all'
+  activeAgent.value = 'all'
 }
 
-/** 当前 Tab 视图行：全部=关键字过滤；未分组=无场景；平台=platforms 包含；平台+场景=scenarioId 精确匹配 */
+/** 当前 Tab 视图行：全部=关键字过滤；未分组=无场景；平台=platforms 包含；平台+场景=scenarioId 精确匹配；智能体=agentId 匹配 */
 const viewRows = computed<ConfigItem[]>(() => {
   if (activeTab.value === 'all') return filtered.value
   if (activeTab.value === 'ungrouped') return filtered.value.filter((r) => !r.scenarioId)
+  if (activeTab.value === 'agents') {
+    if (activeAgent.value === 'all') return filtered.value.filter((r) => r.agentId != null)
+    return filtered.value.filter((r) => r.agentId === activeAgent.value)
+  }
   const inPlat = filtered.value.filter((r) => (r.platforms || []).includes(activeTab.value as PlatformType))
   if (activeScenario.value === 'all') return inPlat
   if (activeScenario.value === 'unassigned') return inPlat.filter((r) => { const s = scenarioById(r.scenarioId); return !s || s.platformId !== activeTab.value })
@@ -115,6 +136,7 @@ const viewRows = computed<ConfigItem[]>(() => {
 const countOf = (tab: string): number => {
   if (tab === 'all') return items.value.length
   if (tab === 'ungrouped') return items.value.filter((r) => !r.scenarioId).length
+  if (tab === 'agents') return items.value.filter((r) => r.agentId != null).length
   return items.value.filter((r) => (r.platforms || []).includes(tab as PlatformType)).length
 }
 /** 二级场景 Tab 计数（相对当前平台的技能全集） */
@@ -124,6 +146,8 @@ const subCountOf = (sid: number | 'all' | 'unassigned'): number => {
   if (sid === 'unassigned') return inPlat.filter((r) => { const s = scenarioById(r.scenarioId); return !s || s.platformId !== activeTab.value }).length
   return inPlat.filter((r) => r.scenarioId === sid).length
 }
+/** 二级智能体 Tab 计数（该智能体下的技能数） */
+const agentCountOf = (aid: number): number => items.value.filter((r) => r.agentId === aid).length
 const skillCountOf = (sid: number): number => items.value.filter((r) => r.scenarioId === sid).length
 
 // -------------------------------------------------------------- 加入分组：左右面板选择（左平台 → 右场景）
@@ -195,6 +219,34 @@ async function removeScenario(s: Scenario): Promise<void> {
   }
   ElMessage.success('场景已删除')
   await loadScenarios()
+  await load()
+}
+
+// -------------------------------------------------------------- v25 归属智能体：技能 ↔ 智能体（互斥，各智能体相互独立）
+const agentDlg = ref(false)
+const agentTarget = ref<ConfigItem | null>(null)
+const agentPick = ref<number | '' | null>(null)
+
+function openAgentDialog(row: ConfigItem): void {
+  agentTarget.value = row
+  agentPick.value = row.agentId ?? null
+  agentDlg.value = true
+}
+
+async function applyAgent(): Promise<void> {
+  const row = agentTarget.value
+  if (!row) return
+  const raw = agentPick.value
+  const next = raw === null || raw === undefined || raw === '' ? undefined : Number(raw)
+  if ((row.agentId ?? undefined) === next) { agentDlg.value = false; return }
+  try {
+    await saveConfig('skills', { id: row.id, code: row.code, name: row.name, agentId: next ?? null })
+  } catch (e) {
+    if (e instanceof ApiError) { ElMessage.error(e.message); return }
+    throw e
+  }
+  agentDlg.value = false
+  ElMessage.success(next ? `已归属智能体「${agentById(next)?.name || next}」` : '已移出智能体（公共技能）')
   await load()
 }
 
@@ -363,6 +415,7 @@ function history(item: ConfigItem): void {
 /** 行操作「更多」下拉统一分发（收纳低频操作，避免行内按钮过多折行） */
 function onRowCommand(cmd: string, row: ConfigItem): void {
   if (cmd === 'group') openGroupDialog(row)
+  else if (cmd === 'agent') openAgentDialog(row)
   else if (cmd === 'history') history(row)
   else if (cmd === 'clone') void clone(row)
   else if (cmd === 'export') exportZip(row)
@@ -401,7 +454,7 @@ function boundExpertCount(row: ConfigItem): number {
       <el-button v-if="canEdit" @click="onCreate('manage-scenarios')">场景管理</el-button>
     </div>
 
-    <!-- v7 分组导航：一级 Tab（全部 / 未分组 / 各平台）+ 选中平台后的二级场景 Tab -->
+    <!-- v7 分组导航：一级 Tab（全部 / 未分组 / 各平台 / 智能体管理）+ 选中平台后的二级场景 Tab -->
     <div class="group-tabs">
       <div class="tab-row">
         <button class="tab-pill" :class="{ active: activeTab === 'all' }" @click="switchTab('all')">全部<span class="tab-count">{{ countOf('all') }}</span></button>
@@ -409,11 +462,22 @@ function boundExpertCount(row: ConfigItem): number {
         <button v-for="p in PLATFORMS" :key="p" class="tab-pill" :class="{ active: activeTab === p }" @click="switchTab(p)">
           <span class="tab-dot" :style="{ background: platMetaOf(p).color }" />{{ platMetaOf(p).label }}<span class="tab-count">{{ countOf(p) }}</span>
         </button>
+        <button class="tab-pill agent-tab" :class="{ active: activeTab === 'agents' }" @click="switchTab('agents')">
+          <span class="tab-dot" style="background:#00b96b" />智能体管理<span class="tab-count">{{ countOf('agents') }}</span>
+        </button>
       </div>
-      <div v-if="activeTab !== 'all' && activeTab !== 'ungrouped'" class="tab-row sub">
+      <div v-if="activeTab !== 'all' && activeTab !== 'ungrouped' && activeTab !== 'agents'" class="tab-row sub">
         <button class="tab-pill small" :class="{ active: activeScenario === 'all' }" @click="activeScenario = 'all'">全部场景<span class="tab-count">{{ subCountOf('all') }}</span></button>
         <button class="tab-pill small" :class="{ active: activeScenario === 'unassigned' }" @click="activeScenario = 'unassigned'">未分配场景<span class="tab-count">{{ subCountOf('unassigned') }}</span></button>
         <button v-for="s in scenariosOf(activeTab as PlatformType)" :key="s.id" class="tab-pill small" :class="{ active: activeScenario === s.id }" @click="activeScenario = s.id">{{ s.name }}<span class="tab-count">{{ subCountOf(s.id) }}</span></button>
+      </div>
+      <!-- v25 智能体二级 Tab：各智能体相互独立，技能互斥归属 -->
+      <div v-if="activeTab === 'agents'" class="tab-row sub">
+        <button class="tab-pill small" :class="{ active: activeAgent === 'all' }" @click="activeAgent = 'all'">全部智能体<span class="tab-count">{{ countOf('agents') }}</span></button>
+        <button v-for="a in agents" :key="a.id" class="tab-pill small agent" :class="{ active: activeAgent === a.id }" :title="a.description" @click="activeAgent = a.id">
+          {{ a.name }}<span class="tab-count">{{ agentCountOf(a.id) }}</span>
+        </button>
+        <el-button v-if="agentLoadError" link type="warning" size="small" @click="loadAgents">智能体加载失败，重试</el-button>
       </div>
     </div>
 
@@ -446,6 +510,7 @@ function boundExpertCount(row: ConfigItem): number {
               :style="{ color: platMetaOf(p).color, background: platMetaOf(p).bg, borderColor: platMetaOf(p).border }"
             >{{ platMetaOf(p).label }}</el-tag>
             <el-tag v-if="scenarioById(row.scenarioId)" size="small" type="info" effect="plain">{{ scenarioById(row.scenarioId)?.name }}</el-tag>
+            <el-tag v-if="agentById(row.agentId)" size="small" type="success" effect="plain">{{ agentById(row.agentId)?.name }}</el-tag>
             <el-tag size="small" :type="visTagOf(row.visibility).type">{{ visTagOf(row.visibility).label }}</el-tag>
           </div>
           <div class="row-desc">{{ row.description || '—' }}</div>
@@ -463,6 +528,7 @@ function boundExpertCount(row: ConfigItem): number {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-if="canEdit" command="group">加入场景分组</el-dropdown-item>
+                <el-dropdown-item v-if="canEdit" command="agent">归属智能体</el-dropdown-item>
                 <el-dropdown-item command="history">版本历史</el-dropdown-item>
                 <el-dropdown-item v-if="canClone" command="clone">克隆</el-dropdown-item>
                 <el-dropdown-item v-if="canExport" command="export">导出 ZIP</el-dropdown-item>
@@ -473,7 +539,7 @@ function boundExpertCount(row: ConfigItem): number {
           </el-dropdown>
         </div>
       </div>
-      <el-empty v-if="!viewRows.length && !loading" :description="loadError ? '加载失败，请重新加载技能' : keyword ? '没有匹配的技能，请调整搜索条件' : activeTab === 'all' ? '尚未创建技能，可新建或导入 SKILL.md 技能包' : '当前分组暂无技能，可切换分组或为技能设置所属场景'" />
+      <el-empty v-if="!viewRows.length && !loading" :description="loadError ? '加载失败，请重新加载技能' : keyword ? '没有匹配的技能，请调整搜索条件' : activeTab === 'all' ? '尚未创建技能，可新建或导入 SKILL.md 技能包' : activeTab === 'agents' ? (activeAgent === 'all' ? '暂无归属智能体的技能，可在技能行「更多 → 归属智能体」中分配' : `「${agentById(activeAgent as number)?.name || ''}」暂无技能，可将技能归属到该智能体`) : '当前分组暂无技能，可切换分组或为技能设置所属场景'" />
     </div>
   </el-card>
 
@@ -515,6 +581,23 @@ function boundExpertCount(row: ConfigItem): number {
     <template #footer>
       <el-button @click="groupDialog = false">取消</el-button>
       <el-button type="primary" @click="applyGroup">确定</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- v25 归属智能体：技能与智能体互斥归属，各智能体相互独立 -->
+  <el-dialog v-model="agentDlg" title="归属智能体" width="460px">
+    <div v-if="agentTarget" class="group-target">「{{ agentTarget.name }}」当前归属：{{ agentById(agentTarget.agentId)?.name || '公共技能（未归属）' }}</div>
+    <el-radio-group v-model="agentPick" class="agent-pick">
+      <el-radio :value="null" class="agent-radio">公共技能（不归属任何智能体）</el-radio>
+      <el-radio v-for="a in agents" :key="a.id" :value="a.id" class="agent-radio">
+        {{ a.name }}
+        <small class="muted">{{ a.description || '' }} · {{ agentCountOf(a.id) }} 个技能</small>
+      </el-radio>
+    </el-radio-group>
+    <p class="muted" style="margin:10px 0 0;font-size:12px">一个技能最多归属一个智能体；各智能体的技能互不关联，技能在智能体之间不共享。</p>
+    <template #footer>
+      <el-button @click="agentDlg = false">取消</el-button>
+      <el-button type="primary" @click="applyAgent">确定</el-button>
     </template>
   </el-dialog>
 
@@ -567,6 +650,11 @@ function boundExpertCount(row: ConfigItem): number {
 .tab-count { font-size: 11px; opacity: 0.75; }
 .tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .group-target { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 10px; }
+/* v25 智能体：归属选择 */
+.agent-pick { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.agent-radio { height: auto; margin-right: 0; padding: 6px 0; white-space: normal; }
+.agent-radio :deep(.el-radio__label) { display: inline-flex; align-items: baseline; gap: 8px; line-height: 1.5; }
+.agent-tab { margin-left: 6px; }
 .group-panels { display: flex; gap: 0; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; overflow: hidden; min-height: 280px; max-height: 360px; }
 .group-panel { display: flex; flex-direction: column; }
 .group-panel-left { width: 160px; border-right: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-lighter); }
