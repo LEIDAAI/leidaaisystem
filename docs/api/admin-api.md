@@ -366,7 +366,7 @@
 | GET | /models/{id} | model:view | 详情 |
 | POST | /models | model:edit | 新建（code 创建后不可改，唯一；重复 `422`） |
 | PUT | /models/{id} | model:edit | 保存（不产生版本快照；api_key 留空=不修改） |
-| PUT | /models/{id}/status | model:edit | `{status}` 启停；停用后专家表单不可再选，已绑定专家不受影响 |
+| PUT | /models/{id}/status | model:edit | **v24 起前端已下线该能力（模型无启停，一律启用）**；端点按原契约保留兼容旧调用（`{status}` 0\|1），但不再有页面入口 |
 | POST | /models/{id}/test | model:edit | 连通测试（**Mock 演示模拟**，不发真实网络请求） |
 | POST | /models/probe | model:view | **端点自动发现（v0.7）**：`{baseUrl, apiKey}` → 拉取 OpenAI 兼容端点全部模型；见下方「端点自动发现」 |
 | DELETE | /models/{id} | model:edit | 被专家 base_model 引用时 `409` 硬拦截（不提供确认删除通道） |
@@ -389,7 +389,7 @@
 - `api_key`：常规列表/详情保存后不回显明文（演示超管reveal-key例外见第15节），列表/详情/编辑仅显示掩码（如 `****abcd`）；保存载荷携带明文 `apiKey` 时更新，留空/未传=不修改。审计 before/after 同样只含掩码。
 - `default_params`：JSON 对象（temperature、max_tokens 等），传入须为对象否则 `422`；未传保留原值。
 - **连通测试（Mock）**：按 网络可达（HTTPS 地址）/ 认证（已配置 API Key）/ 模型可用（已启用）**三项**演示判定，返回 `{result: SUCCESS|FAILED, detail, latencyMs, testedAt}`；detail 逐项给出 ✓/✗ 并明示「演示模拟，未发起真实网络请求」。
-- **事件契约**：模型保存/更新/启停均发布配置变更事件 `type=MODEL`（载荷含 code/version/status），与 expert/skill/mcp 的 `EXPERT/SKILL/MCP` 变更事件同构；mock 不需真实运行时，契约由后端 AOP 保证。
+- **事件契约**：模型保存/更新均发布配置变更事件 `type=MODEL`（载荷含 code/version/status）；v24 起无独立启停入口，`/models/{id}/status` 仅保留接口兼容。与 expert/skill/mcp 的 `EXPERT/SKILL/MCP` 变更事件同构；mock 不需真实运行时，契约由后端 AOP 保证。
 
 ### 端点自动发现（v0.7：POST /models/probe）
 

@@ -61,7 +61,8 @@ function scheduleAutosave(): void {
   if (!preparingLeave && props.modelValue && dirty.value && !saving.value && !historyDrawer.value) autosaveTimer = setTimeout(() => void doAutosave(), 1500)
 }
 
-const enabledModels = computed(() => models.value.filter((m) => m.status === 1))
+/* v24 模型无启停（一律启用），基础模型下拉直接取全部登记模型 */
+const enabledModels = computed(() => models.value)
 const baseModelUnavailable = computed(() => Boolean(currentId.value) && !!draft.value.baseModel && !enabledModels.value.some((m) => m.code === draft.value.baseModel))
 
 const skillName = (id: number): string => skills.value.find((s) => s.id === id)?.name || `#${id}`
@@ -601,7 +602,7 @@ onBeforeUnmount(() => {
                 <el-select v-model="draft.baseModel" filterable style="width:100%">
                   <el-option v-for="m in enabledModels" :key="m.code" :value="m.code" :label="`${m.name}（${m.code}）`" />
                 </el-select>
-                <el-alert v-if="baseModelUnavailable" type="warning" :closable="false" style="margin-top:6px" title="当前基础模型已停用或删除，保留原值；建议更换为启用模型。" />
+                <el-alert v-if="baseModelUnavailable" type="warning" :closable="false" style="margin-top:6px" title="当前基础模型已删除，保留原值；请在模型管理重新登记后选择。" />
               </el-form-item>
               <el-form-item label="生成温度">
                 <el-slider v-model="temperature" :min="0" :max="2" :step="0.1" show-input :show-input-controls="false" input-size="small" />

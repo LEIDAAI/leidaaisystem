@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { get, post, ApiError } from '@/api/request'
 import {
   listConfig, saveConfig, deleteConfig, configAction, listTools, toggleTool, setDefaultExpert,
-  exportConfigJson, importExpertJson, testMcpConnection, saveModelStatus,
+  exportConfigJson, importExpertJson, testMcpConnection,
   testModelConnection, listModels, listScenarios, saveScenario, deleteScenario, PLATFORMS, PLATFORM_META, platformMeta, hostOf,
   FRONTEND_PERM_GROUPS, normalizeFrontendPerms,
   listCreditPackages, deleteCreditPackage, getBillingSettings,
@@ -429,12 +429,6 @@ async function toggleStatus(item: ConfigItem): Promise<void> {
   await load()
 }
 
-/** 模型启停：走独立状态端点 */
-async function toggleModel(item: ConfigItem): Promise<void> {
-  await saveModelStatus(item.id, item.status === 1 ? 0 : 1)
-  await load()
-}
-
 /** 模型连通测试（Mock 演示模拟，明示未发起真实请求） */
 async function testModel(item: ConfigItem): Promise<void> {
   const r = await testModelConnection(item.id)
@@ -451,7 +445,6 @@ async function setDefault(item: ConfigItem): Promise<void> {
 function onRowCommand(cmd: string, row: ConfigItem): void {
   if (cmd === 'history') void history(row)
   else if (cmd === 'toggle') void toggleStatus(row)
-  else if (cmd === 'toggleModel') void toggleModel(row)
   else if (cmd === 'refresh') void refresh(row)
   else if (cmd === 'refreshFail') void refresh(row, true)
   else if (cmd === 'setDefault') void setDefault(row)
@@ -726,7 +719,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       </el-table-column>
       <el-table-column label="状态" width="105">
         <template #default="{ row }">
-          <!-- 专家/MCP：行内直接启停（默认专家保持启用，停用会前置拦截提示） -->
+          <!-- 专家/MCP：行内直接启停（默认专家保持启用，停用会前置拦截提示）；模型 v24 起无启停，固定显示启用 -->
           <el-switch
             v-if="canEdit && (module === 'expert' || module === 'mcp')"
             :model-value="row.status === 1"
@@ -735,7 +728,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
             inactive-text="停"
             @change="() => toggleStatus(row)"
           />
-          <el-tag v-else :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' ? '上架' : '启用') : '停用' }}</el-tag>
+          <el-tag v-else :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? (module === 'expert' ? '上架' : module === 'model' ? '启用' : '停用') : '停用' }}</el-tag>
           <small v-if="row.isDefault"> 默认</small>
         </template>
       </el-table-column>
@@ -761,7 +754,6 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
                   <template v-if="canEdit">
                     <el-dropdown-item v-if="module === 'expert'" command="group">加入场景分组</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'expert'" command="toggle" :disabled="row.status === 1 && row.isDefault">{{ row.status === 1 ? '下架' : '上架' }}</el-dropdown-item>
-                    <el-dropdown-item v-if="module === 'model'" command="toggleModel">{{ row.status === 1 ? '停用' : '启用' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module !== 'model'" command="refresh">{{ row.refreshStatus === 'FAILED' ? '重试刷新' : '刷新生效' }}</el-dropdown-item>
                     <el-dropdown-item v-if="module !== 'model' && USE_MOCK" command="refreshFail">模拟失败</el-dropdown-item>
                     <el-dropdown-item v-if="module === 'expert' && !row.isDefault" command="setDefault">设为默认</el-dropdown-item>

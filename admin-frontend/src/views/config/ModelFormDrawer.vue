@@ -187,7 +187,7 @@ async function save(): Promise<void> {
       endpoint: draft.value.endpoint,
       // api_key：填写则更新，留空=不修改（服务端保留原值）
       apiKey: draft.value.apiKey?.trim() || undefined,
-      defaultParams, remark: draft.value.remark, status: draft.value.status
+      defaultParams, remark: draft.value.remark, status: 1
     })
     if (session !== formSession || !props.modelValue) return
     baseline = formSnapshot()
@@ -300,7 +300,7 @@ defineExpose({ prepareLeave })
       </template>
 
       <el-form-item label="备注"><el-input v-model="draft.remark" type="textarea" :rows="2" /></el-form-item>
-      <el-form-item label="状态"><el-switch v-model="draft.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用（专家表单不再可选）" /></el-form-item>
+      <!-- v24：模型状态开关移除——模型一律启用，专家基础模型始终可选（保留 status 字段供接口兼容，固定 1） -->
     </el-form>
     <template #footer>
       <el-button :disabled="saving" @click="closeDrawer()">关闭</el-button>
