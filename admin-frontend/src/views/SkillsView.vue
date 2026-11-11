@@ -471,17 +471,36 @@ function boundExpertCount(row: ConfigItem): number {
         <button class="tab-pill small" :class="{ active: activeScenario === 'unassigned' }" @click="activeScenario = 'unassigned'">未分配场景<span class="tab-count">{{ subCountOf('unassigned') }}</span></button>
         <button v-for="s in scenariosOf(activeTab as PlatformType)" :key="s.id" class="tab-pill small" :class="{ active: activeScenario === s.id }" @click="activeScenario = s.id">{{ s.name }}<span class="tab-count">{{ subCountOf(s.id) }}</span></button>
       </div>
-      <!-- v25 智能体二级 Tab：各智能体相互独立，技能互斥归属 -->
-      <div v-if="activeTab === 'agents'" class="tab-row sub">
-        <button class="tab-pill small" :class="{ active: activeAgent === 'all' }" @click="activeAgent = 'all'">全部智能体<span class="tab-count">{{ countOf('agents') }}</span></button>
-        <button v-for="a in agents" :key="a.id" class="tab-pill small agent" :class="{ active: activeAgent === a.id }" :title="a.description" @click="activeAgent = a.id">
-          {{ a.name }}<span class="tab-count">{{ agentCountOf(a.id) }}</span>
-        </button>
+      <!-- v25 智能体：进入该 Tab 直接展示三个智能体卡片；点卡片查看其技能列表 -->
+      <div v-if="activeTab === 'agents' && activeAgent !== 'all'" class="tab-row sub">
+        <button class="tab-pill small" @click="activeAgent = 'all'">← 返回智能体列表</button>
+        <button class="tab-pill small agent active">{{ agentById(activeAgent as number)?.name }}<span class="tab-count">{{ agentCountOf(activeAgent as number) }}</span></button>
         <el-button v-if="agentLoadError" link type="warning" size="small" @click="loadAgents">智能体加载失败，重试</el-button>
       </div>
     </div>
 
-    <div class="select-bar">
+    <!-- v25 智能体卡片视图：各智能体相互独立、技能不共享 -->
+    <div v-if="activeTab === 'agents' && activeAgent === 'all'" class="agent-cards">
+      <div v-for="a in agents" :key="a.id" class="agent-card" @click="activeAgent = a.id">
+        <div class="agent-card-head">
+          <span class="agent-avatar">{{ a.name.slice(0, 1) }}</span>
+          <div class="agent-card-title">
+            <b>{{ a.name }}</b>
+            <small class="muted">{{ a.code }}</small>
+          </div>
+          <el-tag size="small" :type="a.status === 1 ? 'success' : 'info'" effect="plain">{{ a.status === 1 ? '启用' : '停用' }}</el-tag>
+        </div>
+        <div class="agent-card-desc">{{ a.description || '—' }}</div>
+        <div class="agent-card-foot">
+          <span>{{ agentCountOf(a.id) }} 个技能</span>
+          <span class="agent-card-go">查看技能 ›</span>
+        </div>
+      </div>
+      <el-empty v-if="!agents.length && !agentLoadError" description="暂无智能体" :image-size="60" />
+      <el-alert v-if="agentLoadError" type="error" :closable="false" title="智能体列表加载失败"><el-button link @click="loadAgents">重试</el-button></el-alert>
+    </div>
+
+    <div v-if="!(activeTab === 'agents' && activeAgent === 'all')" class="select-bar">
       <el-checkbox :model-value="allSelected" :indeterminate="indeterminate" :disabled="!filtered.length" @change="toggleAllSelected">全选</el-checkbox>
       <template v-if="selected.length">
         <span class="sel-count">已勾选 {{ selected.length }} 项</span>
@@ -490,7 +509,7 @@ function boundExpertCount(row: ConfigItem): number {
       </template>
     </div>
 
-    <div v-loading="loading" class="rows" :style="rowsMax ? { maxHeight: `${rowsMax}px`, overflowY: 'auto' } : undefined" :ref="bindRows">
+    <div v-if="!(activeTab === 'agents' && activeAgent === 'all')" v-loading="loading" class="rows" :style="rowsMax ? { maxHeight: `${rowsMax}px`, overflowY: 'auto' } : undefined" :ref="bindRows">
       <div v-for="row in viewRows" :key="row.id" class="row">
         <el-checkbox
           class="row-check"
@@ -539,7 +558,7 @@ function boundExpertCount(row: ConfigItem): number {
           </el-dropdown>
         </div>
       </div>
-      <el-empty v-if="!viewRows.length && !loading" :description="loadError ? '加载失败，请重新加载技能' : keyword ? '没有匹配的技能，请调整搜索条件' : activeTab === 'all' ? '尚未创建技能，可新建或导入 SKILL.md 技能包' : activeTab === 'agents' ? (activeAgent === 'all' ? '暂无归属智能体的技能，可在技能行「更多 → 归属智能体」中分配' : `「${agentById(activeAgent as number)?.name || ''}」暂无技能，可将技能归属到该智能体`) : '当前分组暂无技能，可切换分组或为技能设置所属场景'" />
+      <el-empty v-if="!viewRows.length && !loading && !(activeTab === 'agents' && activeAgent === 'all')" :description="loadError ? '加载失败，请重新加载技能' : keyword ? '没有匹配的技能，请调整搜索条件' : activeTab === 'all' ? '尚未创建技能，可新建或导入 SKILL.md 技能包' : activeTab === 'agents' ? (activeAgent === 'all' ? '暂无归属智能体的技能，可在技能行「更多 → 归属智能体」中分配' : `「${agentById(activeAgent as number)?.name || ''}」暂无技能，可将技能归属到该智能体`) : '当前分组暂无技能，可切换分组或为技能设置所属场景'" />
     </div>
   </el-card>
 
@@ -655,6 +674,18 @@ function boundExpertCount(row: ConfigItem): number {
 .agent-radio { height: auto; margin-right: 0; padding: 6px 0; white-space: normal; }
 .agent-radio :deep(.el-radio__label) { display: inline-flex; align-items: baseline; gap: 8px; line-height: 1.5; }
 .agent-tab { margin-left: 6px; }
+/* v25 智能体卡片 */
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.agent-card { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 16px; background: #fff; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.agent-card:hover { border-color: var(--el-color-primary); box-shadow: 0 4px 14px rgba(64, 158, 255, .12); transform: translateY(-1px); }
+.agent-card-head { display: flex; align-items: center; gap: 10px; }
+.agent-avatar { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; font-size: 17px; flex: none; }
+.agent-card-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-card-title b { font-size: 15px; color: var(--el-text-color-primary); }
+.agent-card-title small { font-size: 11px; }
+.agent-card-desc { margin: 12px 0; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; min-height: 38px; }
+.agent-card-foot { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--el-text-color-regular); border-top: 1px dashed var(--el-border-color-lighter); padding-top: 10px; }
+.agent-card-go { color: var(--el-color-primary); }
 .group-panels { display: flex; gap: 0; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; overflow: hidden; min-height: 280px; max-height: 360px; }
 .group-panel { display: flex; flex-direction: column; }
 .group-panel-left { width: 160px; border-right: 1px solid var(--el-border-color-lighter); background: var(--el-fill-color-lighter); }
