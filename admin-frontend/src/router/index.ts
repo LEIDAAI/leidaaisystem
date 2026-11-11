@@ -129,7 +129,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  document.title = to.meta.title ? `${to.meta.title} - 店雷达管理系统` : '店雷达管理系统'
+  document.title = to.meta.title ? `${to.meta.title} - 有维AI管理系统` : '有维AI管理系统'
   const auth = useAuthStore()
   // 每次导航校验外部撤权；网络失败保留 token，由布局展示重试。
   try { await auth.restore(!to.meta.public) } catch { /* 恢复失败与无权限分别展示。 */ }

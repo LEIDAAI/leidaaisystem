@@ -64,7 +64,7 @@ async function logout() {
 <template>
   <el-container class="admin-layout">
     <el-aside width="208px" class="admin-aside">
-      <div class="admin-logo"><svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><rect x="6" y="7" width="28" height="21" rx="5" fill="none" stroke="#00b96b" stroke-width="4"/><circle cx="20" cy="17.5" r="4.5" fill="#f7ba2a"/><rect x="11" y="32" width="18" height="4.5" rx="2.25" fill="#00b96b"/></svg><div>店雷达管理系统</div></div>
+      <div class="admin-logo"><svg class="brand-icon" viewBox="0 0 40 40" aria-hidden="true"><rect x="6" y="7" width="28" height="21" rx="5" fill="none" stroke="#00b96b" stroke-width="4"/><circle cx="20" cy="17.5" r="4.5" fill="#f7ba2a"/><rect x="11" y="32" width="18" height="4.5" rx="2.25" fill="#00b96b"/></svg><div>有维AI管理系统</div></div>
       <el-menu :default-active="route.path" :default-openeds="visibleGroups.map(group => group.title)" router class="admin-menu">
         <el-sub-menu v-for="group in visibleGroups" :key="group.title" :index="group.title">
           <template #title><span>{{ group.title }}</span></template>
@@ -85,12 +85,12 @@ async function logout() {
       </el-header>
       <div class="mode-banner" :class="{ real: !USE_MOCK }"><span class="status-dot"></span>{{ USE_MOCK ? '演示模式 · 未接后端' : '真实 API 模式' }}<span class="mode-description">{{ USE_MOCK ? '所有操作仅影响当前浏览器演示数据，刷新后保留；请勿输入真实敏感信息。' : '数据由已配置的管理 API 提供，操作将提交至后端。' }}</span></div>
       <el-main class="admin-main">
-        <div class="page-heading"><div><div class="eyebrow">店雷达管理系统</div><h1>{{ route.meta.title }}</h1></div><span class="muted">{{ USE_MOCK ? '本地演示工作空间' : '管理工作空间' }}</span></div>
+        <div class="page-heading"><div><div class="eyebrow">有维AI管理系统</div><h1>{{ route.meta.title }}</h1></div><span class="muted">{{ USE_MOCK ? '本地演示工作空间' : '管理工作空间' }}</span></div>
         <router-view v-if="canShowPage" :key="`${auth.sessionVersion}:${auth.permissionVersion}`" />
         <el-result v-else-if="auth.token" :icon="auth.restoreError ? 'warning' : 'info'" :title="auth.restoreError ? '身份恢复失败' : '正在校验身份'" :sub-title="auth.restoreError || '请稍候，正在加载最新权限。'">
           <template #extra><el-button type="primary" :loading="auth.restoring" @click="retrySession">重试</el-button></template>
         </el-result>
-        <footer class="workspace-footer">店雷达管理系统 <span>让每一次管理都有据可循</span></footer>
+        <footer class="workspace-footer">有维AI管理系统 <span>让每一次管理都有据可循</span></footer>
       </el-main>
     </el-container>
   </el-container>
