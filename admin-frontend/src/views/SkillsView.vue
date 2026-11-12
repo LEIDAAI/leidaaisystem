@@ -509,9 +509,10 @@ function boundExpertCount(row: ConfigItem): number {
         </button>
         <span v-if="!agents.length && !agentLoadError" class="muted small">暂无智能体</span>
         <el-button v-if="agentLoadError" link type="warning" size="small" @click="loadAgents">智能体加载失败，重试</el-button>
-        <el-button v-else link type="primary" size="small" @click="agentManagerVisible = true">管理智能体</el-button>
+        <el-button v-else link type="primary" size="small" class="manage-link" @click="agentManagerVisible = true">管理智能体</el-button>
       </div>
       <div class="tab-row">
+        <span class="row-label">平台</span>
         <button class="tab-pill" :class="{ active: activeTab === 'all' }" @click="switchTab('all')">全部<span class="tab-count">{{ countOf('all') }}</span></button>
         <button class="tab-pill" :class="{ active: activeTab === 'ungrouped' }" @click="switchTab('ungrouped')">未分组<span class="tab-count">{{ countOf('ungrouped') }}</span></button>
         <button v-for="p in PLATFORMS" :key="p" class="tab-pill" :class="{ active: activeTab === p }" @click="switchTab(p)">
@@ -519,6 +520,7 @@ function boundExpertCount(row: ConfigItem): number {
         </button>
       </div>
       <div v-if="activeTab !== 'all' && activeTab !== 'ungrouped'" class="tab-row sub">
+        <span class="row-label">场景</span>
         <button class="tab-pill small" :class="{ active: activeScenario === 'all' }" @click="activeScenario = 'all'">全部场景<span class="tab-count">{{ subCountOf('all') }}</span></button>
         <button class="tab-pill small" :class="{ active: activeScenario === 'unassigned' }" @click="activeScenario = 'unassigned'">未分配场景<span class="tab-count">{{ subCountOf('unassigned') }}</span></button>
         <button v-for="s in scenariosOf(activeTab as PlatformType)" :key="s.id" class="tab-pill small" :class="{ active: activeScenario === s.id }" @click="activeScenario = s.id">{{ s.name }}<span class="tab-count">{{ subCountOf(s.id) }}</span></button>
@@ -696,16 +698,20 @@ function boundExpertCount(row: ConfigItem): number {
 .row-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; justify-content: flex-end; white-space: nowrap; }
 .muted { color: var(--el-text-color-secondary); }
 .slash-code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 20px; padding: 0 6px; border-radius: 4px; color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-/* v7 分组导航：一级平台 Tab + 二级场景 Tab（胶囊样式） */
-.group-tabs { margin: 4px 0 12px; }
-.tab-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tab-row.sub { margin-top: 8px; padding-left: 4px; }
-.tab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border: 1px solid var(--el-border-color); border-radius: 999px; background: var(--el-bg-color); color: var(--el-text-color-regular); font-size: 13px; line-height: 1.2; cursor: pointer; transition: all 0.15s; }
+/* v37 分组导航：容器卡片化 + 行标签对齐，三层（智能体/平台/场景）结构对称不拥挤 */
+.group-tabs { margin: 4px 0 14px; padding: 12px 14px 10px; background: var(--el-fill-color-lighter); border-radius: 10px; }
+.tab-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tab-row + .tab-row { margin-top: 10px; }
+.tab-row.sub { margin-top: 10px; }
+.tab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid var(--el-border-color); border-radius: 999px; background: var(--el-bg-color); color: var(--el-text-color-regular); font-size: 12px; line-height: 1.4; cursor: pointer; transition: all 0.15s; }
 .tab-pill:hover { color: var(--el-color-primary); border-color: var(--el-color-primary-light-5); }
 .tab-pill.active { background: var(--el-color-primary); border-color: var(--el-color-primary); color: #fff; font-weight: 600; }
-.tab-pill.small { padding: 3px 10px; font-size: 12px; background: var(--el-fill-color-lighter); border-color: transparent; }
-.tab-pill.small.active { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
-.tab-count { font-size: 11px; opacity: 0.75; }
+.tab-pill.small { padding: 3px 10px; font-size: 12px; background: var(--el-bg-color); border-color: transparent; }
+.tab-pill.small.active { background: var(--el-bg-color); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
+/* 计数徽章：浅底圆角小胶囊，与文字拉开层次 */
+.tab-count { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; background: var(--el-fill-color-dark); color: var(--el-text-color-secondary); font-weight: 400; }
+.tab-pill.active .tab-count { background: rgba(255, 255, 255, .25); color: #fff; }
+.tab-pill.small.active .tab-count { background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
 .tab-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 .group-target { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 10px; }
 /* v25 智能体：归属选择 */
@@ -713,11 +719,13 @@ function boundExpertCount(row: ConfigItem): number {
 .agent-radio { height: auto; margin-right: 0; padding: 6px 0; white-space: normal; }
 .agent-radio :deep(.el-radio__label) { display: inline-flex; align-items: baseline; gap: 8px; line-height: 1.5; }
 .agent-tab { margin-left: 6px; }
-/* v30：第一层智能体行（在平台之上） */
-.tab-row.agent-row { align-items: center; gap: 8px; padding-bottom: 8px; }
+/* v37：智能体行（第一层）——标签定宽两端对齐，行尾「管理智能体」与胶囊用竖线分隔 */
+.tab-row.agent-row { align-items: center; padding-bottom: 2px; }
 .tab-row.agent-row .tab-pill.agent { border-color: rgba(0, 185, 107, .35); }
 .tab-row.agent-row .tab-pill.agent.active { border-color: #00b96b; background: rgba(0, 185, 107, .1); color: #00b96b; }
-.row-label { font-size: 12px; color: var(--el-text-color-secondary); flex: none; padding-right: 2px; }
+.tab-row.agent-row .tab-pill.agent.active .tab-count { background: rgba(0, 185, 107, .12); color: #00b96b; }
+.agent-row .manage-link { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--el-border-color); border-radius: 0; }
+.row-label { flex: 0 0 46px; font-size: 12px; color: var(--el-text-color-secondary); text-align: justify; text-align-last: justify; user-select: none; }
 .muted.small { font-size: 12px; }
 /* v25 智能体卡片 */
 .agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
