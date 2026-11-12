@@ -50,6 +50,8 @@ function onConfirm(): void {
       <el-form-item label="变更说明">
         <el-input v-model="note" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="可选，记录本次变更目的（进入版本历史）" />
       </el-form-item>
+      <!-- v31：业务自定义字段插槽（如技能发布时选择归属智能体） -->
+      <slot name="extra" />
     </el-form>
     <template #footer>
       <el-button :disabled="loading" @click="emit('update:modelValue', false)">取消</el-button>

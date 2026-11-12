@@ -147,16 +147,21 @@ watch(
 // ---------------------------------------------------------------- 场景（平台 → 场景，联动场景库）
 /** 场景下拉选项：所选平台场景优先置顶（对齐前台「先平台、后场景」） */
 const scenarioOptions = computed(() => orderedScenarioOptions(draft.value.platforms))
-/** v25 归属智能体选项（加载失败不阻塞编辑） */
+/** v31 归属智能体选项（发布时选择；加载失败不阻塞编辑） */
 const agentOptions = ref<Agent[]>([])
+/** 各智能体的技能数（发布下拉里显示，便于判断归属） */
+const agentSkillCount = ref<Record<number, number>>({})
+const agentCountOf = (id: number): number => agentSkillCount.value[id] || 0
 function loadAgentOptions(): void {
-  listAgents().then(list => { agentOptions.value = list }).catch(() => { agentOptions.value = [] })
+  Promise.all([listAgents(), listConfig('skills')])
+    .then(([list, skills]) => {
+      agentOptions.value = list
+      const counts: Record<number, number> = {}
+      skills.forEach(s => { if (s.agentId) counts[s.agentId] = (counts[s.agentId] || 0) + 1 })
+      agentSkillCount.value = counts
+    })
+    .catch(() => { agentOptions.value = [] })
 }
-/** v-model 需可赋值表达式：用 computed 代理读写 agentId（空 = 未归属） */
-const agentIdModel = computed<number | null>({
-  get: () => draft.value.agentId ?? null,
-  set: (value) => { draft.value.agentId = value ?? null }
-})
 /** 场景选择/输入：选中历史项回填数值 id；allow-create 输入字符串 → 取/建场景后回填 id；清空置 null（未分组） */
 async function onScenarioChange(v: unknown): Promise<void> {
   if (typeof v === 'number') { draft.value.scenarioId = v; return }
@@ -211,7 +216,7 @@ function buildPayload(): FormDraft {
     id: currentId.value ?? d.id,
     code: d.code, name: d.name, status: d.status,
     platforms: (d.platforms || []).filter((p) => PLATFORMS.includes(p as PlatformType)),
-    description: d.description, content: d.content, scenarioId: d.scenarioId ?? null, agentId: d.agentId ?? null, visibility: d.visibility,
+    description: d.description, content: d.content, scenarioId: d.scenarioId ?? null, visibility: d.visibility,
     files: (d.files || []).map((f) => ({ name: String(f.name || '').trim(), content: String(f.content || '') }))
   }
 }
@@ -566,6 +571,8 @@ function insertTemplate(): void {
 // ---------------------------------------------------------------- 发布 / 历史版本 / 关闭
 const versionDialog = ref(false)
 const historyDrawer = ref(false)
+/** v31：发布时选择的归属智能体（打开发布框时取当前归属，可改；null = 公共技能） */
+const publishAgentId = ref<number | null>(null)
 /** 版本确认框文案：新建「保存并创建」/ 编辑「发布版本」（对标 Open WebUI 一步语义） */
 const confirmProps = computed(() =>
   currentId.value
@@ -578,6 +585,7 @@ function onPublishClick(): void {
     ElMessage.warning(`请先完善：${missingLabels.value.join('、')}`)
     return
   }
+  publishAgentId.value = draft.value.agentId ?? null
   versionDialog.value = true
 }
 
@@ -599,9 +607,11 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
   try {
     await activeAutosave
     if (session !== editorSession || !props.modelValue) return
+    // 发布时选定的智能体归属同步进草稿快照，保证 dirty 判定与已保存内容一致
+    draft.value.agentId = publishAgentId.value ?? null
     const sentDraft = JSON.parse(draftSnapshot()) as FormDraft
     const payload = JSON.parse(JSON.stringify(buildPayload())) as FormDraft
-    const resp = await saveConfig('skills', { ...payload, versionName: v.versionName, note: v.note })
+    const resp = await saveConfig('skills', { ...payload, agentId: publishAgentId.value, versionName: v.versionName, note: v.note })
     if (session !== editorSession || !props.modelValue) return
     if (!currentId.value) { currentId.value = resp.id; draft.value.id = resp.id; sentDraft.id = resp.id }
     lastSnapshot = JSON.stringify(sentDraft)
@@ -702,8 +712,7 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
           <div class="title-stack">
             <el-input v-model="draft.name" class="name-input" :disabled="!canEdit" placeholder="未命名技能" />
             <div class="title-meta">
-              <el-input v-if="!currentId" v-model="draft.code" class="code-input" :disabled="!canEdit" placeholder="编码（字母数字_-）" title="根据名称自动生成建议编码；手动修改后不再自动覆盖" @input="codeTouched = true" />
-              <el-tag v-else size="small" effect="plain" class="code-tag">{{ draft.code || '—' }}</el-tag>
+              <!-- v31：移除「编码」输入框——编码由技能名称自动生成，内部标识不暴露给使用者 -->
               <span class="autosave" :class="autosaveState">
                 <span class="dot" />
                 {{ autosaveText }}
@@ -815,12 +824,6 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
                 <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="s.label" />
               </el-select>
             </el-form-item>
-            <el-form-item label="归属智能体">
-              <el-select v-model="agentIdModel" clearable placeholder="不选 = 公共技能（不归属任何智能体）" style="width:100%">
-                <el-option v-for="a in agentOptions" :key="a.id" :value="a.id" :label="a.name" />
-              </el-select>
-              <p class="muted">一个技能最多归属一个智能体；各智能体相互独立，技能不共享。</p>
-            </el-form-item>
             <el-form-item label="前台可见性">
               <el-radio-group v-model="draft.visibility!.type">
                 <el-radio-button value="PUBLIC">全员可见</el-radio-button>
@@ -874,7 +877,16 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
       </section>
     </div>
 
-    <VersionConfirmDialog v-model="versionDialog" :title="confirmProps.title" :description="confirmProps.description" :confirm-text="confirmProps.confirmText" async :loading="saving" @confirm="save" />
+    <VersionConfirmDialog v-model="versionDialog" :title="confirmProps.title" :description="confirmProps.description" :confirm-text="confirmProps.confirmText" async :loading="saving" @confirm="save">
+      <template #extra>
+        <el-form-item label="归属智能体">
+          <el-select v-model="publishAgentId" clearable placeholder="不选 = 公共技能（不归属任何智能体）" style="width:100%">
+            <el-option v-for="a in agentOptions" :key="a.id" :value="a.id" :label="`${a.name}（${agentCountOf(a.id)} 个技能）`" />
+          </el-select>
+          <p class="muted">发布时指定该技能归属哪个智能体；各智能体相互独立，技能不共享。</p>
+        </el-form-item>
+      </template>
+    </VersionConfirmDialog>
     <el-drawer :model-value="historyDrawer" :title="`版本历史 · ${draft.name || ''}`" size="720px" :before-close="closeHistory" :close-on-click-modal="false" append-to-body>
       <div v-loading="historyLoading">
         <el-alert title="恢复会替换当前编辑内容并生成新版本；未保存修改将被放弃。历史浏览期间暂停自动保存。" type="warning" :closable="false" />
