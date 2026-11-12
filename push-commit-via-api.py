@@ -71,12 +71,18 @@ full_message = message if not body_extra else f"{message}\n\n{body_extra}"
 # 3) 逐文件建 blob
 tree_entries = []
 for rel in files:
+    path = rel.replace("\\", "/")
+    if not os.path.exists(rel):
+        # 文件已删除：tree 条目 sha 置空表示移除该路径
+        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+        print(f"  delete {path}")
+        continue
     with open(rel, "rb") as f:
         content = base64.b64encode(f.read()).decode()
     st, blob = request("POST", f"{api}/git/blobs", {"content": content, "encoding": "base64"})
     if st not in (200, 201):
         raise SystemExit(f"blob failed for {rel}: {st} {blob}")
-    tree_entries.append({"path": rel.replace("\\", "/"), "mode": "100644", "type": "blob", "sha": blob["sha"]})
+    tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
     print(f"  blob {rel} -> {blob['sha'][:10]}")
 
 # 4) 新 tree（基于远端 tree，只覆盖指定文件）
