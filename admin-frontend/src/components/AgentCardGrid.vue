@@ -1,50 +1,26 @@
 <script setup lang="ts">
 /**
- * 智能体管理页（v26）：
- * - 左侧导航独立入口，列出全部智能体（有维AI / WorkBuddy / 千问 …），各自技能相互独立、互不关联
- * - 卡片展示名称、编码、描述、启停状态与技能数；可跳转技能页查看该智能体归属的技能
- * - 新增/编辑/删除：编码创建后不可改；删除前须先将其技能移至其他智能体或公共池
+ * 智能体卡片网格（v29 共享组件）：
+ * 技能管理页顶部「智能体管理」Tab 使用本组件完成智能体的查看 / 新增 / 编辑 / 删除，
+ * 各智能体相互独立、互不关联；未归属任何智能体的技能为公共技能。
  */
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { useAuthStore } from '@/stores/auth'
-import { listAgents, saveAgent, deleteAgent, listConfig, type Agent } from '@/api/config'
-import { createSeqGuard } from '@/utils/race'
+import { saveAgent, deleteAgent, type Agent } from '@/api/config'
 
-const router = useRouter()
-const auth = useAuthStore()
-const canEdit = computed(() => auth.hasPerm('skill:edit'))
+const props = defineProps<{
+  /** 智能体列表（父组件负责加载） */
+  agents: Agent[]
+  /** 技能列表（用于统计每个智能体的技能数；agentId 为空表示公共技能） */
+  skills: { id: number; agentId?: number | null }[]
+  /** 是否可编辑（skill:edit） */
+  canEdit: boolean
+}>()
+const emit = defineEmits<{ open: [id: number]; changed: [] }>()
 
-const agents = ref<Agent[]>([])
-const skills = ref<{ id: number; name: string; agentId?: number | null }[]>([])
-const keyword = ref('')
-const loading = ref(false)
-const loadError = ref('')
-const loadGuard = createSeqGuard()
-
-const filtered = computed(() => agents.value.filter((a) => !keyword.value.trim() || `${a.name} ${a.code} ${a.description || ''}`.includes(keyword.value.trim())))
-const skillCountOf = (agentId: number): number => skills.value.filter((s) => s.agentId === agentId).length
-
-async function load(): Promise<void> {
-  const seq = loadGuard.next()
-  loading.value = true
-  loadError.value = ''
-  try {
-    const [agentList, skillList] = await Promise.all([listAgents(), listConfig('skills')])
-    if (!loadGuard.isCurrent(seq)) return
-    agents.value = agentList
-    skills.value = skillList.map((s) => ({ id: s.id, name: s.name, agentId: s.agentId ?? null }))
-  } catch (e) {
-    if (!loadGuard.isCurrent(seq)) return
-    loadError.value = e instanceof Error ? e.message : '智能体加载失败'
-    agents.value = []
-  } finally {
-    if (loadGuard.isCurrent(seq)) loading.value = false
-  }
-}
-onMounted(() => { void load() })
+const countOf = (agentId: number): number => props.skills.filter((s) => s.agentId === agentId).length
+const initialOf = (name: string): string => name.trim().slice(0, 1).toUpperCase() || 'A'
 
 // -------------------------------------------------------------- 新增 / 编辑
 const dlgVisible = ref(false)
@@ -64,7 +40,7 @@ const rules: FormRules = {
 
 function openCreate(): void {
   editingId.value = null
-  draft.value = { name: '', code: '', description: '', status: 1, sort: agents.value.length + 1 }
+  draft.value = { name: '', code: '', description: '', status: 1, sort: props.agents.length + 1 }
   dlgVisible.value = true
   formRef.value?.clearValidate()
 }
@@ -91,7 +67,7 @@ async function submit(): Promise<void> {
     await saveAgent(editingId.value === null ? payload : { ...payload, id: editingId.value })
     ElMessage.success(editingId.value === null ? '智能体已创建' : '智能体已更新')
     dlgVisible.value = false
-    await load()
+    emit('changed')
   } catch {
     // 校验与冲突错误已由请求拦截器透出
   } finally {
@@ -100,7 +76,7 @@ async function submit(): Promise<void> {
 }
 
 async function remove(agent: Agent): Promise<void> {
-  const count = skillCountOf(agent.id)
+  const count = countOf(agent.id)
   try {
     await ElMessageBox.confirm(
       count ? `智能体「${agent.name}」仍归属 ${count} 个技能，请先将技能移至其他智能体或公共池。` : `确认删除智能体「${agent.name}」？`,
@@ -111,54 +87,39 @@ async function remove(agent: Agent): Promise<void> {
   try {
     await deleteAgent(agent.id)
     ElMessage.success('智能体已删除')
-    await load()
+    emit('changed')
   } catch {
     // 409 引用拦截已透出
   }
 }
-
-/** 跳转技能页并定位到该智能体 */
-function gotoSkills(agent: Agent): void {
-  void router.push({ path: '/skills', query: { tab: 'agents', agent: String(agent.id) } })
-}
-
-const initialOf = (name: string): string => name.trim().slice(0, 1).toUpperCase() || 'A'
 </script>
 
 <template>
-  <section class="page">
-    <header class="page-heading">
-      <div class="eyebrow">有维AI管理系统</div>
-      <h1>智能体管理</h1>
-      <p class="lead">
+  <div>
+    <div class="agent-grid-head">
+      <p class="agent-grid-tip">
         每个智能体是一套独立的技能空间，技能归属互斥、互不关联；未归属任何智能体的技能视为公共技能。
       </p>
-    </header>
-
-    <div class="toolbar">
-      <el-input v-model="keyword" placeholder="搜索智能体名称 / 编码" clearable style="width: 260px" />
       <el-button v-if="canEdit" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新增智能体
       </el-button>
     </div>
 
-    <el-alert v-if="loadError" type="error" :closable="false" :title="loadError" show-icon style="margin-bottom: 14px" />
-
-    <div v-loading="loading" class="agent-cards">
-      <div v-for="agent in filtered" :key="agent.id" class="agent-card">
+    <div class="agent-cards">
+      <div v-for="agent in agents" :key="agent.id" class="agent-card">
         <div class="agent-card-head">
           <span class="agent-avatar">{{ initialOf(agent.name) }}</span>
           <div class="agent-card-title">
             <b>{{ agent.name }}</b>
-            <small>{{ agent.code }}</small>
+            <small class="muted">{{ agent.code }}</small>
           </div>
-          <el-tag :type="agent.status === 1 ? 'success' : 'info'" size="small" effect="plain">{{ agent.status === 1 ? '启用' : '停用' }}</el-tag>
+          <el-tag size="small" :type="agent.status === 1 ? 'success' : 'info'" effect="plain">{{ agent.status === 1 ? '启用' : '停用' }}</el-tag>
         </div>
-        <p class="agent-card-desc">{{ agent.description || '（未填写描述）' }}</p>
+        <div class="agent-card-desc">{{ agent.description || '（未填写描述）' }}</div>
         <div class="agent-card-foot">
-          <span class="muted">{{ skillCountOf(agent.id) }} 个技能</span>
+          <span>{{ countOf(agent.id) }} 个技能</span>
           <span class="agent-card-ops">
-            <el-button link type="primary" @click="gotoSkills(agent)">查看技能</el-button>
+            <el-button link type="primary" @click="emit('open', agent.id)">查看技能</el-button>
             <template v-if="canEdit">
               <el-button link type="primary" @click="openEdit(agent)">编辑</el-button>
               <el-button link type="danger" @click="remove(agent)">删除</el-button>
@@ -168,7 +129,7 @@ const initialOf = (name: string): string => name.trim().slice(0, 1).toUpperCase(
       </div>
     </div>
 
-    <el-empty v-if="!loading && !filtered.length" :description="keyword ? '没有匹配的智能体' : '尚未创建智能体'" />
+    <el-empty v-if="!agents.length" description="尚未创建智能体，可新增一个作为技能归属维度" />
 
     <el-dialog v-model="dlgVisible" :title="editingId === null ? '新增智能体' : '编辑智能体'" width="520px" destroy-on-close>
       <el-form ref="formRef" :model="draft" :rules="rules" label-width="88px">
@@ -186,20 +147,22 @@ const initialOf = (name: string): string => name.trim().slice(0, 1).toUpperCase(
         <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
       </template>
     </el-dialog>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.agent-card { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 16px; background: var(--el-bg-color); transition: border-color .15s, box-shadow .15s; }
-.agent-card:hover { border-color: var(--el-color-primary-light-5); box-shadow: 0 4px 14px rgba(64, 158, 255, .1); }
+.agent-grid-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.agent-grid-tip { margin: 0; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; }
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.agent-card { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 16px; background: #fff; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.agent-card:hover { border-color: var(--el-color-primary); box-shadow: 0 4px 14px rgba(64, 158, 255, .12); transform: translateY(-1px); }
 .agent-card-head { display: flex; align-items: center; gap: 10px; }
 .agent-avatar { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; font-size: 17px; flex: none; }
 .agent-card-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .agent-card-title b { font-size: 15px; color: var(--el-text-color-primary); }
-.agent-card-title small { font-size: 11px; color: var(--el-text-color-secondary); }
+.agent-card-title small { font-size: 11px; }
 .agent-card-desc { margin: 12px 0; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; min-height: 38px; }
-.agent-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; border-top: 1px dashed var(--el-border-color-lighter); padding-top: 10px; }
+.agent-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--el-text-color-regular); border-top: 1px dashed var(--el-border-color-lighter); padding-top: 10px; }
 .agent-card-ops { display: flex; align-items: center; gap: 2px; }
 .muted { color: var(--el-text-color-secondary); }
 .setting-hint { margin: 4px 0 0; font-size: 12px; color: var(--el-text-color-secondary); }

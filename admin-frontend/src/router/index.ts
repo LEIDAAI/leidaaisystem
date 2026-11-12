@@ -64,28 +64,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '技能管理', perm: 'skill:view', menuGroup: 'AI 资源', menuOrder: 11 }
       },
       {
-        path: 'agents',
-        name: 'agents',
-        component: () => import('@/views/AgentsView.vue'),
-        meta: { title: '智能体管理', perm: 'skill:view', menuGroup: 'AI 资源', menuOrder: 12 }
-      },
-      {
         path: 'mcp',
         name: 'mcp',
         component: () => import('@/views/ConfigView.vue'),
-        meta: { title: 'MCP 服务', perm: 'mcp:view', menuGroup: 'AI 资源', menuOrder: 13 }
+        meta: { title: 'MCP 服务', perm: 'mcp:view', menuGroup: 'AI 资源', menuOrder: 12 }
       },
       {
         path: 'knowledge',
         name: 'knowledge',
         component: () => import('@/views/KnowledgeView.vue'),
-        meta: { title: '知识库管理', perm: 'knowledge:view', menuGroup: 'AI 资源', menuOrder: 14 }
+        meta: { title: '知识库管理', perm: 'knowledge:view', menuGroup: 'AI 资源', menuOrder: 13 }
       },
       {
         path: 'models',
         name: 'models',
         component: () => import('@/views/ConfigView.vue'),
-        meta: { title: '模型管理', perm: 'model:view', menuGroup: 'AI 资源', menuOrder: 15 }
+        meta: { title: '模型管理', perm: 'model:view', menuGroup: 'AI 资源', menuOrder: 14 }
       },
       {
         path: 'chats',

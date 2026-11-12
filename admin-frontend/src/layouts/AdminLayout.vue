@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import type { Component } from 'vue'
 import { captureSession } from '@/utils/token'
 import { useRoute, useRouter } from 'vue-router'
-import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, ChatLineRound, Collection, Cpu, MagicStick, Reading, Coin, Money, UserFilled } from '@element-plus/icons-vue'
+import { Grid, User, Tickets, Lock, Avatar, Setting, Connection, ChatDotRound, ChatLineRound, Collection, Cpu, MagicStick, Reading, Coin, Money } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { USE_MOCK } from '@/utils/constants'
 
@@ -12,7 +12,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const icons: Record<string, Component> = {
   '/dashboard': Grid, '/users': User, '/orders': Tickets, '/experts': Cpu,
-  '/skills': Setting, '/agents': UserFilled, '/mcp': Connection, '/knowledge': Reading, '/models': MagicStick,
+  '/skills': Setting, '/mcp': Connection, '/knowledge': Reading, '/models': MagicStick,
   '/admins': Avatar, '/roles': Lock, '/plans': Collection, '/credit-packages': Coin,
   '/billing-settings': Money, '/chats': ChatDotRound, '/feedback': ChatLineRound
 }

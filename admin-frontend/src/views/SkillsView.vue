@@ -25,6 +25,7 @@ import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
 import { visTagOf } from '@/utils/visibility'
 import { useTableMaxHeight } from '@/composables/useTableMax'
+import AgentCardGrid from '@/components/AgentCardGrid.vue'
 import SkillEditor from './config/SkillEditor.vue'
 import SkillImportDialog from './config/SkillImportDialog.vue'
 import VersionDrawer from './config/VersionDrawer.vue'
@@ -101,6 +102,11 @@ const agentLoadError = ref(false)
 const activeTab = ref<string>('all')
 const activeScenario = ref<number | 'all' | 'unassigned'>('all')
 const activeAgent = ref<number | 'all'>('all')
+/** v29：卡片「查看技能」→ 进入该智能体的技能列表 */
+function openAgentSkills(id: number): void {
+  activeAgent.value = id
+}
+
 /** v26：支持从「智能体管理」页跳转定位（?tab=agents&agent=<id>） */
 function applyRouteQuery(): void {
   if (route.query.tab !== 'agents') return
@@ -469,13 +475,14 @@ function boundExpertCount(row: ConfigItem): number {
     <!-- v7 分组导航：一级 Tab（全部 / 未分组 / 各平台 / 智能体管理）+ 选中平台后的二级场景 Tab -->
     <div class="group-tabs">
       <div class="tab-row">
+        <!-- v29：智能体管理置于顶部 Tab 首位（左侧导航不再单列入口） -->
+        <button class="tab-pill agent-tab" :class="{ active: activeTab === 'agents' }" @click="switchTab('agents')">
+          <span class="tab-dot" style="background:#00b96b" />智能体管理<span class="tab-count">{{ countOf('agents') }}</span>
+        </button>
         <button class="tab-pill" :class="{ active: activeTab === 'all' }" @click="switchTab('all')">全部<span class="tab-count">{{ countOf('all') }}</span></button>
         <button class="tab-pill" :class="{ active: activeTab === 'ungrouped' }" @click="switchTab('ungrouped')">未分组<span class="tab-count">{{ countOf('ungrouped') }}</span></button>
         <button v-for="p in PLATFORMS" :key="p" class="tab-pill" :class="{ active: activeTab === p }" @click="switchTab(p)">
           <span class="tab-dot" :style="{ background: platMetaOf(p).color }" />{{ platMetaOf(p).label }}<span class="tab-count">{{ countOf(p) }}</span>
-        </button>
-        <button class="tab-pill agent-tab" :class="{ active: activeTab === 'agents' }" @click="switchTab('agents')">
-          <span class="tab-dot" style="background:#00b96b" />智能体管理<span class="tab-count">{{ countOf('agents') }}</span>
         </button>
       </div>
       <div v-if="activeTab !== 'all' && activeTab !== 'ungrouped' && activeTab !== 'agents'" class="tab-row sub">
@@ -491,25 +498,19 @@ function boundExpertCount(row: ConfigItem): number {
       </div>
     </div>
 
-    <!-- v25 智能体卡片视图：各智能体相互独立、技能不共享 -->
-    <div v-if="activeTab === 'agents' && activeAgent === 'all'" class="agent-cards">
-      <div v-for="a in agents" :key="a.id" class="agent-card" @click="activeAgent = a.id">
-        <div class="agent-card-head">
-          <span class="agent-avatar">{{ a.name.slice(0, 1) }}</span>
-          <div class="agent-card-title">
-            <b>{{ a.name }}</b>
-            <small class="muted">{{ a.code }}</small>
-          </div>
-          <el-tag size="small" :type="a.status === 1 ? 'success' : 'info'" effect="plain">{{ a.status === 1 ? '启用' : '停用' }}</el-tag>
-        </div>
-        <div class="agent-card-desc">{{ a.description || '—' }}</div>
-        <div class="agent-card-foot">
-          <span>{{ agentCountOf(a.id) }} 个技能</span>
-          <span class="agent-card-go">查看技能 ›</span>
-        </div>
-      </div>
-      <el-empty v-if="!agents.length && !agentLoadError" description="暂无智能体" :image-size="60" />
-      <el-alert v-if="agentLoadError" type="error" :closable="false" title="智能体列表加载失败"><el-button link @click="loadAgents">重试</el-button></el-alert>
+    <!-- v29 智能体管理卡片视图：共享组件（查看/新增/编辑/删除），各智能体相互独立、技能不共享 -->
+    <div v-if="activeTab === 'agents' && activeAgent === 'all'">
+      <el-alert v-if="agentLoadError" type="error" :closable="false" title="智能体列表加载失败" style="margin-bottom: 12px">
+        <el-button link @click="loadAgents">重试</el-button>
+      </el-alert>
+      <AgentCardGrid
+        v-else
+        :agents="agents"
+        :skills="items"
+        :can-edit="canEdit"
+        @open="openAgentSkills"
+        @changed="loadAgents"
+      />
     </div>
 
     <div v-if="!(activeTab === 'agents' && activeAgent === 'all')" class="select-bar">
