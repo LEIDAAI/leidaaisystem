@@ -19,7 +19,7 @@
 <div class="eyebrow">店雷达 AI 前台 · 原型交付说明</div>
 <h1>前台功能页面<br>原型说明</h1>
 <p>面向前端、后端与测试，逐页拆解前台（雷达AI）全部功能页面的交互逻辑、字段口径、状态规则与验收依据。本文与后台 <a href="https://leidaai.github.io/leidaaisystem/feature-spec.html">feature-spec.html</a> 同一套规范编排，F01–F07 编号与其中的“前台功能”一一对应，并扩展 F08 全局框架与 F09 通用弹窗。</p>
-<div class="meta"><span>前台 Vue3 + Vite</span><span>修订 R1</span><span>2026-11-05</span><span>9 个原型模块</span><span>37 项原型说明</span><span><a href="https://leidaai.github.io/leidaaiqiantai/">线上前台</a></span></div>
+<div class="meta"><span>前台 Vue3 + Vite</span><span>修订 R2</span><span>2026-11-12</span><span>9 个原型模块</span><span>37 项原型说明</span><span><a href="https://leidaai.github.io/leidaaiqiantai/">线上前台</a></span></div>
 </header>
 <nav class="toc" aria-label="原型模块导航">
 <div class="toc-group"><strong>前台页面</strong><ol><li><a href="#pn-F01">登录与游客</a></li><li><a href="#pn-F02">AI 选品对话</a></li><li><a href="#pn-F03">套餐购买</a></li><li><a href="#pn-F04">个人信息</a></li><li><a href="#pn-F05">订单中心</a></li><li><a href="#pn-F06">消耗明细</a></li><li><a href="#pn-F07">专家·技能·MCP</a></li><li><a href="#pn-F08">全局框架与导航</a></li><li><a href="#pn-F09">通用弹窗与反馈</a></li></ol></div>
@@ -33,7 +33,7 @@
 <tr><td>数据状态标注</td><td>【真实】后端接口；【演示】硬编码/本地 mock；【模拟】交互不上送服务端；【未对接/待开发】不作为已完成链路。</td><td>演示数据数值与真实业务不一致不报缺陷；不把模拟交互当作真实链路验收证据。</td></tr>
 <tr><td>会话与消息</td><td>会话列表、历史消息、1688 商品表、obsUrl 报告、会员套餐信息走真实接口；流式回复为 SSE。【真实】</td><td>以真实响应内容验收；注意报告预览依赖 <code>/api/proxy</code> 同源代理链路。</td></tr>
 <tr><td>演示与模拟数据</td><td>登录/注册/微信扫码、套餐与充值、订单与消耗记录、专家技能 MCP 目录、案例报告为本地 mock 或硬编码。【演示】【模拟】</td><td>预置账号 <code>17688894656 / 123456abc</code>，万能验证码 <code>123456</code>；仅供演示测试。</td></tr>
-<tr><td>本地存储</td><td><code>dld_auth_v1</code> 登录态、<code>dld_last_page</code> 页面记忆、<code>dld-expert-workspace-v1</code> 目录工作区、<code>dld_promo_banner_closed</code>、<code>dld_left_collapsed</code>/<code>dld_left_width</code>/<code>dld_right_width</code> 等。</td><td>清缓存即恢复初始种子数据；先记录前置数据再操作，避免原型操作污染测试结论。</td></tr>
+<tr><td>本地存储</td><td><code>dld_auth_v1</code> 登录态、<code>dld_last_page</code> 页面记忆、<code>dld-expert-workspace-v1</code> 目录工作区、<code>dld_promo_banner_closed_at</code>（Banner 关闭时间戳）、<code>dld_left_collapsed</code>/<code>dld_left_width</code>/<code>dld_right_width</code> 等。</td><td>清缓存即恢复初始种子数据；先记录前置数据再操作，避免原型操作污染测试结论。</td></tr>
 <tr><td>访问与保密</td><td>前台公开地址 <a href="https://leidaai.github.io/leidaaiqiantai/">leidaai.github.io/leidaaiqiantai</a>；不发布内网地址与真实密钥。</td><td>页面原型链接不代表生产入口；输入真实手机号不会触发真实短信。</td></tr>
 </tbody></table></div>
 <p class="note">每项原型说明由“功能名称 + 逻辑说明”组成，逻辑说明固定给出：入口与角色、字段、操作步骤、状态规则、异常边界、关联页面、验收依据。文中测试项为<strong>待执行验收清单</strong>，不是已通过测试报告。</p>
@@ -42,12 +42,12 @@
 <p>前台以“AI 选品对话工作台”为中心，围绕账户与商业化提供套餐/订单/消耗页面，并以专家、技能、MCP 目录组织能力入口。真实接口与本地演示数据混合，下表给出每模块的数据状态与验收要点。</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="前台9模块总览"><table><thead><tr><th>模块</th><th>功能与数据状态</th><th>规则 / 可执行测试要点</th><th>责任划分</th></tr></thead><tbody>
 <tr><td>F01 登录与游客<br>LoginView<br><a href="#pn-F01">查看原型说明</a></td><td>验证码登录与注册、密码登录、微信扫码与绑定三视图；游客免登录可用。全程【模拟，localStorage mock】。</td><td>三种方式分别进入验证交互；未注册新号触发注册补流程；游客验证权限受限行为。</td><td>前端：登录态与拦截；后端：真实认证待接入；测试：区分模拟登录与后台认证。</td></tr>
-<tr><td>F02 AI 选品对话<br>ChatPane + Sidebar + RightPanel<br><a href="#pn-F02">查看原型说明</a></td><td>三栏工作台：会话列表/对话区/预览面板。SSE 流式回复、停止生成、专家技能携带发送、1688 商品卡、obsUrl 报告、附件、推荐追问、会话管理、Excel 导出。核心链路【真实】，演示组件多。</td><td>验证流式逐段返回与停止、跨轮上下文、会话分页与置顶/重命名/删除回查、商品表字段、报告代理打开、Excel 导出内容。</td><td>前端：三栏与 SSE 交互；后端：会话/搜索/报告能力；测试：以真实响应与导出结果验收。</td></tr>
+<tr><td>F02 AI 选品对话<br>ChatPane + Sidebar + RightPanel<br><a href="#pn-F02">查看原型说明</a></td><td>三栏工作台：会话列表/对话区/预览面板。SSE 流式回复、停止生成、专家技能携带发送、1688 商品卡、obsUrl 报告、附件、推荐追问、会话管理、Excel 导出。首屏为四平台专家卡（1688/OZON/亚马逊/TEMU）+ 技能卡，选中专家仅点亮 chip 不自动发送。核心链路【真实】，演示组件多。</td><td>验证流式逐段返回与停止、跨轮上下文、会话分页与置顶/重命名/删除回查、商品表字段、报告代理打开、Excel 导出；专家卡选中/取消与 chip 双向同步。</td><td>前端：三栏与 SSE 交互；后端：会话/搜索/报告能力；测试：以真实响应与导出结果验收。</td></tr>
 <tr><td>F03 套餐购买<br>pricing + 钱包弹窗<br><a href="#pn-F03">查看原型说明</a></td><td>三档套餐卡（演示硬编码，登录后可被真实会员接口覆盖）、月/年付切换、购买确认与扫码支付、升级补差价、积分加油包滑杆。支付【模拟】。</td><td>切换月/年付核对价格；确认支付仅本地加积分，不产生后台订单；补差价按剩余整月折算核对。</td><td>前端：wallet 层与交付流程；后端：支付与订单联动待接入；测试：不宣称支付闭环完成。</td></tr>
 <tr><td>F04 个人信息<br>account<br><a href="#pn-F04">查看原型说明</a></td><td>个人中心子导航四页共用；资料与资产概览、积分余额（getMemberLimit【真实】）、子账号设置为假数据【演示】。</td><td>对照 getMemberLimit 响应核余额；子账号开关互斥验证；退出登录后受保护页回退。</td><td>前端：资料资产展示；后端：会员真实响应；测试：区分真实余额与演示切换。</td></tr>
 <tr><td>F05 订单中心<br>orders<br><a href="#pn-F05">查看原型说明</a></td><td>本地 mock 订单列表、状态/类型/日期筛选、分页与详情。<a class="tag">演示</a>“有效时长”用正则识别文案，<strong>未对接</strong>后台 <code>durationDays=0</code> 长期有效语义。</td><td>筛选与详情只验证本地数据；不按后台契约判定已打通；退款单默认隐藏要验证。</td><td>前端：订单接口接入与时长语义待办；后端：真实订单数据；测试：本地展示与后台订单分开验收。</td></tr>
 <tr><td>F06 消耗明细<br>consume<br><a href="#pn-F06">查看原型说明</a></td><td>本地 mock 消耗记录 12 条；今天 / 7 天 / 30 天快捷范围与自定义日期区间。【演示】</td><td>切换快捷范围与自定义区间，对照本地记录总量；不作为真实积分流水证据。</td><td>前端：筛选交互；后端：台账/流水待开发；测试：仅验证演示筛选。</td></tr>
-<tr><td>F07 专家·技能·MCP<br>experts / skills<br><a href="#pn-F07">查看原型说明</a></td><td>专家 14 个、技能 12 个、MCP 3 个全部硬编码；筛选、分页、案例弹窗、使用/安装计数派生。<a class="tag">演示</a>后台按套餐 visibility 过滤<strong>未对接</strong>。</td><td>验证目录交互与筛选空态；“立即使用”自动发送与“前往使用”不自动发送的差异；真实套餐可见性联调单列待办。</td><td>前端：目录与 visibility 接入；后端：过滤契约；测试：不把硬编码目录当作真实权益结果。</td></tr>
+<tr><td>F07 专家·技能·MCP<br>experts / skills<br><a href="#pn-F07">查看原型说明</a></td><td>专家 14 个、技能 12 个、MCP 3 个全部硬编码；筛选、分页、案例弹窗、使用/安装计数派生；技能卡已移除版本号标签。<a class="tag">演示</a>后台按套餐 visibility 过滤<strong>未对接</strong>。</td><td>验证目录交互与筛选空态；「立即使用 / 前往使用」均为点亮 chip + 填入提示词、不自动发送（见 PN-F07-04）；真实套餐可见性联调单列待办。</td><td>前端：目录与 visibility 接入；后端：过滤契约；测试：不把硬编码目录当作真实权益结果。</td></tr>
 <tr><td>F08 全局框架与导航<br>TopNavbar + Sidebar + Banner<br><a href="#pn-F08">查看原型说明</a></td><td>页面切换与记忆、未登录拦截、顶部导航与客服弹层、积分胶囊、新人 Banner、栏宽折叠。交互【模拟】，会员信息【真实】。</td><td>验证 dld_last_page 恢复、登出回退、拦截原因文案、Banner 会话级关闭、拖拽宽度持久化。</td><td>前端：框架行为；后端：无关；测试：以 localStorage 证据验收。</td></tr>
 <tr><td>F09 通用弹窗与反馈<br>Modals<br><a href="#pn-F09">查看原型说明</a></td><td>欢迎赠 100 积分、意见反馈（引用会话/截图 4 张/+50 积分）、删除确认、重命名、Esc 统一关闭。【模拟】</td><td>验证每账号一次礼包、反馈写 localStorage、运行中会话删除拦截、Esc 行为。</td><td>前端：弹窗与本地记录；后端：反馈与奖励接口待接入；测试：区分本地奖励与真实积分。</td></tr>
 </tbody></table></div>
@@ -133,17 +133,17 @@
 <tr><th>功能名称</th><td>新会话首屏 hero 引导</td></tr>
 <tr><th>逻辑说明</th><td>
 <p><strong>入口与角色：</strong>「开启新对话」或登录后默认进入；面向开始一次选品咨询的用户。</p>
-<p><strong>字段：</strong>标题「跨境电商运营助手」；专家/技能双 tab；平台筛选（1688 / OZON / 亚马逊 / TEMU）；场景 chips；推荐卡片每页 6 个 + 翻页；浮动按钮（用户反馈、消息交互演示）。</p>
+<p><strong>字段：</strong>标题「跨境电商运营助手」；专家/技能双 tab；<strong>专家 tab：四平台专家卡（1688 / OZON / 亚马逊 / TEMU）居中排布，平台圆形 logo 头像 + 名称 + 能力说明 + 「由它接手 / 已就位」状态</strong>；技能 tab：场景 chips + 推荐卡片每页 6 个 + 翻页；浮动按钮（用户反馈、消息交互演示）。</p>
 <ol>
-<li>选择平台与场景 → 卡片列表联动筛选。</li>
+<li>专家 tab：点击平台卡片即选中该专家（卡片绿色高亮「已就位」，输入框上方 chip 同步点亮），再次点击取消；选中后占位文案切换为「给 X专家 派活」。选择专家<strong>不自动发送</strong>，由用户确认后发送。</li>
+<li>技能 tab：选择场景 chip → 卡片列表联动筛选。</li>
+<li>技能卡「前往使用」→ 填入提示词跳对话区，<strong>不自动发送</strong>。</li>
 <li>专家卡「看案例」打开案例弹窗（见 PN-F07-03）。</li>
-<li>专家卡「立即使用」→ 将该专家 prompts[0] 填入输入框并<strong>自动发送</strong>。</li>
-<li>技能卡「前往使用」→ 填入提示词跳对话区，<strong>不自动发送</strong>（与专家差异点）。</li>
 </ol>
-<p><strong>状态规则：</strong>卡片数据全部硬编码【演示】；已发出首条消息后 hero 收起进入流式布局。</p>
+<p><strong>状态规则：</strong>卡片数据全部硬编码【演示】；专家选中态与输入框 chip 双向同步（在 chip 移除专家，卡片同步取消）；已发出首条消息后 hero 收起进入流式布局。</p>
 <p><strong>异常边界：</strong>无网络不阻塞首屏展示（卡片为本地数据）。</p>
 <p><strong>关联页面：</strong>pn-F07（目录）、pn-F09-01（反馈弹窗）。</p>
-<p><strong>验收依据：</strong>截图 hero 布局与双 tab 筛选联动；分别点专家/技能卡验证自动发送差异。</p>
+<p><strong>验收依据：</strong>截图 hero 布局（四平台专家卡居中）；点专家卡验证选中/取消与 chip 同步；技能卡不自动发送。</p>
 </td></tr>
 </tbody></table>
 <h4 id="PN-F02-02">原型说明 · PN-F02-02 选品发送与 SSE 流式回复</h4>
@@ -169,7 +169,7 @@
 <tr><th>功能名称</th><td>输入区专家 / 技能浮窗选择</td></tr>
 <tr><th>逻辑说明</th><td>
 <p><strong>入口与角色：</strong>Composer 工具条打开浮窗；将专家/技能作为“身份”随消息发送。</p>
-<p><strong>字段：</strong>浮窗内搜索框 + 平台筛选 + 场景 chips；推荐列表 ≤6 个；已选项在工具条以 chip 呈现（可移除）；身份切换下拉（当前 <code>v-if=false</code> 隐藏，不做验收）。</p>
+<p><strong>字段：</strong>浮窗内搜索框 + 平台筛选 + 场景 chips；推荐列表 ≤6 个；已选项在工具条以 chip 呈现（可移除）；<strong>工具条「电商专家」下拉入口已隐藏（v-if=false 保留代码），当前仅保留「上传文件 / 技能」；专家选中入口收敛到工作台首屏四平台专家卡（见 PN-F02-01）</strong>。</p>
 <ol>
 <li>打开浮窗 → 搜索/筛选 → 点选专家或技能 → toast「已选择专家…随消息一起发送」。</li>
 <li>再次点击同一项可反选取消。</li>
@@ -585,17 +585,17 @@
 <tr><th style="width:120px">功能名称</th><td>立即使用 / 前往使用差异</td></tr>
 <tr><th>逻辑说明</th><td>
 <p><strong>入口与角色：</strong>专家卡与技能卡的行动按钮，进入工作台时行为不同。</p>
-<p><strong>字段：</strong>专家卡按钮「立即使用」；技能卡按钮「前往使用」；身份浮窗内 ≤6 个候选，单选。</p>
+<p><strong>字段：</strong>专家卡按钮「立即使用」；技能卡按钮「前往使用」；工具条身份 chip 单选（专家 / 技能槽位独立）。</p>
 <p><strong>步骤：</strong></p>
 <ol>
-<li>专家「立即使用」→ 跳转工作台，专家身份写入身份浮窗并<b>自动发送</b>一条该专家的推荐开场白。</li>
-<li>技能「前往使用」→ 跳转工作台，技能挂载到身份浮窗但<b>不自动发送</b>，等待用户输入后按技能执行。</li>
-<li>再次从广场选择其他专家 / 技能时替换当前生效身份，仅有一个生效项。</li>
+<li>专家「立即使用」→ 跳转工作台，<b>点亮输入框上方专家 chip 并填入该专家的推荐提示词，不自动发送</b>，由用户确认后发送（2026-11-09 拍板）。</li>
+<li>技能「前往使用」→ 跳转工作台，技能挂载到身份 chip 但<b>不自动发送</b>，等待用户输入后按技能执行。</li>
+<li>再次从广场选择其他专家 / 技能时替换当前生效身份，仅有一个生效项；在 chip 点 ✕ 移除后广场选中态同步取消。</li>
 </ol>
-<p><strong>状态规则：</strong>「专家自动发送、技能不自动发送」是二者核心差异。</p>
+<p><strong>状态规则：</strong>专家与技能均为「点亮 chip + 填入提示词、不自动发送」；选中态双向同步（广场 ↔ chip）。</p>
 <p><strong>异常边界：</strong>未登录一律先走登录；会话进行中切换身份不影响已发送消息，仅作用于后续轮次。</p>
-<p><strong>关联页面：</strong>F02-03（身份携带与浮窗）、PN-F07-01 / PN-F07-02。</p>
-<p><strong>验收依据：</strong>专家进入后自动出现开场消息；技能进入后输入框为空待输入。</p>
+<p><strong>关联页面：</strong>F02-01（首屏四平台专家卡）、PN-F07-01 / PN-F07-02。</p>
+<p><strong>验收依据：</strong>点立即使用后 chip 点亮且输入框有待发送提示词、无自动消息；移除 chip 后广场卡片恢复「由它接手」。</p>
 </td></tr>
 </table>
 
@@ -665,17 +665,17 @@
 <tr><th style="width:120px">功能名称</th><td>新人 Banner</td></tr>
 <tr><th>逻辑说明</th><td>
 <p><strong>入口与角色：</strong>PromoBanner 顶部通栏；面向新用户推广「注册领取 100 积分」活动。</p>
-<p><strong>字段：</strong>活动文案、领取入口按钮、关闭按钮；关闭状态记录于 <code>dld_promo_banner_closed</code>（sessionStorage，会话级）。</p>
+<p><strong>字段：</strong>活动文案、领取入口按钮、关闭按钮；关闭时间戳记录于 <code>dld_promo_banner_closed_at</code>（localStorage）。</p>
 <p><strong>步骤：</strong></p>
 <ol>
 <li>符合条件（未领取新人礼）时顶部展示 Banner。</li>
 <li>点击领取入口进入注册流程（F01-01），注册成功赠 100 积分并展示欢迎弹窗（F09-02）。</li>
-<li>点击关闭按钮，本次会话内不再展示。</li>
+<li>点击关闭按钮，<strong>当前浏览器 1 小时内不再展示</strong>（2026-11-09 拍板：关闭后记录时间戳，1 小时后自动恢复展示）。</li>
 </ol>
-<p><strong>状态规则：</strong>会话内关闭后同会话不再出现；新开会话重新展示；已领取用户不展示。</p>
+<p><strong>状态规则：</strong>关闭后 1 小时内不出现（跨刷新、跨会话生效，按浏览器存储判定）；超过 1 小时自动重新展示；已领取用户不展示。</p>
 <p><strong>异常边界：</strong>无。</p>
 <p><strong>关联页面：</strong>F01-01（注册赠积分）、F09-02（欢迎弹窗）。</p>
-<p><strong>验收依据：</strong>关闭后刷新不再出现（同会话）；注册链路可从 Banner 进入。</p>
+<p><strong>验收依据：</strong>关闭后刷新不再出现；localStorage 记录关闭时间戳；修改时间戳至 1 小时前刷新后 Banner 恢复。</p>
 </td></tr>
 </table>
 
@@ -697,7 +697,7 @@
 <p><strong>验收依据：</strong>刷新后布局与关闭前一致；宽度有边界限制。</p>
 </td></tr>
 </table>
-<p class="prototype-evidence">资料：App.vue（页面切换与三栏布局）、TopNavbar.vue（客服弹层 150ms、wx-kefu.png onerror 回退）、PromoBanner.vue（sessionStorage）、localStorage 键 dld_last_page / dld_left_collapsed / dld_left_width / dld_right_width。</p>
+<p class="prototype-evidence">资料：App.vue（页面切换与三栏布局）、TopNavbar.vue（客服弹层 150ms、wx-kefu.png onerror 回退）、PromoBanner.vue（localStorage dld_promo_banner_closed_at 1 小时隐藏）、localStorage 键 dld_last_page / dld_left_collapsed / dld_left_width / dld_right_width。</p>
 </div>
 
 <div class="prototype-module" id="pn-F09">
@@ -770,11 +770,16 @@
 <tr><th>测试准备</th><td>预置账号 <code>17688894656 / 123456abc</code>；短信验证码用万能码 <code>123456</code>；支付环节为扫码模拟（点击二维码即成功）。</td></tr>
 <tr><th>预览窗口</th><td><iframe src="https://leidaai.github.io/leidaaiqiantai/" style="width:100%;height:640px;border:1px solid #d7e3f0;border-radius:8px;background:#fff" loading="lazy"></iframe></td></tr>
 </table>
+<h4 id="rev-log">修订记录</h4>
+<div class="table-wrap" tabindex="0" role="region" aria-label="修订记录"><table><thead><tr><th>修订</th><th>日期</th><th>同步内容</th></tr></thead><tbody>
+<tr><td>R2</td><td>2026-11-12</td><td>同步前台 11-10 前后与后台 v25–v37 改动：<b>① 首屏专家区</b>（PN-F02-01）：删除平台筛选条，改为四平台专家卡（1688/OZON/亚马逊/TEMU）居中排布、平台圆形 logo 头像、能力说明、「由它接手 / 已就位」选中态；<b>② 立即使用行为</b>（PN-F07-04）：专家/技能均改为点亮输入框 chip + 填入提示词、不自动发送（2026-11-09 拍板），广场与 chip 选中态双向同步；<b>③ 输入框工具条</b>（PN-F02-03）：隐藏「电商专家」下拉入口（v-if=false），仅保留上传文件/技能；<b>④ 新人 Banner</b>（PN-F08-03）：关闭后当前浏览器 1 小时内不再展示（localStorage dld_promo_banner_closed_at）；<b>⑤ 技能卡</b>：移除版本号标签；<b>⑥ 后台侧注</b>：后台 v25–v37（智能体体系必归属+三级导航、导入设置选中即生效、附件图片支持、分组导航卡片化等）已在 <a href="https://leidaai.github.io/leidaaisystem/feature-spec.html">后台 feature-spec.html</a> A08 同步，前台契约（visibility 过滤）仍未对接。</td></tr>
+<tr><td>R1</td><td>2026-11-05</td><td>初版发布：9 个原型模块 / 37 项原型说明。</td></tr>
+</tbody></table></div>
 </section>
 </main>
 
 <div class="report-footer">
-<p>店雷达 AI 前台 · 功能页面原型说明 · 修订 R1 · 2026-11-05 · 9 个原型模块 / 37 项原型说明 · 仅供内部研发与测试使用</p>
+<p>店雷达 AI 前台 · 功能页面原型说明 · 修订 R2 · 2026-11-12 · 9 个原型模块 / 37 项原型说明 · 仅供内部研发与测试使用</p>
 </div>
 </div>
 </body>
