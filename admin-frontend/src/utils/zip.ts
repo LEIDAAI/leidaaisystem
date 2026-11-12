@@ -39,8 +39,11 @@ function dosDateTime(date: Date): { date: number; time: number } {
   return { date: d & 0xffff, time: time & 0xffff }
 }
 
-/** 将多个文本文件打包为 store-only ZIP Blob（${filename} 不可含 \\ 或以 / 开头） */
-export function zipFiles(entries: Array<{ name: string; content: string }>): Blob {
+/** ZIP 条目：文本用 content，二进制用 bytes（v35 图片支持） */
+export interface ZipInput { name: string; content?: string; bytes?: Uint8Array }
+
+/** 将多个条目打包为 store-only ZIP Blob（${filename} 不可含 \\ 或以 / 开头） */
+export function zipFiles(entries: ZipInput[]): Blob {
   const { date, time } = dosDateTime(new Date())
   const localParts: Uint8Array[] = []
   const centralParts: Uint8Array[] = []
@@ -52,7 +55,7 @@ export function zipFiles(entries: Array<{ name: string; content: string }>): Blo
 
   for (const e of entries) {
     const nameBytes = textBytes(e.name.replace(/\\/g, '/'))
-    const data = textBytes(e.content)
+    const data = e.bytes ?? textBytes(e.content ?? '')
     const crc = crc32(data)
     built.push({ nameBytes, data, crc, offset })
 
@@ -123,13 +126,14 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * 解析上传的 ZIP：返回 文件名 → 文本内容 的映射。
+ * 解析上传的 ZIP：返回 文件名 → 原始字节 的映射。
  * 支持 store（无压缩）与 deflate（常见压缩工具默认）两种存储方式；加密条目与其它压缩方式抛错。
+ * v35：先按字节解包，图片等二进制内容不会像「按文本解码」那样被破坏。
  */
-export async function unzipTextFiles(file: File): Promise<Record<string, string>> {
+export async function unzipEntries(file: File): Promise<Record<string, Uint8Array>> {
   const buf = new Uint8Array(await file.arrayBuffer())
   const dv = new DataView(buf.buffer)
-  const out: Record<string, string> = {}
+  const out: Record<string, Uint8Array> = {}
   const decoder = new TextDecoder()
   // 从尾部定位中央目录结束记录（注释长度为 0 时位于文件末尾 22 字节）
   let endOffset = -1
@@ -162,7 +166,18 @@ export async function unzipTextFiles(file: File): Promise<Record<string, string>
     if (method === 0) bytes = raw
     else if (method === 8) bytes = await inflateRaw(raw)
     else throw new Error(`文件 ${name} 使用了不支持的压缩方式（method=${method}），仅支持 store/deflate`)
-    out[name] = decoder.decode(bytes)
+    out[name] = bytes
   }
+  return out
+}
+
+/**
+ * 解析上传的 ZIP：返回 文件名 → 文本内容 的映射（按 UTF-8 解码；图片等二进制请用 unzipEntries）。
+ */
+export async function unzipTextFiles(file: File): Promise<Record<string, string>> {
+  const entries = await unzipEntries(file)
+  const decoder = new TextDecoder()
+  const out: Record<string, string> = {}
+  for (const [name, bytes] of Object.entries(entries)) out[name] = decoder.decode(bytes)
   return out
 }

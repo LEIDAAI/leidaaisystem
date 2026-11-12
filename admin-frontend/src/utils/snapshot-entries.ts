@@ -6,6 +6,7 @@
  * - 其它资源（专家 / MCP / 套餐）：快照顶层字段逐个成条
  */
 import type { ConfigItem } from '@/api/config'
+import { base64ByteSize, formatBytes } from './binary'
 
 export interface SnapshotEntry {
   /** 稳定 id（同一版本内唯一） */
@@ -116,9 +117,12 @@ export function buildSkillTree(snapshot: ConfigItem | null | undefined): Snapsho
     const name = String(f.name || '').trim()
     if (!name) return
     const slash = name.indexOf('/')
+    // v35：二进制附件（图片）不展开 base64 原文，只提示类型与体积
+    const isBinary = f.encoding === 'base64'
     const node: SnapshotTreeNode = {
       id: `file-${i}`, label: slash > 0 ? name.slice(slash + 1) : name,
-      kind: 'file', hint: '文件', content: String(f.content || '（空）')
+      kind: 'file', hint: isBinary ? '图片' : '文件',
+      content: isBinary ? `（二进制图片附件 · ${formatBytes(base64ByteSize(f.content || ''))} · ${f.mime || 'image' }）` : String(f.content || '（空）')
     }
     if (slash > 0) {
       const folder = name.slice(0, slash)

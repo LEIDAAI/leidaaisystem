@@ -14,12 +14,13 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowLeft, CaretRight, CircleCheck, Close, Document, Folder, FolderOpened, Plus } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, CaretRight, CircleCheck, Close, Document, Folder, FolderOpened, Picture, Plus } from '@element-plus/icons-vue'
 import YuqueEditor from '@/components/yuque/YuqueEditor.vue'
 import { configVersions, restoreConfigVersion, type ConfigVersion, listConfig, saveConfig, listAgents, PLATFORMS, PLATFORM_META, type ConfigItem, type PlatformType, type Agent } from '@/api/config'
 import { ensureScenario, ensureScenarios, orderedScenarioOptions } from '@/utils/scenarios'
 import { downloadTextFile, downloadBlobFile } from '@/utils/download'
 import { zipFiles } from '@/utils/zip'
+import { base64ByteSize, base64ToBytes, bytesToBase64, formatBytes, isImageName, MAX_IMAGE_BYTES, mimeOfName } from '@/utils/binary'
 import VersionConfirmDialog from './VersionConfirmDialog.vue'
 import type { FormDraft } from './PlanFormDrawer.vue'
 
@@ -118,7 +119,12 @@ function normalize(copy: FormDraft): FormDraft {
   if (!Array.isArray(d.platforms) || !d.platforms.length) d.platforms = ['1688']
   d.platforms = d.platforms.filter((p) => PLATFORMS.includes(p as PlatformType))
   if (!Array.isArray(d.files)) d.files = []
-  d.files = d.files.map((f) => ({ name: String(f?.name || ''), content: String(f?.content || '') }))
+  // v35：保留二进制附件的 encoding/mime（图片），否则 base64 会被当纯文本丢掉标记
+  d.files = d.files.map((f) => ({
+    name: String(f?.name || ''),
+    content: String(f?.content || ''),
+    ...(f?.encoding === 'base64' ? { encoding: 'base64' as const, mime: String(f?.mime || mimeOfName(f?.name || '')) } : {})
+  }))
   // v14：前端可见性归一化（缺省=全员可见，与 MCP 保存归一化一致；PLAN 之外的类型清空 planIds）
   if (!d.visibility || !['PUBLIC', 'PLAN', 'PRIVATE'].includes(d.visibility.type)) d.visibility = { type: 'PUBLIC', planIds: [] }
   else if (d.visibility.type !== 'PLAN') d.visibility = { type: d.visibility.type, planIds: [] }
@@ -219,7 +225,12 @@ function buildPayload(): FormDraft {
     code: d.code, name: d.name, status: d.status,
     platforms: (d.platforms || []).filter((p) => PLATFORMS.includes(p as PlatformType)),
     description: d.description, content: d.content, scenarioId: d.scenarioId ?? null, visibility: d.visibility,
-    files: (d.files || []).map((f) => ({ name: String(f.name || '').trim(), content: String(f.content || '') }))
+    // v35：图片等二进制附件随 encoding/mime 一起提交
+    files: (d.files || []).map((f) => ({
+      name: String(f.name || '').trim(),
+      content: String(f.content || ''),
+      ...(f.encoding === 'base64' ? { encoding: 'base64' as const, mime: String(f.mime || mimeOfName(f.name || '')) } : {})
+    }))
   }
 }
 
@@ -264,9 +275,51 @@ const autosaveText = computed(() => {
 })
 
 // ---------------------------------------------------------------- 文件树
-const fileList = computed(() => (draft.value.files || []).map((f, i) => ({ name: f.name, index: i })))
+/** 文件树条目：附带 isImage 标记与缩略图（v35 图片附件用图标/缩略图区分） */
+const fileList = computed(() => (draft.value.files || []).map((f, i) => ({
+  name: f.name,
+  index: i,
+  isImage: isImageName(f.name),
+  thumb: isImageName(f.name) && f.content ? `data:${f.mime || mimeOfName(f.name)};base64,${f.content}` : ''
+})))
 function selectRoot(): void { selected.value = 'root' }
 function selectFile(index: number): void { selected.value = index }
+
+/** 当前选中的附属文件（root = SKILL.md 时为 null） */
+const currentFile = computed(() => (selected.value === 'root' ? null : (draft.value.files || [])[selected.value as number] || null))
+/** 当前选中是否为图片附件（encoding=base64 或按扩展名判定） */
+const currentIsImage = computed(() => !!currentFile.value && (currentFile.value.encoding === 'base64' || isImageName(currentFile.value.name)))
+/** 图片预览地址（data URL，免 blob 生命周期管理） */
+const currentImageSrc = computed(() => {
+  const f = currentFile.value
+  if (!f || !currentIsImage.value) return ''
+  return `data:${f.mime || mimeOfName(f.name)};base64,${f.content}`
+})
+/** 图片原始体积 */
+const currentImageSize = computed(() => (currentFile.value ? base64ByteSize(currentFile.value.content) : 0))
+
+/** 上传图片附件：读入 base64 存入 files（encoding='base64'），重名自动加序号 */
+const imageInput = ref<HTMLInputElement | null>(null)
+function openImagePicker(): void { imageInput.value?.click() }
+async function onImagePick(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !props.canEdit) return
+  if (!isImageName(file.name)) { ElMessage.warning('仅支持图片文件（png / jpg / gif / webp / svg 等）'); return }
+  if (file.size > MAX_IMAGE_BYTES) { ElMessage.warning(`图片超过 ${formatBytes(MAX_IMAGE_BYTES)}，请压缩后再上传`); return }
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const dot = file.name.lastIndexOf('.')
+  let name = file.name
+  let n = 2
+  while ((draft.value.files || []).some((f) => f.name === name)) {
+    name = dot > 0 ? `${file.name.slice(0, dot)}_${n}${file.name.slice(dot)}` : `${file.name}_${n}`
+    n++
+  }
+  draft.value.files!.push({ name, content: bytesToBase64(bytes), encoding: 'base64', mime: mimeOfName(name) })
+  selected.value = draft.value.files!.length - 1
+  ElMessage.success(`已添加图片「${name}」`)
+}
 
 async function addFile(): Promise<void> {
   if (!props.canEdit) return
@@ -298,8 +351,8 @@ async function removeFile(index: number): Promise<void> {
 
 // ---------------------------------------------------------------- 文件树文件夹（首段路径隐式分组，如 docs/a.md → 组 docs）
 const treeGroups = computed(() => {
-  const folderMap = new Map<string, { name: string; index: number; subPath: string }[]>()
-  const loose: { name: string; index: number; subPath: string }[] = []
+  const folderMap = new Map<string, { name: string; index: number; subPath: string; isImage: boolean; thumb: string }[]>()
+  const loose: { name: string; index: number; subPath: string; isImage: boolean; thumb: string }[] = []
   for (const f of fileList.value) {
     const i = f.name.indexOf('/')
     if (i > 0) {
@@ -546,6 +599,12 @@ function setCurrentContent(v: string): void {
 
 function downloadCurrent(): void {
   if (!currentName.value) return
+  // v35：图片附件按原始字节下载，避免 base64 文本落盘
+  if (currentIsImage.value && currentFile.value) {
+    const mime = currentFile.value.mime || mimeOfName(currentFile.value.name)
+    downloadBlobFile(currentName.value, new Blob([base64ToBytes(currentFile.value.content)], { type: mime }))
+    return
+  }
   downloadTextFile(currentName.value, currentContent.value, 'text/markdown;charset=utf-8')
 }
 
@@ -554,7 +613,9 @@ function downloadZip(): void {
   const code = String(draft.value.code || '').trim() || 'skill'
   const entries = [
     { name: 'SKILL.md', content: String(draft.value.content || '') },
-    ...(draft.value.files || []).map((f) => ({ name: String(f.name || 'file'), content: String(f.content || '') }))
+    ...(draft.value.files || []).map((f) => f.encoding === 'base64'
+      ? { name: String(f.name || 'file'), bytes: base64ToBytes(f.content) }
+      : { name: String(f.name || 'file'), content: String(f.content || '') })
   ]
   downloadBlobFile(`${code}.zip`, zipFiles(entries))
   ElMessage.success(`已下载 ${code}.zip（SKILL.md + ${entries.length - 1} 个附属文件）`)
@@ -787,7 +848,8 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
                   @drop.stop="dropOnFile($event, f.index)"
                   @click="selectFile(f.index)"
                 >
-                  <el-icon class="tree-icon"><Document /></el-icon><span class="tree-name">{{ f.subPath || '未命名' }}</span>
+                  <img v-if="f.thumb" class="tree-thumb" :src="f.thumb" :alt="f.subPath" />
+                  <el-icon v-else class="tree-icon"><Document /></el-icon><span class="tree-name">{{ f.subPath || '未命名' }}</span>
                   <el-icon v-if="canEdit" class="tree-del" title="删除文件" @click.stop="removeFile(f.index)"><Close /></el-icon>
                 </div>
               </template>
@@ -804,14 +866,17 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
               @drop.stop="dropOnFile($event, f.index)"
               @click="selectFile(f.index)"
             >
-              <el-icon class="tree-icon"><Document /></el-icon><span class="tree-name">{{ f.name || '未命名' }}</span>
+              <img v-if="f.thumb" class="tree-thumb" :src="f.thumb" :alt="f.name" />
+              <el-icon v-else class="tree-icon"><Document /></el-icon><span class="tree-name">{{ f.name || '未命名' }}</span>
               <el-icon v-if="canEdit" class="tree-del" title="删除文件" @click.stop="removeFile(f.index)"><Close /></el-icon>
             </div>
           </div>
           <div v-if="canEdit" class="tree-actions">
             <button class="ghost-add" @click="addFile"><el-icon><Plus /></el-icon> 新建文件</button>
             <button class="ghost-add" @click="addFolder"><el-icon><Plus /></el-icon> 新建文件夹</button>
+            <button class="ghost-add" @click="openImagePicker"><el-icon><Picture /></el-icon> 上传图片</button>
           </div>
+          <input ref="imageInput" type="file" accept="image/*" class="hidden-file-input" @change="onImagePick" />
         </div>
 
         <div class="panel-block">
@@ -879,7 +944,19 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
           </el-dropdown>
         </div>
 
+        <div v-if="currentIsImage" class="img-preview">
+          <el-image :src="currentImageSrc" :preview-src-list="[currentImageSrc]" hide-on-click-modal fit="contain" class="img-preview-main">
+            <template #error><div class="img-preview-err">图片无法显示（数据可能已损坏）</div></template>
+          </el-image>
+          <div class="img-preview-meta">
+            <span class="img-name">{{ currentName }}</span>
+            <span class="muted">{{ formatBytes(currentImageSize) }} · {{ currentFile?.mime || mimeOfName(currentName) }}</span>
+          </div>
+          <p class="muted img-tip">点击图片可全屏缩放查看；工具栏「下载」可保存原图。</p>
+        </div>
+
         <YuqueEditor
+          v-else
           class="yu-editor"
           :model-value="currentContent"
           :can-edit="canEdit"
@@ -890,7 +967,8 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
         <div class="status-bar">
           <span class="status-file">{{ currentName }}</span>
           <span class="bar-spacer" />
-          <span>{{ currentContent.length }} 字</span>
+          <span v-if="currentIsImage">{{ formatBytes(currentImageSize) }}</span>
+          <span v-else>{{ currentContent.length }} 字</span>
         </div>
       </section>
     </div>
@@ -961,6 +1039,9 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
 .tree-item.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; }
 .tree-icon { font-size: 14px; color: var(--el-text-color-secondary); flex: 0 0 auto; }
 .tree-item.active .tree-icon { color: var(--el-color-primary); }
+/* v35：图片附件缩略图（文件树内） */
+.tree-thumb { width: 18px; height: 18px; object-fit: cover; border-radius: 3px; border: 1px solid var(--el-border-color-lighter); flex: 0 0 auto; background: var(--el-fill-color-lighter); }
+.hidden-file-input { display: none; }
 .md-badge { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 14px; border-radius: 3px; background: var(--el-color-primary-light-8); color: var(--el-color-primary); font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
 .chevron { font-size: 12px; color: var(--el-text-color-secondary); transition: transform 0.15s; }
 .chevron.collapsed { transform: rotate(0deg); }
@@ -997,6 +1078,14 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
 
 /* ---------------- 语雀风格编辑器容器 ---------------- */
 .yu-editor { flex: 1; min-height: 0; }
+
+/* ---------------- v35 图片附件预览 ---------------- */
+.img-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; background: var(--el-fill-color-lighter); border: 1px solid var(--el-border-color-lighter); border-radius: 8px; overflow: auto; }
+.img-preview-main { max-width: 100%; max-height: 60vh; }
+.img-preview-err { padding: 40px 20px; color: var(--el-text-color-secondary); font-size: 13px; }
+.img-preview-meta { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.img-name { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); word-break: break-all; }
+.img-tip { margin: 0; font-size: 12px; }
 
 /* ---------------- 底部状态栏 ---------------- */
 .status-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; height: 26px; font-size: 12px; color: var(--el-text-color-secondary); padding: 0 4px; }

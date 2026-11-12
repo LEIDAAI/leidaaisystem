@@ -40,8 +40,19 @@ export function normalizeFrontendPerms(input: unknown): FrontendPerms {
 }
 /** 专家可见性（附录 12.1：PUBLIC 全员 / PLAN 指定套餐 / PRIVATE 私有） */
 export interface VisibilityConfig { type: 'PUBLIC' | 'PLAN' | 'PRIVATE'; planIds: number[] }
-/** 技能附属文件（名称+内容 KV） */
-export interface SkillFile { name: string; content: string }
+/**
+ * 技能附属文件（名称+内容 KV）。
+ * v35：支持图片等二进制附件——content 以 base64 文本存储，encoding='base64' 标识，
+ * mime 记录原始 MIME（图片预览/下载用）；缺省 encoding 即纯文本。
+ */
+export interface SkillFile {
+  name: string
+  content: string
+  /** 内容编码：缺省/utf8 = 纯文本；base64 = 二进制（图片） */
+  encoding?: 'utf8' | 'base64'
+  /** 二进制内容的 MIME 类型（图片预览用） */
+  mime?: string
+}
 /** MCP/OpenAPI 鉴权配置（凭据界面掩码，永不回显明文） */
 export interface AuthConfig { type: 'NONE' | 'BEARER' | 'API_KEY' | 'HEADER'; headerName?: string; credential?: string }
 export interface ApiOperation { name: string; method: string; path: string; summary?: string }

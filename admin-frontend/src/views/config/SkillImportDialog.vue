@@ -5,6 +5,7 @@
  * - 勾选控制导入范围；导入后逐行回显成功/失败原因，成功行置灰锁定
  * - 任一行导入成功即 emit imported（父级刷新列表），对话框保持打开以便查看失败原因重试
  * - v32：导入时可批量设置「归属智能体 / 适用平台 / 所属场景」，应用到勾选行后写入导入请求
+ * - v35：新增「附件预览」列——图片附件以缩略图展示（点击可放大），导入后可在技能编辑器中预览
  */
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -12,6 +13,8 @@ import type { CheckboxValueType } from 'element-plus'
 import { importSkillJson, listAgents, listScenarios, PLATFORMS, platformMeta, type Agent, type PlatformType, type Scenario } from '@/api/config'
 import { ApiError } from '@/api/request'
 import { SKILL_CODE_RE, type SkillImportDraft } from '@/utils/skill-import'
+import { isImageName, mimeOfName } from '@/utils/binary'
+import type { SkillFile } from '@/api/config'
 
 interface ImportRow extends SkillImportDraft {
   checked: boolean
@@ -47,6 +50,10 @@ const scenarioOptions = computed<Scenario[]>(() => {
 })
 const platformLabel = (list?: PlatformType[]): string => (list && list.length ? list.map((p) => platformMeta(p).label).join('、') : '未设置')
 const scenarioNameOf = (id?: number | null): string => (id ? scenarios.value.find((s) => s.id === id)?.name || '—' : '未分组')
+
+/** v35：行内图片附件（缩略图预览 + 点击放大） */
+const imagesOf = (row: ImportRow): SkillFile[] => row.files.filter((f) => f.encoding === 'base64' || isImageName(f.name))
+const thumbOf = (f: SkillFile): string => `data:${f.mime || mimeOfName(f.name)};base64,${f.content}`
 
 function loadOptions(): Promise<void> {
   return Promise.all([listAgents(), listScenarios()])
@@ -155,10 +162,10 @@ async function doImport(): Promise<void> {
 }
 </script>
 <template>
-  <el-dialog v-model="visible" title="导入技能预览" width="1040px" :close-on-click-modal="false">
+  <el-dialog v-model="visible" title="导入技能预览" width="1180px" :close-on-click-modal="false">
     <el-alert
       type="info" :closable="false" style="margin-bottom:12px"
-      title="已从文件解析出以下技能；编码冲突已自动建议新编码（可编辑），勾选后批量导入"
+      title="已从文件解析出以下技能；编码冲突已自动建议新编码（可编辑），勾选后批量导入。图片附件随技能一并导入，导入后可在编辑器中预览。"
     />
 
     <!-- v32 导入设置：智能体 / 平台 / 场景，应用到勾选行 -->
@@ -205,6 +212,24 @@ async function doImport(): Promise<void> {
       <el-table-column label="文件数" width="70" align="center">
         <template #default="{ row }">{{ (row as ImportRow).files.length + 1 }}</template>
       </el-table-column>
+      <el-table-column label="附件预览" min-width="190">
+        <template #default="{ row }">
+          <div class="attach-cell">
+            <el-image
+              v-for="(f, i) in imagesOf(row as ImportRow).slice(0, 4)"
+              :key="i"
+              :src="thumbOf(f)"
+              :preview-src-list="imagesOf(row as ImportRow).map(thumbOf)"
+              fit="cover"
+              hide-on-click-modal
+              class="attach-thumb"
+            />
+            <span class="attach-text">
+              {{ (row as ImportRow).files.length }} 个附件<template v-if="imagesOf(row as ImportRow).length"> · {{ imagesOf(row as ImportRow).length }} 张图片</template>
+            </span>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="归属设置" min-width="170">
         <template #default="{ row }">
           <div class="owner-line"><b>智能体</b>{{ agentNameOf((row as ImportRow).agentId) }}</div>
@@ -242,5 +267,8 @@ async function doImport(): Promise<void> {
 .hint-warn { color: var(--el-color-warning); font-size: 12px; margin-right: 8px; }
 .hint-ok { color: var(--el-color-success); font-size: 12px; }
 .hint-muted { color: var(--el-text-color-secondary); font-size: 12px; }
+.attach-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.attach-thumb { width: 30px; height: 30px; border-radius: 4px; border: 1px solid var(--el-border-color-lighter); cursor: zoom-in; }
+.attach-text { font-size: 12px; color: var(--el-text-color-regular); }
 .footer-info { float: left; line-height: 32px; font-size: 13px; color: var(--el-text-color-regular); }
 </style>

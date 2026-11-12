@@ -4,9 +4,12 @@
  * - JSON：单个技能对象或对象数组（导出 JSON 兼容）
  * - ZIP：{目录}/SKILL.md 多技能（Export Zip 往返包）或根目录 SKILL.md 单技能；
  *   SKILL.md 支持 YAML frontmatter 的 name/description；无 SKILL.md 时回退解析 ZIP 内技能 JSON
+ * - v35：图片等二进制附件不再跳过——按 base64（encoding='base64' + mime）随技能导入，
+ *   在编辑器里可直接预览；图片以外的二进制（压缩包/字体/媒体/可执行文件等）仍然跳过。
  */
-import { unzipTextFiles } from './zip'
+import { unzipEntries } from './zip'
 import { PLATFORMS, type PlatformType, type SkillFile } from '@/api/config'
+import { bytesToBase64, formatBytes, isImageName, MAX_IMAGE_BYTES, mimeOfName } from './binary'
 
 export interface SkillImportDraft {
   name: string
@@ -22,8 +25,8 @@ export interface SkillImportDraft {
   skipped?: string[]
 }
 
-/** 二进制扩展名（不可作文本附属文件解析的项：图片/压缩包/字体/媒体等） */
-export const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|7z|rar|bin|exe|dll|woff2?|ttf|otf|mp4|mp3)$/i
+/** 非文本扩展名（图片之外的二进制：压缩包/字体/媒体/可执行文件等，不可作文本附属文件解析） */
+export const BINARY_EXT = /\.(pdf|zip|gz|7z|rar|bin|exe|dll|woff2?|ttf|otf|eot|mp4|webm|mov|avi|mp3|wav)$/i
 
 /** 编码合法字符（与后端保存校验一致：字母数字下划线短横线） */
 export const SKILL_CODE_RE = /^[a-zA-Z0-9_-]+$/
@@ -49,6 +52,19 @@ export function parseFrontmatter(content: string): { name?: string; description?
   return out
 }
 
+/** 归一化导入 JSON 里的附属文件（保留 encoding/mime，兼容 v35 之前的纯文本文件） */
+function normalizeFile(f: unknown): SkillFile | null {
+  if (!f || typeof f !== 'object') return null
+  const src = f as Partial<SkillFile>
+  if (typeof src.name !== 'string' || typeof src.content !== 'string') return null
+  const out: SkillFile = { name: src.name, content: src.content }
+  if (src.encoding === 'base64') {
+    out.encoding = 'base64'
+    out.mime = typeof src.mime === 'string' && src.mime ? src.mime : mimeOfName(src.name)
+  }
+  return out
+}
+
 /** 导出 JSON 对象 → 草稿（保留 platforms/group 等业务字段） */
 function draftFromObject(o: Record<string, unknown>, source: string): SkillImportDraft {
   const name = String(o.name || o.code || 'imported-skill')
@@ -67,7 +83,7 @@ function draftFromObject(o: Record<string, unknown>, source: string): SkillImpor
     description: String(o.description || ''),
     content: String(o.content ?? ''),
     files: Array.isArray(o.files)
-      ? (o.files as unknown[]).filter((f): f is SkillFile => !!f && typeof (f as SkillFile).name === 'string' && typeof (f as SkillFile).content === 'string')
+      ? (o.files as unknown[]).map(normalizeFile).filter((f): f is SkillFile => f !== null)
       : [],
     group: typeof o.group === 'string' && o.group.trim() ? o.group.trim() : undefined,
     ...(platforms.length ? { platforms } : {}),
@@ -97,14 +113,25 @@ export async function parseSkillJsonFile(file: File): Promise<SkillImportDraft[]
 
 /** 解析导入的 ZIP：{目录}/SKILL.md 多技能；根目录 SKILL.md 单技能；无 SKILL.md 时回退 ZIP 内首个技能 JSON */
 export async function parseSkillZipFile(file: File): Promise<SkillImportDraft[]> {
-  return parseSkillEntries(await unzipTextFiles(file), file.name)
+  return parseSkillEntries(await unzipEntries(file), file.name)
+}
+
+/** 单个条目 → 附属文件；图片走 base64 通道，其余二进制返回跳过原因 */
+type EntryResult = { file: SkillFile } | { skip: string }
+function entryToFile(name: string, bytes: Uint8Array): EntryResult {
+  if (isImageName(name)) {
+    if (bytes.length > MAX_IMAGE_BYTES) return { skip: `${name}（图片超过 ${formatBytes(MAX_IMAGE_BYTES)}，已跳过）` }
+    return { file: { name, content: bytesToBase64(bytes), encoding: 'base64', mime: mimeOfName(name) } }
+  }
+  if (BINARY_EXT.test(name)) return { skip: `${name}（非文本文件，不支持导入）` }
+  return { file: { name, content: new TextDecoder().decode(bytes) } }
 }
 
 /** ZIP 与文件夹共用：每个文件归属包含它的最近一个 SKILL.md 根。 */
-export function parseSkillEntries(entries: Record<string, string>, sourceName: string): SkillImportDraft[] {
-  const normalized: Record<string, string> = Object.create(null) as Record<string, string>
+export function parseSkillEntries(entries: Record<string, Uint8Array>, sourceName: string): SkillImportDraft[] {
+  const normalized: Record<string, Uint8Array> = Object.create(null) as Record<string, Uint8Array>
   const skipped: string[] = []
-  for (const [raw, content] of Object.entries(entries)) {
+  for (const [raw, bytes] of Object.entries(entries)) {
     const n = raw.replace(/\\/g, '/').replace(/^(\.\/)+/, '')
     if (n.endsWith('/')) continue
     if (!n || n.startsWith('/') || /^[a-z]:/i.test(n) || n.split('/').some((part) => !part || part === '..')) {
@@ -112,7 +139,7 @@ export function parseSkillEntries(entries: Record<string, string>, sourceName: s
       continue
     }
     if (Object.prototype.hasOwnProperty.call(normalized, n)) throw new Error(`导入包包含重复路径：${n}`)
-    normalized[n] = content
+    normalized[n] = bytes
   }
   const names = Object.keys(normalized)
   const skillMds = names.filter((n) => /(^|\/)SKILL\.md$/i.test(n))
@@ -122,19 +149,26 @@ export function parseSkillEntries(entries: Record<string, string>, sourceName: s
     .sort((a, b) => rootOf(b).length - rootOf(a).length)[0]
   if (skillMds.length) {
     const drafts: SkillImportDraft[] = []
+    /** 已被某个技能根收录的条目 → 附属文件 */
+    const attached = new Map<string, SkillFile[]>()
     for (const n of names) {
-      if (BINARY_EXT.test(n)) skipped.push(`${n}（非文本文件）`)
-      else if (!nearestRoot(n)) skipped.push(`${n}（不属于任何技能根）`)
+      if (skillMds.includes(n)) continue
+      const res = entryToFile(n, normalized[n])
+      if ('skip' in res) { skipped.push(res.skip); continue }
+      const md = nearestRoot(n)
+      if (!md) { skipped.push(`${n}（不属于任何技能根）`); continue }
+      const list = attached.get(md) || []
+      list.push(res.file)
+      attached.set(md, list)
     }
     for (const md of skillMds) {
       const dir = md.includes('/') ? md.slice(0, md.lastIndexOf('/')) : ''
-      const content = normalized[md]
+      const content = new TextDecoder().decode(normalized[md])
       const fm = parseFrontmatter(content)
-      const files: SkillFile[] = []
-      for (const n of names) {
-        if (skillMds.includes(n) || nearestRoot(n) !== md || BINARY_EXT.test(n)) continue
-        files.push({ name: dir ? n.slice(dir.length + 1) : n, content: normalized[n] })
-      }
+      const files: SkillFile[] = (attached.get(md) || []).map((f) => ({
+        ...f,
+        name: dir ? f.name.slice(dir.length + 1) : f.name
+      }))
       const folderName = dir ? (dir.split('/').pop() as string) : sourceName.replace(/\.zip$/i, '')
       drafts.push({
         name: fm.name || folderName,
@@ -151,7 +185,7 @@ export function parseSkillEntries(entries: Record<string, string>, sourceName: s
   const jsonName = names.find((n) => /\.json$/i.test(n))
   if (!jsonName) throw new Error('ZIP 中未找到 SKILL.md 或技能 JSON 文件（支持 Export Zip 往返包或 {目录}/SKILL.md 结构）')
   try {
-    const drafts = draftsFromPayload(JSON.parse(normalized[jsonName]), `${sourceName} / ${jsonName}`)
+    const drafts = draftsFromPayload(JSON.parse(new TextDecoder().decode(normalized[jsonName])), `${sourceName} / ${jsonName}`)
     drafts[0].skipped = [...skipped, ...names.filter((n) => n !== jsonName).map((n) => `${n}（使用技能 JSON，其余条目未导入）`)]
     return drafts
   } catch (e) {

@@ -264,6 +264,10 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         if(item.files===undefined) item.files=[]
         if(!Array.isArray(item.files) || item.files.some(f=>!f || typeof f.name!=='string' || !f.name.trim() || typeof f.content!=='string')) fail('附件文件须包含名称与内容')
         if(new Set((item.files||[]).map(f=>f.name)).size!==(item.files||[]).length) fail('附件文件名不能重复')
+        // v35：二进制附件（图片）——encoding 仅 utf8/base64，mime 随文件携带；单文件内容上限 4MB（本地存储保护）
+        if((item.files||[]).some(f=>f.encoding!==undefined && f.encoding!=='utf8' && f.encoding!=='base64')) fail('附件文件编码仅支持 utf8 或 base64')
+        if((item.files||[]).some(f=>f.mime!==undefined && typeof f.mime!=='string')) fail('附件文件 mime 须为字符串')
+        if((item.files||[]).some(f=>f.content.length>4*1024*1024)) fail('单个附件内容过大（上限 4MB），请压缩后再保存')
         // v7：场景分组校验（null 视为未分组；非空须为场景管理中的有效场景）
         if(item.scenarioId===null) item.scenarioId=undefined
         if(item.scenarioId!==undefined && !db.scenarios.some(s=>s.id===item.scenarioId)) fail('技能所属场景不存在')

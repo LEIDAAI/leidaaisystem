@@ -20,6 +20,7 @@ import {
 import { downloadJsonFile } from '@/utils/jsonio'
 import { downloadBlobFile } from '@/utils/download'
 import { zipFiles } from '@/utils/zip'
+import { base64ToBytes } from '@/utils/binary'
 import { parseSkillJsonFile, parseSkillZipFile, type SkillImportDraft } from '@/utils/skill-import'
 import { formatDateTime } from '@/utils/format'
 import { USE_MOCK } from '@/utils/constants'
@@ -363,7 +364,9 @@ function exportSelectedZip(): void {
   }
   const entries = list.flatMap((s) => [
     { name: `${s.code}/SKILL.md`, content: String(s.content || '') },
-    ...(s.files || []).map((f) => ({ name: `${s.code}/${f.name}`, content: String(f.content || '') }))
+    ...(s.files || []).map((f) => f.encoding === 'base64'
+      ? { name: `${s.code}/${f.name}`, bytes: base64ToBytes(f.content) }
+      : { name: `${s.code}/${f.name}`, content: String(f.content || '') })
   ])
   downloadBlobFile('skills-export.zip', zipFiles(entries))
   ElMessage.success(`已导出勾选的 ${list.length} 个技能（store-only ZIP）`)
@@ -430,7 +433,9 @@ async function clone(item: ConfigItem): Promise<void> {
 function exportZip(item: ConfigItem): void {
   const entries = [
     { name: `${item.code}/SKILL.md`, content: String(item.content || '') },
-    ...(item.files || []).map((f) => ({ name: `${item.code}/${f.name}`, content: String(f.content || '') }))
+    ...(item.files || []).map((f) => f.encoding === 'base64'
+      ? { name: `${item.code}/${f.name}`, bytes: base64ToBytes(f.content) }
+      : { name: `${item.code}/${f.name}`, content: String(f.content || '') })
   ]
   downloadBlobFile(`skill-${item.code}.zip`, zipFiles(entries))
   ElMessage.success(`已导出技能 ZIP：skill-${item.code}.zip`)
