@@ -16,13 +16,13 @@ const ZIP = path.join(__dirname, 'Temp', 'import-image-test.zip');
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text().slice(0, 200)); });
 
   const out = {};
-  await page.goto(BASE + '/#/login', { waitUntil: 'networkidle' });
+  await page.goto(BASE + '/#/login', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.fill('input[type="text"]', 'admin');
   await page.fill('input[type="password"]', 'admin123');
   await page.click('button:has-text("登录")');
   await page.waitForTimeout(1500);
 
-  await page.goto(BASE + '/#/skills', { waitUntil: 'networkidle' });
+  await page.goto(BASE + '/#/skills', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1200);
 
   // ---- 1. 导入含图片的技能包
