@@ -4,11 +4,12 @@
  * - 编码冲突 / 批内重复自动建议新编码（可编辑；导入前实时校验冲突并阻断）
  * - 勾选控制导入范围；导入后逐行回显成功/失败原因，成功行置灰锁定
  * - 任一行导入成功即 emit imported（父级刷新列表），对话框保持打开以便查看失败原因重试
+ * - v32：导入时可批量设置「归属智能体 / 适用平台 / 所属场景」，应用到勾选行后写入导入请求
  */
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { CheckboxValueType } from 'element-plus'
-import { importSkillJson } from '@/api/config'
+import { importSkillJson, listAgents, listScenarios, PLATFORMS, platformMeta, type Agent, type PlatformType, type Scenario } from '@/api/config'
 import { ApiError } from '@/api/request'
 import { SKILL_CODE_RE, type SkillImportDraft } from '@/utils/skill-import'
 
@@ -18,6 +19,10 @@ interface ImportRow extends SkillImportDraft {
   suggested: boolean
   status: 'pending' | 'ok' | 'fail'
   message: string
+  /** v32：归属智能体（null = 公共技能） */
+  agentId?: number | null
+  /** v32：所属场景（null = 未分组） */
+  scenarioId?: number | null
 }
 
 const props = defineProps<{ modelValue: boolean; drafts: SkillImportDraft[]; existingCodes: string[] }>()
@@ -25,6 +30,39 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'impo
 
 const rows = ref<ImportRow[]>([])
 const importing = ref(false)
+
+// -------------------------------------------------------------- v32 导入设置：智能体 / 平台 / 场景
+const agents = ref<Agent[]>([])
+const scenarios = ref<Scenario[]>([])
+/** 批量设置值（应用到勾选行） */
+const bulkAgentId = ref<number | null>(null)
+const bulkPlatforms = ref<PlatformType[]>(['1688'])
+const bulkScenarioId = ref<number | null>(null)
+
+const agentNameOf = (id?: number | null): string => (id ? agents.value.find((a) => a.id === id)?.name || '—' : '公共')
+/** 场景下拉：按所选平台过滤（未选平台则给全部） */
+const scenarioOptions = computed<Scenario[]>(() => {
+  const picked = bulkPlatforms.value
+  return picked.length ? scenarios.value.filter((s) => picked.includes(s.platformId)) : scenarios.value.slice()
+})
+const platformLabel = (list?: PlatformType[]): string => (list && list.length ? list.map((p) => platformMeta(p).label).join('、') : '未设置')
+const scenarioNameOf = (id?: number | null): string => (id ? scenarios.value.find((s) => s.id === id)?.name || '—' : '未分组')
+
+function loadOptions(): Promise<void> {
+  return Promise.all([listAgents(), listScenarios()])
+    .then(([agentList, sceneList]) => { agents.value = agentList; scenarios.value = sceneList })
+    .catch(() => { agents.value = []; scenarios.value = [] })
+}
+
+/** 把批量设置写入勾选行 */
+function applyBulk(): void {
+  rows.value.forEach((r) => {
+    if (!r.checked || r.status === 'ok') return
+    r.agentId = bulkAgentId.value
+    r.platforms = bulkPlatforms.value.length ? [...bulkPlatforms.value] : (r.platforms || [])
+    r.scenarioId = bulkScenarioId.value
+  })
+}
 
 const visible = computed({
   get: () => props.modelValue,
@@ -50,8 +88,9 @@ watch(() => props.modelValue, (open) => {
       suggested = true
     }
     taken.add(code)
-    return { ...d, code, suggested, checked: true, status: 'pending', message: '' }
+    return { ...d, code, suggested, checked: true, status: 'pending', message: '', agentId: null, scenarioId: null }
   })
+  void loadOptions()
 })
 
 /** 实时冲突校验（手动编辑编码后仍可发现冲突；已导入成功的行不再参与校验） */
@@ -87,7 +126,8 @@ async function doImport(): Promise<void> {
     try {
       await importSkillJson({
         code: r.code, name: r.name, description: r.description, content: r.content, files: r.files,
-        ...(r.group ? { group: r.group } : {}), ...(r.platforms ? { platforms: r.platforms } : {})
+        ...(r.group ? { group: r.group } : {}), ...(r.platforms ? { platforms: r.platforms } : {}),
+        agentId: r.agentId ?? null, scenarioId: r.scenarioId ?? null
       })
       r.status = 'ok'
       r.message = '导入成功'
@@ -104,11 +144,27 @@ async function doImport(): Promise<void> {
 }
 </script>
 <template>
-  <el-dialog v-model="visible" title="导入技能预览" width="860px" :close-on-click-modal="false">
+  <el-dialog v-model="visible" title="导入技能预览" width="1040px" :close-on-click-modal="false">
     <el-alert
       type="info" :closable="false" style="margin-bottom:12px"
       title="已从文件解析出以下技能；编码冲突已自动建议新编码（可编辑），勾选后批量导入"
     />
+
+    <!-- v32 导入设置：智能体 / 平台 / 场景，应用到勾选行 -->
+    <div class="import-settings">
+      <span class="settings-label">导入设置</span>
+      <el-select v-model="bulkAgentId" clearable placeholder="归属智能体（不选 = 公共技能）" style="width:220px">
+        <el-option v-for="a in agents" :key="a.id" :value="a.id" :label="a.name" />
+      </el-select>
+      <el-select v-model="bulkPlatforms" multiple collapse-tags placeholder="适用平台" style="width:220px">
+        <el-option v-for="p in PLATFORMS" :key="p" :value="p" :label="platformMeta(p).label" />
+      </el-select>
+      <el-select v-model="bulkScenarioId" clearable placeholder="所属场景（不选 = 未分组）" style="width:200px">
+        <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="`${s.name}（${platformMeta(s.platformId).label}）`" />
+      </el-select>
+      <el-button type="primary" plain :disabled="!selectedRows.length" @click="applyBulk">应用到勾选（{{ selectedRows.length }}）</el-button>
+      <span class="settings-hint">设置会写入导入后的技能：智能体归属、适用平台与所属场景</span>
+    </div>
     <el-table :data="rows" max-height="420" size="small">
       <el-table-column width="44" align="center">
         <template #header>
@@ -138,6 +194,13 @@ async function doImport(): Promise<void> {
       <el-table-column label="文件数" width="70" align="center">
         <template #default="{ row }">{{ (row as ImportRow).files.length + 1 }}</template>
       </el-table-column>
+      <el-table-column label="归属设置" min-width="170">
+        <template #default="{ row }">
+          <div class="owner-line"><b>智能体</b>{{ agentNameOf((row as ImportRow).agentId) }}</div>
+          <div class="owner-line"><b>平台</b>{{ platformLabel((row as ImportRow).platforms) }}</div>
+          <div class="owner-line"><b>场景</b>{{ scenarioNameOf((row as ImportRow).scenarioId) }}</div>
+        </template>
+      </el-table-column>
       <el-table-column label="来源" min-width="120" show-overflow-tooltip>
         <template #default="{ row }">{{ (row as ImportRow).source }}</template>
       </el-table-column>
@@ -157,6 +220,11 @@ async function doImport(): Promise<void> {
   </el-dialog>
 </template>
 <style scoped>
+.import-settings { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border: 1px dashed var(--el-border-color); border-radius: 8px; background: var(--el-fill-color-lighter); }
+.settings-label { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
+.settings-hint { font-size: 12px; color: var(--el-text-color-secondary); }
+.owner-line { font-size: 12px; line-height: 18px; color: var(--el-text-color-regular); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.owner-line b { display: inline-block; width: 42px; color: var(--el-text-color-secondary); font-weight: 400; }
 .code-conflict :deep(.el-input__inner) { color: var(--el-color-danger); }
 .cell-hint { font-size: 12px; line-height: 16px; margin-top: 2px; min-height: 0; }
 .hint-err { color: var(--el-color-danger); font-size: 12px; }
