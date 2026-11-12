@@ -1,0 +1,1 @@
+function a(n,p){var t;const e=n||(p==="PRIVATE"?{type:"PRIVATE",planIds:[]}:{type:"PUBLIC",planIds:[]});return e.type==="PUBLIC"?{label:"全员可见",type:"success"}:e.type==="PLAN"?{label:`指定套餐（${((t=e.planIds)==null?void 0:t.length)||0} 个）`,type:"primary"}:{label:"内部隐藏",type:"warning"}}export{a as v};
