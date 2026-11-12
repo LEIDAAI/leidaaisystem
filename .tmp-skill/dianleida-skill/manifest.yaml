@@ -1,0 +1,91 @@
+# Skill Manifest - Dianleida Skill (店雷达 1688 选品)
+# 此文件是技能市场上架所需的元数据，用于 WorkBuddy 技能商城发布和客户端市场同步
+
+name: dianleida-skill
+version: 1.0.3
+slug: dianleida-skill
+description: "店雷达商品展示技能：根据用户问题调用可用的店雷达或 dld MCP，默认生成包含真实商品图片与商品链接的 HTML 页面，并可按用户要求改为聊天内嵌展示。当用户需要通过1688平台进行商品搜索、选品、爆品筛选、供应商评估、商品销量分析、热销榜单查询、类目浏览时触发。本技能引导AI识别并调用店雷达 MCP连接器、理解选品意图、构建筛选参数，并以HTML页面或卡片方式展示结果，减少多轮对话。支持跨平台使用。"
+
+category: business-operations
+
+# 触发词 - 覆盖用户的自然语言表达
+triggers:
+  - "1688选品"
+  - "1688商品搜索"
+  - "1688找货"
+  - "1688找货源"
+  - "1688批发选品"
+  - "1688热销榜"
+  - "1688商品分析"
+  - "1688类目"
+  - "dld"
+  - "店雷达"
+  - "dianleida"
+  - "1688爆款"
+  - "1688代发"
+  - "找1688商品"
+  - "1688供应商"
+  - "1688销量"
+  - "批发选品"
+  - "dianleida skill"
+  - "店雷达选品"
+  - "1688图片找货"
+  - "以图搜货"
+  - "图片找货"
+  - "图片寻源"
+
+# 标签 - 用于市场搜索和分类
+tags:
+  - 1688
+  - 选品
+  - 店雷达
+  - dld
+  - 批发
+  - 电商
+  - 商品分析
+  - 热销榜单
+  - 一件代发
+  - 货源
+  - MCP
+
+# 依赖的 MCP 连接器
+dependencies:
+  mcp:
+    - name: "店雷达 MCP"
+      label: "dld"
+      required: true
+      website: "https://www.dianleida.net/mcp"
+      docs: "https://www.dianleida.net/mcp/docs/"
+
+# 作者信息
+author:
+  name: "dianleida"
+  website: "https://www.dianleida.net"
+
+# 更新策略 - 运行时版本检测与自动拉取
+update_strategy:
+  # 语义化版本规则
+  versioning: "semver"
+
+  # 线上版本检测地址（version.json 的 URL）
+  # 技能加载时请求此地址，获取最新版本号与文件下载 URL
+  version_check_url: "https://obs.dianleida.net/skills/version.json"
+
+  # 是否在技能加载时自动检测版本
+  check_on_load: true
+
+  # 检测请求超时时间（秒）
+  check_timeout: 3
+
+  # 更新前自动备份当前版本
+  auto_backup: true
+  backup_dir: "_backup"
+
+  # 提示消息模板（{local} 和 {remote} 为占位符）
+  prompt_message: "检测到「店雷达技能」有新版本（当前: v{local} → 最新: v{remote}），是否更新？"
+
+  # 变更记录文件
+  changelog: "CHANGELOG.md"
+
+  # 更新策略深度文档
+  docs: "references/更新策略.md"
