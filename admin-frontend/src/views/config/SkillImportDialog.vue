@@ -19,7 +19,7 @@ interface ImportRow extends SkillImportDraft {
   suggested: boolean
   status: 'pending' | 'ok' | 'fail'
   message: string
-  /** v32：归属智能体（null = 公共技能） */
+  /** v32：归属智能体（必填：技能必须归属一个智能体） */
   agentId?: number | null
   /** v32：所属场景（null = 未分组） */
   scenarioId?: number | null
@@ -39,7 +39,7 @@ const bulkAgentId = ref<number | null>(null)
 const bulkPlatforms = ref<PlatformType[]>(['1688'])
 const bulkScenarioId = ref<number | null>(null)
 
-const agentNameOf = (id?: number | null): string => (id ? agents.value.find((a) => a.id === id)?.name || '—' : '公共')
+const agentNameOf = (id?: number | null): string => (id ? agents.value.find((a) => a.id === id)?.name || '—' : '待选择智能体')
 /** 场景下拉：按所选平台过滤（未选平台则给全部） */
 const scenarioOptions = computed<Scenario[]>(() => {
   const picked = bulkPlatforms.value
@@ -56,6 +56,11 @@ function loadOptions(): Promise<void> {
 
 /** 把批量设置写入勾选行 */
 function applyBulk(): void {
+  // v34：智能体必选——未选择时阻断
+  if (!bulkAgentId.value) {
+    ElMessage.warning('请选择归属智能体（技能必须归属一个智能体）')
+    return
+  }
   rows.value.forEach((r) => {
     if (!r.checked || r.status === 'ok') return
     r.agentId = bulkAgentId.value
@@ -121,6 +126,12 @@ async function doImport(): Promise<void> {
     ElMessage.warning('请至少勾选一个技能')
     return
   }
+  // v34：每个导入的技能都必须已指定归属智能体
+  const noAgent = selectedRows.value.filter((r) => !r.agentId)
+  if (noAgent.length) {
+    ElMessage.warning(`有 ${noAgent.length} 个技能未指定归属智能体，请先在「导入设置」中选择并应用`)
+    return
+  }
   importing.value = true
   for (const r of selectedRows.value) {
     try {
@@ -153,7 +164,7 @@ async function doImport(): Promise<void> {
     <!-- v32 导入设置：智能体 / 平台 / 场景，应用到勾选行 -->
     <div class="import-settings">
       <span class="settings-label">导入设置</span>
-      <el-select v-model="bulkAgentId" clearable placeholder="归属智能体（不选 = 公共技能）" style="width:220px">
+      <el-select v-model="bulkAgentId" placeholder="归属智能体（必选）" style="width:220px">
         <el-option v-for="a in agents" :key="a.id" :value="a.id" :label="a.name" />
       </el-select>
       <el-select v-model="bulkPlatforms" multiple collapse-tags placeholder="适用平台" style="width:220px">
@@ -163,7 +174,7 @@ async function doImport(): Promise<void> {
         <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="`${s.name}（${platformMeta(s.platformId).label}）`" />
       </el-select>
       <el-button type="primary" plain :disabled="!selectedRows.length" @click="applyBulk">应用到勾选（{{ selectedRows.length }}）</el-button>
-      <span class="settings-hint">设置会写入导入后的技能：智能体归属、适用平台与所属场景</span>
+      <span class="settings-hint">每个技能必须归属唯一一个智能体；设置会写入导入后的技能（智能体归属、适用平台、所属场景）</span>
     </div>
     <el-table :data="rows" max-height="420" size="small">
       <el-table-column width="44" align="center">

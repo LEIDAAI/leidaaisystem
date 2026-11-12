@@ -140,7 +140,9 @@ watch(
       .replace(/[^a-z0-9_-]+/g, '-')
       .replace(/-{2,}/g, '-')
       .replace(/^-+|-+$/g, '')
-    if (slug) draft.value.code = slug
+    // v34：名称无法生成合法编码（如纯中文）时用时间戳兜底——编码已不再由用户手填，
+    // 不能因为名称语言导致技能无法创建
+    draft.value.code = slug || `skill-${Date.now().toString(36)}`
   }
 )
 
@@ -571,8 +573,13 @@ function insertTemplate(): void {
 // ---------------------------------------------------------------- 发布 / 历史版本 / 关闭
 const versionDialog = ref(false)
 const historyDrawer = ref(false)
-/** v31：发布时选择的归属智能体（打开发布框时取当前归属，可改；null = 公共技能） */
+/** v34：发布时选择的归属智能体（打开发布框时取当前归属；必选，不能为空） */
 const publishAgentId = ref<number | null>(null)
+/** 智能体名称（未设置时提示先选） */
+const agentByIdName = (id?: number | null): string => {
+  if (!id) return '未选择（发布时必须指定）'
+  return agentOptions.value.find((a) => a.id === id)?.name || `智能体 #${id}`
+}
 /** 版本确认框文案：新建「保存并创建」/ 编辑「发布版本」（对标 Open WebUI 一步语义） */
 const confirmProps = computed(() =>
   currentId.value
@@ -601,6 +608,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 async function save(v: { versionName: string; note: string }): Promise<void> {
   if (saving.value || historyDrawer.value || !draftComplete.value) return
+  // v34：技能必须归属一个智能体——发布时未选择则阻断
+  if (!publishAgentId.value) {
+    ElMessage.warning('请选择归属智能体（技能必须归属一个智能体）')
+    return
+  }
   const session = editorSession
   saving.value = true
   clearAutosave()
@@ -824,6 +836,12 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
                 <el-option v-for="s in scenarioOptions" :key="s.id" :value="s.id" :label="s.label" />
               </el-select>
             </el-form-item>
+            <el-form-item label="归属智能体">
+              <div class="agent-readonly">
+                <b>{{ agentByIdName(draft.agentId) }}</b>
+                <span class="muted">发布版本时可更换智能体归属</span>
+              </div>
+            </el-form-item>
             <el-form-item label="前台可见性">
               <el-radio-group v-model="draft.visibility!.type">
                 <el-radio-button value="PUBLIC">全员可见</el-radio-button>
@@ -880,10 +898,10 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
     <VersionConfirmDialog v-model="versionDialog" :title="confirmProps.title" :description="confirmProps.description" :confirm-text="confirmProps.confirmText" async :loading="saving" @confirm="save">
       <template #extra>
         <el-form-item label="归属智能体">
-          <el-select v-model="publishAgentId" clearable placeholder="不选 = 公共技能（不归属任何智能体）" style="width:100%">
+          <el-select v-model="publishAgentId" placeholder="请选择归属智能体（必选）" style="width:100%">
             <el-option v-for="a in agentOptions" :key="a.id" :value="a.id" :label="`${a.name}（${agentCountOf(a.id)} 个技能）`" />
           </el-select>
-          <p class="muted">发布时指定该技能归属哪个智能体；各智能体相互独立，技能不共享。</p>
+          <p class="muted">每个技能必须归属唯一一个智能体；各智能体相互独立，技能不共享。</p>
         </el-form-item>
       </template>
     </VersionConfirmDialog>
@@ -992,4 +1010,6 @@ onBeforeUnmount(() => { ++editorSession; clearAutosave() })
 .skill-editor-dialog.is-fullscreen { max-width: 100vw; width: 100vw; margin: 0; border-radius: 0; padding: 0; display: flex; flex-direction: column; }
 .skill-editor-dialog .el-dialog__header { padding: 0; margin: 0; border-bottom: 1px solid var(--el-border-color-light); flex: 0 0 auto; }
 .skill-editor-dialog .el-dialog__body { padding: 12px 16px 14px; height: auto; flex: 1 1 0; min-height: 0; overflow: hidden; }
+.agent-readonly { display: flex; align-items: baseline; gap: 10px; font-size: 13px; color: var(--el-text-color-primary); }
+.agent-readonly .muted { font-size: 12px; }
 </style>

@@ -149,7 +149,7 @@ export interface ConfigItem {
   group?: string
   /** 技能场景分组（v7）：关联场景 ID，用于按场景维度分组 */
   scenarioId?: number | null
-  /** v25 归属智能体（与平台/场景正交）：一个技能最多归属一个智能体；null = 未归属（公共技能） */
+  /** v34 归属智能体（与平台/场景正交）：技能必填归属唯一一个智能体，不再有未归属状态 */
   agentId?: number | null
   // ---- MCP（双类型连接模型，附录 12.3）----
   connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[]

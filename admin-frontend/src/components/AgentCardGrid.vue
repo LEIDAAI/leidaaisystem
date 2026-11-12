@@ -2,7 +2,7 @@
 /**
  * 智能体卡片网格（v29 共享组件）：
  * 技能管理页顶部「智能体管理」Tab 使用本组件完成智能体的查看 / 新增 / 编辑 / 删除，
- * 各智能体相互独立、互不关联；未归属任何智能体的技能为公共技能。
+ * 各智能体相互独立、互不关联；每个技能必须归属唯一一个智能体；删除智能体前须先把它的技能转移出去。
  */
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -12,7 +12,7 @@ import { saveAgent, deleteAgent, type Agent } from '@/api/config'
 const props = defineProps<{
   /** 智能体列表（父组件负责加载） */
   agents: Agent[]
-  /** 技能列表（用于统计每个智能体的技能数；agentId 为空表示公共技能） */
+  /** 技能列表（用于统计每个智能体的技能数；agentId 恒为有效智能体 id） */
   skills: { id: number; agentId?: number | null }[]
   /** 是否可编辑（skill:edit） */
   canEdit: boolean
@@ -79,7 +79,7 @@ async function remove(agent: Agent): Promise<void> {
   const count = countOf(agent.id)
   try {
     await ElMessageBox.confirm(
-      count ? `智能体「${agent.name}」仍归属 ${count} 个技能，请先将技能移至其他智能体或公共池。` : `确认删除智能体「${agent.name}」？`,
+      count ? `智能体「${agent.name}」仍归属 ${count} 个技能，请先将技能移至其他智能体。` : `确认删除智能体「${agent.name}」？`,
       '删除智能体',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
@@ -98,7 +98,7 @@ async function remove(agent: Agent): Promise<void> {
   <div>
     <div class="agent-grid-head">
       <p class="agent-grid-tip">
-        每个智能体是一套独立的技能空间，技能归属互斥、互不关联；未归属任何智能体的技能视为公共技能。
+        每个智能体是一套独立的技能空间，技能归属互斥、互不关联；未指定智能体的技能视为公共技能。
       </p>
       <el-button v-if="canEdit" type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新增智能体

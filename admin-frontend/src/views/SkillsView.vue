@@ -255,11 +255,11 @@ async function removeScenario(s: Scenario): Promise<void> {
 // -------------------------------------------------------------- v25 归属智能体：技能 ↔ 智能体（互斥，各智能体相互独立）
 const agentDlg = ref(false)
 const agentTarget = ref<ConfigItem | null>(null)
-const agentPick = ref<number | '' | null>(null)
+const agentPick = ref<number | ''>('')
 
 function openAgentDialog(row: ConfigItem): void {
   agentTarget.value = row
-  agentPick.value = row.agentId ?? null
+  agentPick.value = row.agentId ?? ''
   agentDlg.value = true
 }
 
@@ -267,16 +267,20 @@ async function applyAgent(): Promise<void> {
   const row = agentTarget.value
   if (!row) return
   const raw = agentPick.value
-  const next = raw === null || raw === undefined || raw === '' ? undefined : Number(raw)
-  if ((row.agentId ?? undefined) === next) { agentDlg.value = false; return }
+  const next = raw === null || raw === undefined || raw === '' ? null : Number(raw)
+  if (!next) {
+    ElMessage.warning('请选择归属智能体（技能必须归属一个智能体）')
+    return
+  }
+  if (row.agentId === next) { agentDlg.value = false; return }
   try {
-    await saveConfig('skills', { id: row.id, code: row.code, name: row.name, agentId: next ?? null })
+    await saveConfig('skills', { id: row.id, code: row.code, name: row.name, agentId: next })
   } catch (e) {
     if (e instanceof ApiError) { ElMessage.error(e.message); return }
     throw e
   }
   agentDlg.value = false
-  ElMessage.success(next ? `已归属智能体「${agentById(next)?.name || next}」` : '已移出智能体（公共技能）')
+  ElMessage.success(`已归属智能体「${agentById(next)?.name || next}」`)
   await load()
 }
 
@@ -636,15 +640,14 @@ function boundExpertCount(row: ConfigItem): number {
 
   <!-- v25 归属智能体：技能与智能体互斥归属，各智能体相互独立 -->
   <el-dialog v-model="agentDlg" title="归属智能体" width="460px">
-    <div v-if="agentTarget" class="group-target">「{{ agentTarget.name }}」当前归属：{{ agentById(agentTarget.agentId)?.name || '公共技能（未归属）' }}</div>
+    <div v-if="agentTarget" class="group-target">「{{ agentTarget.name }}」当前归属：{{ agentById(agentTarget.agentId)?.name || '—' }}</div>
     <el-radio-group v-model="agentPick" class="agent-pick">
-      <el-radio :value="null" class="agent-radio">公共技能（不归属任何智能体）</el-radio>
       <el-radio v-for="a in agents" :key="a.id" :value="a.id" class="agent-radio">
         {{ a.name }}
         <small class="muted">{{ a.description || '' }} · {{ agentCountOf(a.id) }} 个技能</small>
       </el-radio>
     </el-radio-group>
-    <p class="muted" style="margin:10px 0 0;font-size:12px">一个技能最多归属一个智能体；各智能体的技能互不关联，技能在智能体之间不共享。</p>
+    <p class="muted" style="margin:10px 0 0;font-size:12px">每个技能必须归属唯一一个智能体；各智能体的技能互不关联，技能在智能体之间不共享。</p>
     <template #footer>
       <el-button @click="agentDlg = false">取消</el-button>
       <el-button type="primary" @click="applyAgent">确定</el-button>

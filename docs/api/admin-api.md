@@ -261,11 +261,11 @@
 
 | 方法 | 路径 | 权限点 | 说明 |
 |---|---|---|---|
-| GET | /skills | skill:view | 列表 + 参数 `keyword`、`status`；附 `boundExpertCount`（由 expert.skillIds 统计）；**v25 附 `agentId`（归属智能体，可空）** |
+| GET | /skills | skill:view | 列表 + 参数 `keyword`、`status`；附 `boundExpertCount`（由 expert.skillIds 统计）；**v25 附 `agentId`（归属智能体）；v34 起 `agentId` 必填，技能必定归属唯一一个智能体，不再有未归属状态** |
 | GET | /agents | skill:view 或 expert:view | **v25 智能体列表** `{id,name,code,description,status,sort}`，按 sort 升序；技能通过 `agentId` 归属智能体（一个技能最多归属一个，各智能体互不关联） |
 | POST | /agents | skill:edit | **v26 新增智能体** `{name(必填1~40字), code(必填,2~32位小写字母/数字/短横线且以字母开头), description(≤200), status(0|1), sort}`；编码唯一（重复 422）；返回新建实体 |
 | PUT | /agents/{id} | skill:edit | **v26 修改智能体** `{name?, description?, status?, sort?}`；`code` 创建后不可改（传入不同值 422）；不存在 404；写审计 agent.update |
-| DELETE | /agents/{id} | skill:edit | **v26 删除智能体**；该智能体仍归属技能时 409 并列出技能名，提示先转移至其他智能体或公共池；不存在 404；写审计 agent.delete |
+| DELETE | /agents/{id} | skill:edit | **v26 删除智能体**；该智能体仍归属技能时 409 并列出技能名，提示先转移至其他智能体或未归属；不存在 404；写审计 agent.delete |
 | GET | /skills/{id} | skill:view | 详情（description/content/files；paramSchema/execConfig 为可选高级字段，兼容保留） |
 | POST | /skills | skill:edit | 新建 |
 | PUT | /skills/{id} | skill:edit | 保存（版本更新；发布写快照，skipVersion自动保存不新增历史；可选note） |

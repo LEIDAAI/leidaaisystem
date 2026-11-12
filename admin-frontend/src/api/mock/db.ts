@@ -674,7 +674,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 23 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 24 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -918,6 +918,12 @@ if (storedVersion < 20) {
     db.billingSettings.upgradePolicy = 'PRORATED'
   }
 }
+if (storedVersion < 24) {
+  // v24：技能归属智能体改为必填——存量未归属（agentId 为空）的技能统一归入「有维AI」(id=1)，
+  // 幂等：已有归属的技能不改动（后续可再手动调整）。
+  db.skills.forEach(skill => { if (!skill.agentId) skill.agentId = 1 })
+}
+
 if (storedVersion < 23) {
   // v23：技能附属文件种子（含 docs/ references/ scripts/ 文件夹路径）——存量技能 files 为空时补齐，
   // 让技能编辑器与版本历史文件树都有多文件多文件夹结构（幂等：已有文件不覆盖）。
@@ -1014,7 +1020,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 23,
+        version: 24,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

@@ -128,7 +128,12 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         item.suggestedQuestions ??=[];item.tags ??=[];item.isDefault ??=false
       }
       item.name=String(item.name ?? '').trim();item.code=String(item.code ?? '').trim()
-      if(!item.name || !/^[a-zA-Z0-9_-]+$/.test(item.code)) fail('名称必填，编码仅允许字母数字下划线短横线')
+      if(!item.name) fail('名称必填')
+      // v34：编码由名称自动生成、不可手填——缺失或非法时按名称/时间戳兜底生成，避免创建被卡死
+      if(!/^[a-zA-Z0-9_-]+$/.test(item.code)){
+        const slug=item.name.toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'')
+        item.code=slug||`skill-${Date.now().toString(36)}`
+      }
       if(items.some(i=>i.id!==item.id && i.code===item.code)) fail('编码已存在')
       if(![0,1].includes(item.status)) fail('状态无效')
       if(module!=='plan') {
@@ -262,13 +267,11 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
         // v7：场景分组校验（null 视为未分组；非空须为场景管理中的有效场景）
         if(item.scenarioId===null) item.scenarioId=undefined
         if(item.scenarioId!==undefined && !db.scenarios.some(s=>s.id===item.scenarioId)) fail('技能所属场景不存在')
-        // v22：归属智能体校验（null 视为未归属公共技能；非空须为有效智能体）
-        if(item.agentId===null) item.agentId=undefined
-        if(item.agentId!==undefined){
-          const aid=Number(item.agentId)
-          if(!Number.isInteger(aid) || !(db.agents||[]).some(a=>a.id===aid)) fail('归属智能体不存在')
-          item.agentId=aid
-        }
+        // v34：归属智能体必填——技能必须归属唯一一个智能体，不再存在「未归属」状态
+        const aid=Number(item.agentId)
+        if(!Number.isInteger(aid) || aid<=0) fail('请选择归属智能体（技能必须归属一个智能体）')
+        if(!(db.agents||[]).some(a=>a.id===aid)) fail('归属智能体不存在')
+        item.agentId=aid
         const refs=db.experts.filter(e=>e.skillIds?.includes(item.id))
         if(old?.status===1 && item.status===0 && refs.length && !input.confirmReferences) fail(`技能被以下专家引用：${refs.map(r=>r.name).join('、')}；如确认停用请勾选引用确认`,409)
       }
@@ -851,7 +854,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     if(!permissionCodesOf(ctx.adminId).includes('skill:edit')) fail('无权限执行该操作',403)
     const item=(db.agents||[]).find(a=>a.id===Number(ctx.params.id)) || fail('智能体不存在',404)
     const refs=db.skills.filter(sk=>sk.agentId===item.id).map(sk=>`技能「${sk.name}」`)
-    if(refs.length) fail(`智能体仍归属以下技能：${refs.join('、')}；请先将技能移至其他智能体或公共池`,409)
+    if(refs.length) fail(`智能体仍归属以下技能：${refs.join('、')}；请先将技能移至其他智能体`,409)
     db.agents.splice(db.agents.indexOf(item),1)
     audit(ctx.adminId,'agent.delete','agent',item.id,item,null);return null
   })
