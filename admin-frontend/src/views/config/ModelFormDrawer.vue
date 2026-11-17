@@ -301,14 +301,14 @@ defineExpose({ prepareLeave })
           </div>
           <p class="muted">默认生成参数以 JSON 存入 default_params（temperature、max_tokens 等），调用方未显式指定时生效。</p>
         </el-form-item>
-        <el-form-item label="输入价格">
-          <el-input-number v-model="draft.inputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 14" style="width:200px" />
-          <span class="price-unit">元 / 百万 tokens</span>
-        </el-form-item>
-        <el-form-item label="输出价格">
-          <el-input-number v-model="draft.outputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 56" style="width:200px" />
-          <span class="price-unit">元 / 百万 tokens</span>
-          <p class="muted">模型计费单价（≥0，最多 4 位小数）；用于成本核算与调用计费展示，两项都留空视为未定价。</p>
+        <el-form-item label="价格（元/M）">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%">
+            <span class="muted">输入</span>
+            <el-input-number v-model="draft.inputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 2" style="width:150px" />
+            <span class="muted">输出</span>
+            <el-input-number v-model="draft.outputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 8" style="width:150px" />
+          </div>
+          <p class="muted">计费单价按百万 tokens（M）计：如输入 2 元/M、输出 8 元/M 就分别填 2 和 8（≥0，最多 4 位小数）；用于成本核算与调用计费展示，两项都留空视为未定价。</p>
         </el-form-item>
       </template>
 

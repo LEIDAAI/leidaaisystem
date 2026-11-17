@@ -45,14 +45,13 @@ const BASE = process.env.V39_BASE || 'http://192.168.0.43:5180';
   // 3) 填表保存
   await page.fill('.el-drawer .el-form-item:has(.el-form-item__label:has-text("模型编码")) input', 'price-test-model');
   await page.fill('.el-drawer .el-form-item:has(.el-form-item__label:has-text("显示名")) input', '价格测试模型');
-  const inInput = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("输入价格")) .el-input-number input');
-  const outInput = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("输出价格")) .el-input-number input');
-  await inInput.fill('14.12345');
-  await outInput.fill('56.5');
-  await inInput.blur(); await outInput.blur();
+  const priceFields = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("价格（元/M）")) .el-input-number input');
+  await priceFields.nth(0).fill('14.12345');
+  await priceFields.nth(1).fill('56.5');
+  await priceFields.nth(0).blur(); await priceFields.nth(1).blur();
   await page.waitForTimeout(400);
-  out.inValue = await inInput.inputValue().catch(() => null);
-  out.outValue = await outInput.inputValue().catch(() => null);
+  out.inValue = await priceFields.nth(0).inputValue().catch(() => null);
+  out.outValue = await priceFields.nth(1).inputValue().catch(() => null);
 
   await page.locator('.el-drawer button:has-text("保存模型"), .el-drawer button:has-text("保存")').last().click();
   await page.waitForTimeout(700);
@@ -83,10 +82,9 @@ const BASE = process.env.V39_BASE || 'http://192.168.0.43:5180';
     if (btn) btn.click();
   });
   await page.waitForTimeout(900);
-  const eIn = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("输入价格")) .el-input-number input');
-  const eOut = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("输出价格")) .el-input-number input');
-  out.editIn = await eIn.inputValue().catch(() => null);
-  out.editOut = await eOut.inputValue().catch(() => null);
+  const eFields = page.locator('.el-drawer .el-form-item:has(.el-form-item__label:has-text("价格（元/M）")) .el-input-number input');
+  out.editIn = await eFields.nth(0).inputValue().catch(() => null);
+  out.editOut = await eFields.nth(1).inputValue().catch(() => null);
 
   out.errors = errors;
   console.log(JSON.stringify(out, null, 2));
