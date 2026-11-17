@@ -662,6 +662,7 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
       <el-table-column v-if="module === 'model'" prop="code" label="编码" min-width="130" show-overflow-tooltip><template #default="{ row }"><code>{{ row.code }}</code></template></el-table-column>
       <el-table-column v-if="module === 'model'" label="供应商模型 ID" min-width="180" show-overflow-tooltip><template #default="{ row }"><code>{{ row.modelId || row.code }}</code></template></el-table-column>
       <el-table-column v-if="module === 'model'" label="供应商" width="120"><template #default="{ row }">{{ row.provider || '-' }}</template></el-table-column>
+      <el-table-column v-if="module === 'model'" label="输入/输出价格" width="150"><template #default="{ row }"><span v-if="row.inputPrice != null || row.outputPrice != null" class="price-cell">¥{{ row.inputPrice ?? '—' }} / ¥{{ row.outputPrice ?? '—' }}<small class="muted"> /百万tok</small></span><span v-else class="muted">—</span></template></el-table-column>
       <el-table-column v-if="module === 'model'" label="API Key" width="110"><template #default="{ row }">{{ row.apiKeyMasked || '—' }}</template></el-table-column>
       <el-table-column v-if="module === 'model'" label="渠道域名 / 接入地址" min-width="215">
         <template #default="{ row }">
@@ -934,4 +935,5 @@ const VISIBILITY_LABELS: Record<string, string> = { PUBLIC: '全员', PLAN: '指
 .scene-name { font-weight: 600; flex: 0 0 140px; }
 .scene-desc { flex: 1; color: var(--el-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scene-count { flex: 0 0 auto; font-size: 12px; color: var(--el-text-color-secondary); }
+.price-cell { font-variant-numeric: tabular-nums; }
 </style>

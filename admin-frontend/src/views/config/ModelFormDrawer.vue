@@ -11,7 +11,7 @@ import { USE_MOCK } from '@/utils/constants'
  * 编辑为单模型表单。api_key 保存后永不回显明文（只显掩码 ****abcd）；编辑留空=不修改。
  * Mock 模式提供演示地址快捷填充（demo.* 域名返回模拟模型清单，不发真实网络请求）。
  */
-type ModelDraft = Partial<ConfigItem> & { apiKey?: string; temperature?: number; maxTokens?: number }
+type ModelDraft = Partial<ConfigItem> & { apiKey?: string; temperature?: number; maxTokens?: number; inputPrice?: number; outputPrice?: number }
 const props = defineProps<{ modelValue: boolean; item: Partial<ConfigItem> | null; canEdit: boolean; existingCodes?: string[]; existingModels?: Partial<ConfigItem>[] }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 const saving = ref(false)
@@ -128,6 +128,8 @@ watch(
     const params = draft.value.defaultParams && typeof draft.value.defaultParams === 'object' && !Array.isArray(draft.value.defaultParams) ? draft.value.defaultParams : {}
     draft.value.temperature = typeof params.temperature === 'number' ? params.temperature : 0.7
     draft.value.maxTokens = typeof params.max_tokens === 'number' ? params.max_tokens : 4096
+    draft.value.inputPrice = typeof draft.value.inputPrice === 'number' ? draft.value.inputPrice : undefined
+    draft.value.outputPrice = typeof draft.value.outputPrice === 'number' ? draft.value.outputPrice : undefined
     mode.value = 'channel'
     probed.value = []; probedResolved.value = ''; probeVia.value = ''; probeFilter.value = ''
     checkedModels.value = []; selectedProbe.value = ''; providerTouched.value = false
@@ -187,6 +189,8 @@ async function save(): Promise<void> {
       endpoint: draft.value.endpoint,
       // api_key：填写则更新，留空=不修改（服务端保留原值）
       apiKey: draft.value.apiKey?.trim() || undefined,
+      inputPrice: typeof draft.value.inputPrice === 'number' ? draft.value.inputPrice : undefined,
+      outputPrice: typeof draft.value.outputPrice === 'number' ? draft.value.outputPrice : undefined,
       defaultParams, remark: draft.value.remark, status: 1
     })
     if (session !== formSession || !props.modelValue) return
@@ -296,6 +300,15 @@ defineExpose({ prepareLeave })
             <el-input-number v-model="draft.maxTokens" :min="1" :max="1000000" :step="256" :precision="0" />
           </div>
           <p class="muted">默认生成参数以 JSON 存入 default_params（temperature、max_tokens 等），调用方未显式指定时生效。</p>
+        </el-form-item>
+        <el-form-item label="输入价格">
+          <el-input-number v-model="draft.inputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 14" style="width:200px" />
+          <span class="price-unit">元 / 百万 tokens</span>
+        </el-form-item>
+        <el-form-item label="输出价格">
+          <el-input-number v-model="draft.outputPrice" :min="0" :max="10000" :step="0.1" :precision="4" :controls="false" placeholder="如 56" style="width:200px" />
+          <span class="price-unit">元 / 百万 tokens</span>
+          <p class="muted">模型计费单价（≥0，最多 4 位小数）；用于成本核算与调用计费展示，两项都留空视为未定价。</p>
         </el-form-item>
       </template>
 

@@ -117,7 +117,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','agentId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations','toolUnitPrice'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','agentId','paramSchema','execConfig','visibility']:module==='model'?['provider','modelId','remark','inputPrice','outputPrice']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations','toolUnitPrice'])] as Array<keyof ConfigItem>
       const source=restore?.snapshot || input
       for(const key of fields) if(restore || source[key]!==undefined) Object.assign(item,{[key]:source[key]===undefined?undefined:structuredClone(source[key])})
       if(restore && old && source.code===undefined) item.code=old.code
@@ -287,7 +287,21 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
           if(!Number.isFinite(p) || p<=0 || p>1) fail('工具收单价须为大于 0 且不超过 1 的数字（元/次）')
           item.toolUnitPrice=Math.round(p*10000)/10000
         }
+      }
+      if(module==='model') {
+        // v39 模型计费单价：≥0、最多 4 位小数；两者都未填视为未定价
+        for(const k of ['inputPrice','outputPrice'] as const) {
+          const v=(item as unknown as Record<string,unknown>)[k]
+          if(v!==undefined && v!==null) {
+            const n=Number(v)
+            if(!Number.isFinite(n) || n<0 || n>10000) fail(k==='inputPrice'?'输入价格须为 0–10000 之间的数字（元/百万 tokens）':'输出价格须为 0–10000 之间的数字（元/百万 tokens）')
+            ;(item as unknown as Record<string,unknown>)[k]=Math.round(n*10000)/10000
+          }
+        }
+      }
+      if(module==='mcp') {
         const path=String(item.path||'').trim()
+        if(!['MCP','OpenAPI'].includes(item.connType || '')) fail('连接类型无效（MCP/OpenAPI）')
         if(path && !path.startsWith('/')) fail('端点路径须以 / 开头')
         if(item.connType==='MCP') {
           item.apiOperations=[]
@@ -440,7 +454,17 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
     const modelId=input.modelId===undefined?(old?.modelId || code):input.modelId
     if(typeof modelId!=='string' || !modelId.trim() || /[\u0000-\u001f\u007f]/.test(modelId)) fail('供应商模型 modelId 须为非空标识，不能包含控制字符')
     if(db.models.some(m=>m.id!==old?.id && (m.endpoint||'').replace(/\/+$/,'')===endpoint.replace(/\/+$/,'') && (m.modelId||m.code)===modelId)) fail('同一接入地址的供应商模型已存在')
-    const item:LlmModelRow={ id:old?.id ?? nextMockId(), code, modelId, name, provider, endpoint, apiKey, defaultParams, remark:String(input.remark || '').trim(), status, createdAt:old?.createdAt || nowStr(), updatedAt:nowStr() }
+    // v39 计费单价：输入/输出价格（元/百万 tokens），≥0 最多 4 位小数；未传沿用原值，显式 null 清空
+    const priceOf = (key:'inputPrice'|'outputPrice'): number|undefined => {
+      const raw = input[key]
+      if (raw === undefined) return old ? (old as unknown as Record<string, unknown>)[key] as number | undefined : undefined
+      if (raw === null) return undefined
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n < 0 || n > 10000) fail(key==='inputPrice' ? '输入价格须为 0–10000 之间的数字（元/百万 tokens）' : '输出价格须为 0–10000 之间的数字（元/百万 tokens）')
+      return Math.round(n * 10000) / 10000
+    }
+    const inputPrice = priceOf('inputPrice'); const outputPrice = priceOf('outputPrice')
+    const item:LlmModelRow={ id:old?.id ?? nextMockId(), code, modelId, name, provider, endpoint, apiKey, defaultParams, inputPrice, outputPrice, remark:String(input.remark || '').trim(), status, createdAt:old?.createdAt || nowStr(), updatedAt:nowStr() }
     const before=old?publicModel(old):null
     if(old) { const legacy=old as unknown as Record<string,unknown>; delete legacy.maxContext; delete legacy.capabilities; Object.assign(old,item) } else db.models.push(item)
     audit(ctx.adminId,`model.${old?'update':'create'}`,'model',item.id,before,publicModel(item))

@@ -98,6 +98,8 @@ export interface LlmModel {
   apiKeyMasked?: string
   /** 默认生成参数 JSON：temperature、max_tokens 等 */
   defaultParams?: Record<string, unknown>
+  /** v39 计费单价（元/百万 tokens）：输入/输出价格，≥0 最多 4 位小数；未定价为 undefined */
+  inputPrice?: number; outputPrice?: number
   remark?: string
   status: number
   createdAt: string
@@ -176,6 +178,8 @@ export interface ConfigItem {
   platforms?: PlatformType[]
   // ---- 模型管理（v5，模型注册行）----
   provider?: string; modelId?: string; remark?: string
+  /** v39 模型计费单价（元 / 百万 tokens）：输入/输出分开记录，均 ≥0 最多 4 位小数；用于成本核算与计费展示 */
+  inputPrice?: number; outputPrice?: number
   /** API Key 掩码回显（****abcd）；明文 apiKey 仅经 saveConfig 载荷提交，响应永不回显 */
   apiKeyMasked?: string; apiKey?: string; defaultParams?: Record<string, unknown>; createdAt?: string
   // ---- 旧版遗留字段（增量迁移保留，仅兼容展示，不再要求填写）----
