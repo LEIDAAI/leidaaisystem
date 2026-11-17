@@ -117,7 +117,7 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       const old = ctx.params.id ? find(items,ctx.params.id):undefined
       const input = (ctx.body || {}) as Partial<ConfigItem> & { confirmReferences?: boolean; note?: string }
       const item:ConfigItem = { ...(old ? snapshot(old):{ id:nextMockId(),code:'',name:'',status:1,version:0,updatedAt:nowStr(),refreshStatus:'PENDING',appliedVersion:0,refreshMessage:'' }) }
-      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','agentId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations'])] as Array<keyof ConfigItem>
+      const fields: Array<keyof ConfigItem> = ['code','name','status','platforms',...(module==='plan'?['price','firstPurchasePrice','durationMode','durationDays','frontendPerms','planType','credits','tagline','badge','features','billingCycles','sort','grantMode','creditExpiry','creditValidityDays']:module==='expert'?['description','avatarUrl','baseModel','systemPrompt','skillIds','mcpServerIds','knowledgeBaseIds','suggestedQuestions','capabilities','tags','visibility','isDefault','mcpToolSelection','intro','modelParams','mcpToolIds','titleHtml','introduction','introductionFiles','greeting','coreAbilities','referencePrompts','nextQuestionConfig','scenarioId']:module==='skill'?['description','content','files','group','scenarioId','agentId','paramSchema','execConfig','visibility']:['connType','endpoint','path','transport','command','args','authConfig','toolFilter','visibility','apiOperations','toolUnitPrice'])] as Array<keyof ConfigItem>
       const source=restore?.snapshot || input
       for(const key of fields) if(restore || source[key]!==undefined) Object.assign(item,{[key]:source[key]===undefined?undefined:structuredClone(source[key])})
       if(restore && old && source.code===undefined) item.code=old.code
@@ -281,6 +281,12 @@ export function registerConfigHandlers({route,error:ErrorType,audit}:Services) {
       }
       if(module==='mcp') {
         if(!['MCP','OpenAPI'].includes(item.connType || '')) fail('连接类型无效（MCP/OpenAPI）')
+        // v38 工具收单价：0–1 元/次有效调用，保留 4 位小数；缺省不覆盖已有值
+        if(item.toolUnitPrice!==undefined && item.toolUnitPrice!==null) {
+          const p=Number(item.toolUnitPrice)
+          if(!Number.isFinite(p) || p<=0 || p>1) fail('工具收单价须为大于 0 且不超过 1 的数字（元/次）')
+          item.toolUnitPrice=Math.round(p*10000)/10000
+        }
         const path=String(item.path||'').trim()
         if(path && !path.startsWith('/')) fail('端点路径须以 / 开头')
         if(item.connType==='MCP') {

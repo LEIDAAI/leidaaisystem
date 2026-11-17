@@ -245,6 +245,15 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
         <el-input v-model="draft.authConfig!.credential" type="password" autocomplete="new-password" :placeholder="item?.id ? '留空表示不修改已有凭据' : '仅输入演示凭据，保存后永不回显'" />
         <p class="muted">凭据应用层加密存储，界面与接口均只回显掩码 ****。</p>
       </el-form-item>
+      <el-form-item label="工具收单价">
+        <el-input-number
+          v-model="draft.toolUnitPrice"
+          :min="0" :max="1" :step="0.001" :precision="4" :controls="false"
+          placeholder="如 0.0033" style="width:220px"
+        />
+        <span class="unit-hint">元 / 次有效调用（0–1，最多 4 位小数）</span>
+        <p class="muted">该连接下所有工具统一的计费基准；前台按「收单价 ÷ 0.0049 向上取整」折算扣分（如 0.0033 → 7 分）。留空 = 未定价。</p>
+      </el-form-item>
       <el-form-item label="工具过滤">
         <el-input v-model="draft.toolFilterText" type="textarea" :rows="3" placeholder="每行一个工具名（也可逗号分隔），留空 = 开放全部工具；工具发现结果受此清单过滤" />
         <p class="muted">简化为单一过滤文本域：命中清单的工具才会对助手可见（可作黑/白名单使用）。</p>
@@ -279,3 +288,6 @@ async function save(v: { versionName: string; note: string }): Promise<void> {
     />
   </el-drawer>
 </template>
+<style scoped>
+.unit-hint { margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary); }
+</style>

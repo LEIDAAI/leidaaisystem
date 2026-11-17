@@ -165,6 +165,8 @@ export interface ConfigItem {
   // ---- MCP（双类型连接模型，附录 12.3）----
   connType?: 'MCP' | 'OpenAPI'; path?: string; toolFilter?: string[]
   transport?: 'STREAMABLE_HTTP' | 'SSE' | 'STDIO'; endpoint?: string; command?: string; args?: string[]
+  /** v38 工具收单价（元/次有效调用，0–1 保留 4 位小数）：该连接下所有工具统一的计费基准，前台按「收单价 ÷ 0.0049 → 向上取整」折算扣分 */
+  toolUnitPrice?: number
   authConfig?: AuthConfig
   apiOperations?: ApiOperation[]
   /** 仅 MCP 版本快照携带，包含工具稳定 ID、定义和启停状态 */
