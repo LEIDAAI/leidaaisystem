@@ -33,12 +33,22 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
     return { from: toMs(from, false), to: toMs(to, true) }
   }
 
+  /** 逗号分隔 id 列表 → number[] */
+  const idList = (v: unknown): number[] => String(v ?? '').trim()
+    ? String(v).split(/[,，]/).map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n > 0)
+    : []
+
   /** 按当前查询条件过滤（列表与汇总共用，避免两处口径不一致） */
   const filtered = (ctx: Context): CreditRecord[] => {
     const phone = String(ctx.query.phone ?? '').trim()
     const project = String(ctx.query.project ?? '').trim()
     const status = String(ctx.query.status ?? '').trim()
     const type = String(ctx.query.type ?? '').trim() as CreditItemType | ''
+    const content = String(ctx.query.content ?? '').trim()
+    // v44：专家 / 技能 / MCP 服务多选（命中所选任一项即保留，多值之间为「或」）
+    const expertIds = idList(ctx.query.expertIds)
+    const skillIds = idList(ctx.query.skillIds)
+    const mcpServerIds = idList(ctx.query.mcpServerIds)
     const { from, to } = parseRange(ctx)
     const phones = phone ? phone.split(/[、,，\s]+/).filter(Boolean) : []
     return db.creditRecords.filter((r) => {
@@ -46,6 +56,10 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
       if (project && r.projectName !== project) return false
       if (status && r.status !== status) return false
       if (type && !r.breakdown.some((b) => b.type === type)) return false
+      if (content && !`${r.content} ${r.projectName} ${r.expertName || ''}`.toLowerCase().includes(content.toLowerCase())) return false
+      if (expertIds.length && !expertIds.includes(Number(r.expertId))) return false
+      if (skillIds.length && !(r.skillIds || []).some((id) => skillIds.includes(id))) return false
+      if (mcpServerIds.length && !(r.mcpServerIds || []).some((id) => mcpServerIds.includes(id))) return false
       const t = Date.parse(r.createdAt)
       if (from !== undefined && t < from) return false
       if (to !== undefined && t > to) return false
@@ -78,12 +92,31 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
       totalCost,
       totalUserPrice,
       grossMargin: totalUserPrice > 0 ? 1 - totalCost / totalUserPrice : undefined,
+      totalPoints: billable.reduce((sum, r) => sum + (r.breakdown || []).reduce((s2, b) => s2 + (b.points || 0), 0), 0),
       chargedRecords: list.filter((r) => r.status === 'CHARGED').length,
       freeRecords: list.filter((r) => r.status === 'FREE').length,
       refundedCredits: list.filter((r) => r.status === 'REFUNDED').reduce((s, r) => s + Math.abs(r.credits), 0),
       byType
     }
     return summary
+  })
+
+  /** v44：专家 / 技能 / MCP 服务下拉候选（只列库内实际出现过的，避免空选项） */
+  route('GET', '/credit-records/options', (ctx) => {
+    perm(ctx, 'credit:view')
+    const expertMap = new Map<number, string>()
+    const skillMap = new Map<number, string>()
+    const serverMap = new Map<number, string>()
+    for (const r of db.creditRecords) {
+      if (r.expertId) expertMap.set(r.expertId, r.expertName || `专家 ${r.expertId}`)
+      ;(r.skillIds || []).forEach((id, i) => skillMap.set(id, (r.skillNames || [])[i] || `技能 ${id}`))
+      ;(r.mcpServerIds || []).forEach((id, i) => serverMap.set(id, (r.mcpServerNames || [])[i] || `服务 ${id}`))
+    }
+    return {
+      experts: [...expertMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id),
+      skills: [...skillMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id),
+      mcpServers: [...serverMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id)
+    }
   })
 
   /** 消耗项目下拉候选（按当前库内记录去重，供筛选器用） */

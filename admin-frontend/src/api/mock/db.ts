@@ -624,7 +624,7 @@ const BUILT_ORDERS = buildOrders(BUILT_USERS)
 const BUILT_AUDIT_LOGS = buildAuditLogs(ADMINS)
 const BUILT_FEEDBACKS = buildFeedbacks(BUILT_USERS, BUILT_EXTENSIONS.chats)
 // v40：消耗明细种子（以会话为骨架，保证用户/会话可关联）
-BUILT_EXTENSIONS.creditRecords = seedCreditRecords(BUILT_EXTENSIONS.chats, BUILT_USERS.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
+BUILT_EXTENSIONS.creditRecords = seedCreditRecords(BUILT_EXTENSIONS.chats, BUILT_USERS.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), BUILT_EXTENSIONS.experts.map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds })), BUILT_EXTENSIONS.skills.map(s2 => ({ id: s2.id, name: s2.name })), BUILT_EXTENSIONS.servers.map(s2 => ({ id: s2.id, name: s2.name })))
 
 export const MOCK_COMMERCE_RULES = {
   registerBonus: 100,
@@ -974,7 +974,7 @@ const creditRecordsHealthy = Array.isArray(db.creditRecords) && db.creditRecords
   db.creditRecords.some((r) => r.status === 'CHARGED' && (r.userPriceTotal ?? 0) > 0) &&
   db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined))
 if (!creditRecordsHealthy) {
-  db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
+  db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), (db.experts || []).map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds })), (db.skills || []).map(s2 => ({ id: s2.id, name: s2.name })), (db.servers || []).map(s2 => ({ id: s2.id, name: s2.name })))
 }
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。

@@ -883,7 +883,13 @@ export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): 
  *   - 云启 OZON/TEMU、1688、TK、虾皮：按次计，1 次 = 1 点；云启字典/字段/配额查询 = 0 点
  * 成本价 = 点数 × 渠道单位成本；扣分 = ceil(点数 × 单位成本 × 加价倍数 ÷ ¥0.0049)
  */
-export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phone: string; wechatNickname: string }>): import('../config').CreditRecord[] {
+export function seedCreditRecords(
+  chats: Chat[],
+  users: Array<{ id: number; phone: string; wechatNickname: string }>,
+  experts: Array<{ id: number; name: string; skillIds?: number[]; mcpServerIds?: number[] }> = [],
+  skills: Array<{ id: number; name: string }> = [],
+  servers: Array<{ id: number; name: string }> = []
+): import('../config').CreditRecord[] {
   const { CHANNEL_RULES, MODEL_RULE, toolCostPrice, toolCredits, marginOf } = pricing
 
   /** 每个任务链：主接口 + 典型的逐接口调用清单（接口名, 调用次数） */
@@ -1015,9 +1021,21 @@ export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phon
       const totalUserPrice = Number((totalCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4))
       const isFree = (ci * 7 + ri) % 11 === 3
       const isRefunded = (ci * 5 + ri) % 17 === 5
+      // v44：从会话 → 专家 → 技能/MCP 服务推导筛选维度
+      const expert = experts.find((e) => e.id === chat.expertId)
+      const skillIds = expert?.skillIds || []
+      const serverIds = expert?.mcpServerIds || []
+      const skillNames = skillIds.map((id) => skills.find((s3) => s3.id === id)?.name).filter((n): n is string => !!n)
+      const serverNames = serverIds.map((id) => servers.find((s3) => s3.id === id)?.name).filter((n): n is string => !!n)
       records.push({
         id: rid++, userId: user.id, phone: user.phone, wechatNickname: user.wechatNickname,
         chatId: chat.id, projectName: task.project,
+        expertId: chat.expertId,
+        expertName: expert?.name || '—',
+        skillIds,
+        skillNames,
+        mcpServerIds: serverIds,
+        mcpServerNames: serverNames,
         content: String(chat.title || '').slice(0, 40),
         createdAt: at,
         status: isRefunded ? 'REFUNDED' : isFree ? 'FREE' : 'CHARGED',

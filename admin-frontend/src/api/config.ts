@@ -348,6 +348,15 @@ export interface CreditRecord {
   chatId: number
   /** 消耗项目（面向运营的业务名，如「亚马逊选品专家」） */
   projectName: string
+  /** v44 筛选维度：本次对话使用的专家（来自会话 expertId） */
+  expertId?: number
+  expertName?: string
+  /** v44：本次对话涉及的技能（来自专家绑定的 skillIds） */
+  skillIds?: number[]
+  skillNames?: string[]
+  /** v44：本次对话实际调用的 MCP 服务（来自专家绑定 + 明细里的工具所属服务） */
+  mcpServerIds?: number[]
+  mcpServerNames?: string[]
   /** 消耗内容（本次对话的用户问题摘要） */
   content: string
   createdAt: string
@@ -380,6 +389,14 @@ export interface CreditRecordQuery {
   project?: string
   status?: string
   type?: string
+  /** v44：消耗内容关键词 */
+  content?: string
+  /** v44：专家（多选，逗号分隔 id） */
+  expertIds?: string
+  /** v44：技能（多选，逗号分隔 id） */
+  skillIds?: string
+  /** v44：MCP 服务（多选，逗号分隔 id） */
+  mcpServerIds?: string
   from?: string
   to?: string
   page?: number
@@ -395,6 +412,8 @@ export interface CreditSummary {
   totalUserPrice?: number
   /** 整体毛利率（1 - totalCost / totalUserPrice） */
   grossMargin?: number
+  /** v44：第三方接口消耗总点数（供应商计价单位合计） */
+  totalPoints?: number
   chargedRecords: number
   freeRecords: number
   refundedCredits: number
@@ -434,6 +453,13 @@ export const listCreditRecords = (q: CreditRecordQuery) => get<CreditRecordPage>
 export const creditRecordSummary = (q: CreditRecordQuery) => get<CreditSummary>('/credit-records/summary', q)
 export const getCreditRecord = (id: number) => get<CreditRecord>(`/credit-records/${id}`)
 export const listCreditProjects = () => get<string[]>('/credit-records/projects')
+/** v44：专家 / 技能 / MCP 服务筛选候选 */
+export interface CreditRecordOptions {
+  experts: Array<{ id: number; name: string }>
+  skills: Array<{ id: number; name: string }>
+  mcpServers: Array<{ id: number; name: string }>
+}
+export const creditRecordOptions = () => get<CreditRecordOptions>('/credit-records/options')
 
 export const configVersions = (kind: 'plans' | 'experts' | 'skills' | 'mcp/servers', id: number) => get<ConfigVersion[]>(`/${kind}/${id}/versions`)
 /** 恢复版本：同样走版本确认框生成新版本名（留空由服务端生成「恢复自 <源版本名>」） */

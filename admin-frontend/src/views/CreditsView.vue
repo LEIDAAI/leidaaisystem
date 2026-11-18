@@ -9,8 +9,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  listCreditRecords, creditRecordSummary, listCreditProjects,
-  type CreditRecord, type CreditSummary, type CreditItemType
+  listCreditRecords, creditRecordSummary, creditRecordOptions,
+  type CreditRecord, type CreditSummary, type CreditItemType, type CreditRecordOptions
 } from '@/api/config'
 import { beijingTime } from '@/utils/chat-time'
 import { useTableMaxHeight } from '@/composables/useTableMax'
@@ -22,13 +22,18 @@ const total = ref(0)
 const loading = ref(false)
 const loadError = ref(false)
 const summary = ref<CreditSummary | null>(null)
-const projects = ref<string[]>([])
+/** v44：专家 / 技能 / MCP 服务筛选候选 */
+const options = ref<CreditRecordOptions>({ experts: [], skills: [], mcpServers: [] })
 
 const query = reactive({
   phone: '',
-  project: '',
-  status: '',
+  /** v44：消耗内容关键词 */
+  content: '',
   type: '',
+  /** v44：专家 / 技能 / MCP 服务多选（数组内为「或」关系） */
+  expertIds: [] as number[],
+  skillIds: [] as number[],
+  mcpServerIds: [] as number[],
   start: '',
   end: '',
   page: 1,
@@ -53,9 +58,11 @@ function applyQuickRange(v: 'today' | '7d' | '30d' | '', immediate = true): void
 function queryParams(): Record<string, string | number> {
   const q: Record<string, string | number> = { page: query.page, pageSize: query.pageSize }
   if (query.phone.trim()) q.phone = query.phone.trim()
-  if (query.project) q.project = query.project
-  if (query.status) q.status = query.status
+  if (query.content.trim()) q.content = query.content.trim()
   if (query.type) q.type = query.type
+  if (query.expertIds.length) q.expertIds = query.expertIds.join(',')
+  if (query.skillIds.length) q.skillIds = query.skillIds.join(',')
+  if (query.mcpServerIds.length) q.mcpServerIds = query.mcpServerIds.join(',')
   if (query.start) q.from = query.start
   if (query.end) q.to = query.end
   return q
@@ -87,7 +94,7 @@ function search(): void {
 }
 
 function reset(): void {
-  Object.assign(query, { phone: '', project: '', status: '', type: '', start: '', end: '', page: 1, pageSize: 20 })
+  Object.assign(query, { phone: '', content: '', type: '', expertIds: [], skillIds: [], mcpServerIds: [], start: '', end: '', page: 1, pageSize: 20 })
   applyQuickRange('7d', false)
   void load()
 }
@@ -130,7 +137,7 @@ const moneyFine = (n?: number): string => (typeof n === 'number' ? `¥${n < 0.01
 
 onMounted(async () => {
   applyQuickRange('7d')
-  try { projects.value = await listCreditProjects() } catch { projects.value = [] }
+  try { options.value = await creditRecordOptions() } catch { options.value = { experts: [], skills: [], mcpServers: [] } }
   await load()
 })
 </script>
@@ -171,8 +178,8 @@ onMounted(async () => {
             <div class="kpi-value">{{ summary?.totalRecords ?? 0 }}</div>
           </div>
           <div class="kpi">
-            <div class="kpi-label">免费 / 已退回</div>
-            <div class="kpi-value muted">{{ summary?.freeRecords ?? 0 }} / {{ summary?.refundedCredits ?? 0 }} 分</div>
+            <div class="kpi-label">接口点数</div>
+            <div class="kpi-value muted">{{ summary?.totalPoints ?? 0 }} 点</div>
           </div>
         </div>
       </div>
@@ -194,38 +201,44 @@ onMounted(async () => {
 
     <!-- 筛选 -->
     <el-card shadow="never" class="filter-card">
-      <div class="filter-row">
+      <div class="filter-line">
+        <div class="filter-row">
         <el-date-picker
           v-model="query.start" type="date" placeholder="开始日期" value-format="YYYY-MM-DD"
-          style="width:150px" :clearable="false"
+          style="width:138px" :clearable="false"
         />
         <span class="sep">→</span>
         <el-date-picker
           v-model="query.end" type="date" placeholder="结束日期" value-format="YYYY-MM-DD"
-          style="width:150px" :clearable="false"
+          style="width:138px" :clearable="false"
         />
         <el-button-group class="quick-group">
           <el-button size="small" :type="quickRange === 'today' ? 'primary' : 'default'" @click="applyQuickRange('today')">今天</el-button>
           <el-button size="small" :type="quickRange === '7d' ? 'primary' : 'default'" @click="applyQuickRange('7d')">近 7 天</el-button>
           <el-button size="small" :type="quickRange === '30d' ? 'primary' : 'default'" @click="applyQuickRange('30d')">近 30 天</el-button>
         </el-button-group>
+        </div>
 
-        <el-select v-model="query.project" placeholder="消耗项目（全部）" clearable style="width:180px" @change="search">
-          <el-option v-for="p in projects" :key="p" :value="p" :label="p" />
+        <div class="filter-row">
+        <el-select v-model="query.expertIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="专家（可多选）" clearable style="width:170px" @change="search">
+          <el-option v-for="e in options.experts" :key="e.id" :value="e.id" :label="e.name" />
         </el-select>
-        <el-select v-model="query.type" placeholder="消耗类型（全部）" clearable style="width:160px" @change="search">
+        <el-select v-model="query.skillIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="技能（可多选）" clearable style="width:170px" @change="search">
+          <el-option v-for="sk in options.skills" :key="sk.id" :value="sk.id" :label="sk.name" />
+        </el-select>
+        <el-select v-model="query.mcpServerIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="MCP 服务（可多选）" clearable style="width:180px" @change="search">
+          <el-option v-for="m in options.mcpServers" :key="m.id" :value="m.id" :label="m.name" />
+        </el-select>
+        <el-select v-model="query.type" placeholder="消耗类型（全部）" clearable style="width:136px" @change="search">
           <el-option value="LLM_MODEL" label="LLM 模型" />
           <el-option value="MCP_TOOL" label="第三方工具" />
           <el-option value="SKILL" label="技能执行" />
         </el-select>
-        <el-select v-model="query.status" placeholder="状态（全部）" clearable style="width:140px" @change="search">
-          <el-option value="CHARGED" label="已扣减" />
-          <el-option value="FREE" label="免费" />
-          <el-option value="REFUNDED" label="已退回" />
-        </el-select>
-        <el-input v-model="query.phone" placeholder="手机号（支持多个）" clearable style="width:190px" @keyup.enter="search" />
+        <el-input v-model="query.content" placeholder="消耗内容关键词" clearable style="width:160px" @keyup.enter="search" />
+        <el-input v-model="query.phone" placeholder="手机号（支持多个）" clearable style="width:160px" @keyup.enter="search" />
         <el-button type="primary" @click="search">查询</el-button>
         <el-button @click="reset">重置</el-button>
+        </div>
       </div>
     </el-card>
 
@@ -428,7 +441,8 @@ onMounted(async () => {
 .type-figures b.type-cost { color: #d97706; }
 .type-figures .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--el-border-color); flex: 0 0 auto; align-self: center; }
 .filter-card :deep(.el-card__body) { padding: 12px 14px; }
-.filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 10px; }
+.filter-line { display: flex; flex-direction: column; gap: 8px; }
+.filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 8px; }
 .filter-row .el-button-group { margin-right: 4px; }
 .sep { color: var(--el-text-color-secondary); font-size: 12px; }
 .quick-group { margin-left: 2px; }
