@@ -886,9 +886,15 @@ export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): 
 export function seedCreditRecords(
   chats: Chat[],
   users: Array<{ id: number; phone: string; wechatNickname: string }>,
-  experts: Array<{ id: number; name: string; skillIds?: number[]; mcpServerIds?: number[] }> = [],
-  skills: Array<{ id: number; name: string }> = [],
-  servers: Array<{ id: number; name: string }> = []
+  experts: Array<{ id: number; name: string; skillIds?: number[]; mcpServerIds?: number[]; platforms?: PlatformType[]; scenarioId?: number }> = [],
+  skills: Array<{ id: number; name: string; platforms?: PlatformType[]; scenarioId?: number; agentId?: number }> = [],
+  servers: Array<{ id: number; name: string }> = [],
+  /** v48：用户套餐/会员快照（用于列表展示套餐、是否到期、到期时间） */
+  userPlans: Array<{ id: number; planName: string; membershipStatus: 'ACTIVE' | 'EXPIRED' | 'NONE' | 'LIFETIME' | 'UNKNOWN'; membershipExpireAt: string | null }> = [],
+  /** v48：智能体字典（agentId → 名称） */
+  agents: Array<{ id: number; name: string }> = [],
+  /** v48：场景字典（sceneId → 名称），用于记录里冗余场景名便于检索 */
+  scenarios: Array<{ id: number; name: string }> = []
 ): import('../config').CreditRecord[] {
   const { CHANNEL_RULES, MODEL_RULE, toolCostPrice, toolCredits, marginOf } = pricing
 
@@ -1055,9 +1061,32 @@ export function seedCreditRecords(
       const serverIds = expert?.mcpServerIds || []
       const skillNames = skillIds.map((id) => skills.find((s3) => s3.id === id)?.name).filter((n): n is string => !!n)
       const serverNames = serverIds.map((id) => servers.find((s3) => s3.id === id)?.name).filter((n): n is string => !!n)
+      // v48：平台 / 场景 / 智能体三维度（用于消耗明细筛选）
+      //   ⚠️ 平台必须取**本次对话实际执行的渠道**（task.channelKey），不能取「专家绑定技能的平台并集」——
+      //   一个专家绑 7 个技能覆盖 4 个平台时，并集会等于"全部平台"，筛选直接失效（v48 首版踩过）。
+      const CHANNEL_PLATFORM: Record<string, PlatformType> = {
+        amazon: 'AMAZON', 'yunqi-ozon': 'OZON', 'yunqi-temu': 'TEMU',
+        'dld-1688': '1688', fastmoss: 'TIKTOK', shopee: 'SHOPEE'
+      }
+      const runPlatform = CHANNEL_PLATFORM[task.channelKey]
+      const recordPlatforms: PlatformType[] = runPlatform ? [runPlatform] : []
+      // 场景：优先专家自己的 scenarioId，缺省回落到首个绑定技能的 scenarioId
+      const boundSkills = skillIds.map((id) => skills.find((s3) => s3.id === id)).filter((s3): s3 is NonNullable<typeof s3> => !!s3)
+      const recordScenarioId = expert?.scenarioId ?? boundSkills.find((s3) => typeof s3.scenarioId === 'number')?.scenarioId
+      // 智能体：专家不直接挂智能体，取其绑定技能的归属智能体（多个时取首个命中的，保持单值便于筛选）
+      const recordAgentId = boundSkills.find((s3) => typeof s3.agentId === 'number')?.agentId
+      const userPlan = userPlans.find((p) => p.id === user.id)
       records.push({
         id: rid++, userId: user.id, phone: user.phone, wechatNickname: user.wechatNickname,
         chatId: chat.id, projectName: task.project,
+        platforms: recordPlatforms,
+        scenarioId: recordScenarioId,
+        scenarioName: recordScenarioId !== undefined ? scenarios.find((s4) => s4.id === recordScenarioId)?.name : undefined,
+        agentId: recordAgentId,
+        agentName: recordAgentId !== undefined ? agents.find((a) => a.id === recordAgentId)?.name : undefined,
+        planName: userPlan?.planName,
+        membershipStatus: userPlan?.membershipStatus,
+        membershipExpireAt: userPlan?.membershipExpireAt ?? null,
         expertId: chat.expertId,
         expertName: expert?.name || '—',
         skillIds,

@@ -437,7 +437,7 @@ async function submitGift() {
     <el-dialog v-model="manualVisible" title="创建手工订单" width="460px">
       <el-form label-width="100px" @submit.prevent>
         <el-form-item label="手机号" required>
-          <el-input v-model="manualForm.phone" placeholder="请输入用户手机号，如 138****5678" />
+          <el-input v-model="manualForm.phone" placeholder="请输入用户完整手机号，如 13812345678" />
         </el-form-item>
         <el-form-item label="选择套餐" required>
           <el-select v-model="manualForm.planId" placeholder="请选择套餐" style="width: 100%">
@@ -480,7 +480,7 @@ async function submitGift() {
     <el-dialog v-model="giftVisible" title="运营特批赠送" width="460px">
       <el-form label-width="100px" @submit.prevent>
         <el-form-item label="手机号" required>
-          <el-input v-model="giftForm.phone" placeholder="请输入用户手机号，如 138****5678" />
+          <el-input v-model="giftForm.phone" placeholder="请输入用户完整手机号，如 13812345678" />
         </el-form-item>
         <el-form-item label="选择套餐" required>
           <el-select v-model="giftForm.planId" placeholder="请选择赠送套餐" style="width: 100%">

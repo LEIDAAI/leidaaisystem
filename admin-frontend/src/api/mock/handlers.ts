@@ -629,7 +629,7 @@ route('GET', '/orders/:id', (ctx) => {
   return { ...toOrderItem(o), transactions: o.transactions.map((t) => ({ ...t })) }
 })
 
-/** v11 手工/赠送订单共用：按手机号定位用户（演示数据手机号为脱敏格式，需精确匹配） */
+/** v11 手工/赠送订单共用：按手机号定位用户（v48 起演示数据为完整 11 位手机号，需精确匹配） */
 function findUserByPhone(phone: string): MockUser {
   const u = db.users.find((x) => x.phone === phone)
   if (!u) throw new MockApiError(422, '手机号对应用户不存在')

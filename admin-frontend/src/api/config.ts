@@ -357,6 +357,20 @@ export interface CreditRecord {
   /** v44：本次对话实际调用的 MCP 服务（来自专家绑定 + 明细里的工具所属服务） */
   mcpServerIds?: number[]
   mcpServerNames?: string[]
+  /** v48 筛选维度：由专家/技能配置推导的平台（多选，命中所选任一平台即保留） */
+  platforms?: PlatformType[]
+  /** v48 筛选维度：由专家 scenarioId 推导的场景 */
+  scenarioId?: number
+  scenarioName?: string
+  /** v48 筛选维度：由技能 agentId 推导的归属智能体（专家本身不挂智能体，取绑定技能的交集） */
+  agentId?: number
+  agentName?: string
+  /** v48 列表列：用户下单时的套餐名快照（与用户管理同一口径） */
+  planName?: string
+  /** v48 列表列：会员状态 ACTIVE/EXPIRED/NONE/LIFETIME/UNKNOWN（readMockMembership 口径） */
+  membershipStatus?: 'ACTIVE' | 'EXPIRED' | 'NONE' | 'LIFETIME' | 'UNKNOWN'
+  /** v48 列表列：会员到期时间（终身/无会员为 null） */
+  membershipExpireAt?: string | null
   /** 消耗内容（本次对话的用户问题摘要） */
   content: string
   createdAt: string
@@ -397,6 +411,12 @@ export interface CreditRecordQuery {
   skillIds?: string
   /** v44：MCP 服务（多选，逗号分隔 id） */
   mcpServerIds?: string
+  /** v48：平台（多选，逗号分隔，如 1688,AMAZON） */
+  platforms?: string
+  /** v48：场景（多选，逗号分隔 id） */
+  scenarioIds?: string
+  /** v48：智能体（多选，逗号分隔 id） */
+  agentIds?: string
   from?: string
   to?: string
   page?: number
@@ -462,11 +482,23 @@ export interface CreditRecordOption {
   usedCount: number
   /** 配置状态 1 启用 / 0 停用 */
   status: number
+  /** v48：技能/专家的平台归属（用于在候选列表内按平台收窄） */
+  platforms?: PlatformType[]
+  /** v48：技能/专家所属场景 */
+  scenarioId?: number | null
+  /** v48：技能归属智能体 */
+  agentId?: number | null
 }
 export interface CreditRecordOptions {
   experts: CreditRecordOption[]
   skills: CreditRecordOption[]
   mcpServers: CreditRecordOption[]
+  /** v48：平台候选（固定枚举，带 usedCount） */
+  platforms: Array<{ value: PlatformType; label: string; usedCount: number }>
+  /** v48：场景候选（来自场景管理，带所属平台） */
+  scenarios: Array<CreditRecordOption & { platformId: PlatformType }>
+  /** v48：智能体候选（来自智能体管理） */
+  agents: CreditRecordOption[]
 }
 export const creditRecordOptions = () => get<CreditRecordOptions>('/credit-records/options')
 

@@ -8,6 +8,7 @@
 import { db, permissionCodesOf } from './db'
 import type { Context, Services } from './config-handlers'
 import type { CreditItemType, CreditRecord, CreditSummary } from '../config'
+import { PLATFORMS, PLATFORM_META } from '../config'
 import { CREDIT_UNIT_PRICE } from '../../utils/credit-pricing'
 
 export const CREDIT_TYPE_LABEL: Record<CreditItemType, string> = {
@@ -49,6 +50,12 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
     const expertIds = idList(ctx.query.expertIds)
     const skillIds = idList(ctx.query.skillIds)
     const mcpServerIds = idList(ctx.query.mcpServerIds)
+    // v48：平台（枚举值）/ 场景 / 智能体多选
+    const platformSel = String(ctx.query.platforms ?? '').trim()
+      ? String(ctx.query.platforms).split(/[,，]/).map((x) => x.trim()).filter(Boolean)
+      : []
+    const scenarioIds = idList(ctx.query.scenarioIds)
+    const agentIds = idList(ctx.query.agentIds)
     const { from, to } = parseRange(ctx)
     const phones = phone ? phone.split(/[、,，\s]+/).filter(Boolean) : []
     return db.creditRecords.filter((r) => {
@@ -60,6 +67,9 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
       if (expertIds.length && !expertIds.includes(Number(r.expertId))) return false
       if (skillIds.length && !(r.skillIds || []).some((id) => skillIds.includes(id))) return false
       if (mcpServerIds.length && !(r.mcpServerIds || []).some((id) => mcpServerIds.includes(id))) return false
+      if (platformSel.length && !(r.platforms || []).some((p) => platformSel.includes(p))) return false
+      if (scenarioIds.length && !scenarioIds.includes(Number(r.scenarioId))) return false
+      if (agentIds.length && !agentIds.includes(Number(r.agentId))) return false
       const t = Date.parse(r.createdAt)
       if (from !== undefined && t < from) return false
       if (to !== undefined && t > to) return false
@@ -114,19 +124,42 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
     const expertUsed = new Map<number, number>()
     const skillUsed = new Map<number, number>()
     const serverUsed = new Map<number, number>()
+    const scenarioUsed = new Map<number, number>()
+    const agentUsed = new Map<number, number>()
+    const platformUsed = new Map<string, number>()
     for (const r of db.creditRecords) {
       if (r.expertId) expertUsed.set(r.expertId, (expertUsed.get(r.expertId) || 0) + 1)
       for (const id of r.skillIds || []) skillUsed.set(id, (skillUsed.get(id) || 0) + 1)
       for (const id of r.mcpServerIds || []) serverUsed.set(id, (serverUsed.get(id) || 0) + 1)
+      if (r.scenarioId) scenarioUsed.set(r.scenarioId, (scenarioUsed.get(r.scenarioId) || 0) + 1)
+      if (r.agentId) agentUsed.set(r.agentId, (agentUsed.get(r.agentId) || 0) + 1)
+      for (const p of r.platforms || []) platformUsed.set(p, (platformUsed.get(p) || 0) + 1)
     }
     const build = (items: { id: number; name: string; status?: number }[], used: Map<number, number>) =>
       items
         .map((it) => ({ id: it.id, name: it.name, usedCount: used.get(it.id) || 0, status: it.status ?? 1 }))
         .sort((a, b) => b.usedCount - a.usedCount || a.id - b.id)
     return {
-      experts: build(db.experts || [], expertUsed),
-      skills: build(db.skills || [], skillUsed),
-      mcpServers: build(db.servers || [], serverUsed)
+      experts: (db.experts || [])
+        .map((e) => ({
+          id: e.id, name: e.name, usedCount: expertUsed.get(e.id) || 0, status: e.status ?? 1,
+          platforms: e.platforms || [], scenarioId: e.scenarioId ?? null
+        }))
+        .sort((a, b) => b.usedCount - a.usedCount || a.id - b.id),
+      skills: (db.skills || [])
+        .map((sk) => ({
+          id: sk.id, name: sk.name, usedCount: skillUsed.get(sk.id) || 0, status: sk.status ?? 1,
+          platforms: sk.platforms || [], scenarioId: sk.scenarioId ?? null, agentId: sk.agentId ?? null
+        }))
+        .sort((a, b) => b.usedCount - a.usedCount || a.id - b.id),
+      mcpServers: build(db.servers || [], serverUsed),
+      // v48：平台固定枚举（不按库里出现与否裁剪，避免「从没跑过该平台」就选不到）
+      platforms: PLATFORMS.map((p) => ({ value: p, label: PLATFORM_META[p].label, usedCount: platformUsed.get(p) || 0 })),
+      // v48：场景来自场景管理，带 platformId 便于按平台联动收窄
+      scenarios: (db.scenarios || [])
+        .map((s) => ({ id: s.id, name: s.name, platformId: s.platformId, usedCount: scenarioUsed.get(s.id) || 0, status: 1 }))
+        .sort((a, b) => b.usedCount - a.usedCount || a.id - b.id),
+      agents: build(db.agents || [], agentUsed)
     }
   })
 

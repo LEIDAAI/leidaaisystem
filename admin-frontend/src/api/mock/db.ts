@@ -321,10 +321,17 @@ const UA_POOL = [
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/126.0.0.0'
 ]
 
+/**
+ * v48：演示数据改为**完整 11 位手机号**（此前为 139****1373 脱敏格式）。
+ * 原因：消耗明细/用户/订单都需要按手机号定位真实客户，脱敏值既不能完整展示也无法核对。
+ * 后 8 位由 i 确定性推导，保证 40 个用户互不重复。
+ */
 function maskedPhone(i: number): string {
   const prefix = PHONE_PREFIXES[i % PHONE_PREFIXES.length]
+  // 后 8 位：万位以上用 i 生成不同段，尾 4 位 1000–9999，整体唯一且稳定
+  const mid = String(1000 + ((i * 617) % 9000))
   const tail = String(1000 + ((i * 373) % 9000))
-  return `${prefix}****${tail}`
+  return `${prefix}${mid}${tail}`
 }
 
 const REGIONS = [
@@ -624,7 +631,7 @@ const BUILT_ORDERS = buildOrders(BUILT_USERS)
 const BUILT_AUDIT_LOGS = buildAuditLogs(ADMINS)
 const BUILT_FEEDBACKS = buildFeedbacks(BUILT_USERS, BUILT_EXTENSIONS.chats)
 // v40：消耗明细种子（以会话为骨架，保证用户/会话可关联）
-BUILT_EXTENSIONS.creditRecords = seedCreditRecords(BUILT_EXTENSIONS.chats, BUILT_USERS.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), BUILT_EXTENSIONS.experts.map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds })), BUILT_EXTENSIONS.skills.map(s2 => ({ id: s2.id, name: s2.name })), BUILT_EXTENSIONS.servers.map(s2 => ({ id: s2.id, name: s2.name })))
+BUILT_EXTENSIONS.creditRecords = seedCreditRecords(BUILT_EXTENSIONS.chats, BUILT_USERS.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), BUILT_EXTENSIONS.experts.map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds, platforms: e.platforms, scenarioId: e.scenarioId ?? undefined })), BUILT_EXTENSIONS.skills.map(s2 => ({ id: s2.id, name: s2.name, platforms: s2.platforms, scenarioId: s2.scenarioId ?? undefined, agentId: s2.agentId ?? undefined })), BUILT_EXTENSIONS.servers.map(s2 => ({ id: s2.id, name: s2.name })), BUILT_USERS.map(u => ({ id: u.id, planName: u.planName, membershipStatus: readMockMembership(u).status, membershipExpireAt: readMockMembership(u).expiresAt })), BUILT_EXTENSIONS.agents.map(a => ({ id: a.id, name: a.name })), BUILT_EXTENSIONS.scenarios.map(s2 => ({ id: s2.id, name: s2.name })))
 
 export const MOCK_COMMERCE_RULES = {
   registerBonus: 100,
@@ -975,9 +982,43 @@ const creditRecordsHealthy = Array.isArray(db.creditRecords) && db.creditRecords
   db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined)) &&
   // v46：技能执行必须有明细行。此前 SKILL 类型从未写入 breakdown，「技能」筛选恒为空
   // （选任何技能都查不到数据），这里把它纳入健康判据以便老库自动重播。
-  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.type === 'SKILL'))
+  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.type === 'SKILL')) &&
+  // v48：平台/智能体/套餐三个维度必须已写入。老记录的 platforms 为空数组（新字段缺省），
+  // 不加这条会导致「平台筛选恒为空」——与 v46 技能筛选同一个坑。
+  // 收紧：必须存在「只含一个平台」的记录。v48 首版把平台算成专家绑定技能的并集（等于全部平台），
+  // 这条判据能识别出那种错误的旧数据并触发重播。
+  db.creditRecords.some((r) => (r.platforms || []).length === 1) &&
+  db.creditRecords.some((r) => typeof r.agentId === 'number') &&
+  db.creditRecords.some((r) => typeof r.planName === 'string' && r.planName.length > 0)
+// v48 幂等迁移（先于消耗明细重播执行）：演示手机号由脱敏（139****1373）改为完整 11 位。
+// 判据是「存在含 **** 的手机号」而不是版本号——已是最新种子的库不受影响，重复执行无副作用。
+// 用户表为唯一事实源：订单/消耗记录的手机号按 userId 回灌，避免多处不一致。
+if (db.users.some((u) => u.phone.includes('****'))) {
+  db.users.forEach((u) => {
+    if (u.phone.includes('****')) u.phone = maskedPhone(u.id)
+  })
+  const phoneOf = (userId: number): string | undefined => db.users.find((u) => u.id === userId)?.phone
+  db.orders.forEach((o) => {
+    const p = phoneOf(o.userId)
+    if (p) (o as MockOrder & { phone?: string }).phone = p
+  })
+  db.creditRecords.forEach((r) => {
+    const p = phoneOf(r.userId)
+    if (p) r.phone = p
+  })
+}
 if (!creditRecordsHealthy) {
-  db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), (db.experts || []).map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds })), (db.skills || []).map(s2 => ({ id: s2.id, name: s2.name })), (db.servers || []).map(s2 => ({ id: s2.id, name: s2.name })))
+  // 重播种子：手机号此时已是完整值，且带上 v48 的平台/场景/智能体/套餐维度
+  db.creditRecords = seedCreditRecords(
+    db.chats || [],
+    db.users.map((u) => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })),
+    (db.experts || []).map((e) => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds, platforms: e.platforms, scenarioId: e.scenarioId ?? undefined })),
+    (db.skills || []).map((s2) => ({ id: s2.id, name: s2.name, platforms: s2.platforms, scenarioId: s2.scenarioId ?? undefined, agentId: s2.agentId ?? undefined })),
+    (db.servers || []).map((s2) => ({ id: s2.id, name: s2.name })),
+    db.users.map((u) => ({ id: u.id, planName: u.planName, membershipStatus: readMockMembership(u).status, membershipExpireAt: readMockMembership(u).expiresAt })),
+    (db.agents || []).map((a) => ({ id: a.id, name: a.name })),
+    (db.scenarios || []).map((s2) => ({ id: s2.id, name: s2.name }))
+  )
 }
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。
@@ -1057,7 +1098,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 27,
+        version: 28,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

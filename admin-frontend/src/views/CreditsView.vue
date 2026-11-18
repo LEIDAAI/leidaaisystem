@@ -10,7 +10,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   listCreditRecords, creditRecordSummary, creditRecordOptions,
-  type CreditRecord, type CreditSummary, type CreditItemType, type CreditRecordOptions
+  type CreditRecord, type CreditSummary, type CreditItemType, type CreditRecordOptions, type CreditRecordOption
 } from '@/api/config'
 import { beijingTime } from '@/utils/chat-time'
 import { useTableMaxHeight } from '@/composables/useTableMax'
@@ -50,7 +50,7 @@ const loading = ref(false)
 const loadError = ref(false)
 const summary = ref<CreditSummary | null>(null)
 /** v44：专家 / 技能 / MCP 服务筛选候选 */
-const options = ref<CreditRecordOptions>({ experts: [], skills: [], mcpServers: [] })
+const options = ref<CreditRecordOptions>({ experts: [], skills: [], mcpServers: [], platforms: [], scenarios: [], agents: [] })
 
 const query = reactive({
   phone: '',
@@ -61,14 +61,63 @@ const query = reactive({
   expertIds: [] as number[],
   skillIds: [] as number[],
   mcpServerIds: [] as number[],
+  /** v48：平台（枚举串）/ 场景 / 智能体（多选 id） */
+  platforms: [] as string[],
+  scenarioIds: [] as number[],
+  agentIds: [] as number[],
   start: '',
   end: '',
   page: 1,
   pageSize: 20
 })
 
+/**
+ * v48：专家/技能下拉内部的二级收窄（平台 / 场景 / 智能体）。
+ * 这是「在下拉里挑人」的辅助维度，不参与后端查询——只影响候选列表显示哪些项，
+ * 真正的筛选条件仍是 query.expertIds / query.skillIds（保持与原有口径一致）。
+ */
+const picker = reactive({
+  expertPlatforms: [] as string[],
+  expertScenarios: [] as number[],
+  skillPlatforms: [] as string[],
+  skillScenarios: [] as number[],
+  skillAgents: [] as number[]
+})
+const platformsOfExpert = (e: CreditRecordOption): string[] => (e.platforms || []).map(String)
+/**
+ * v48：下拉内的收窄芯片只列「库里实际有数据」的平台/场景/智能体，
+ * 避免把 6 个平台 9 个场景全铺开会把下拉挤满（无消耗的选了也筛不到东西）。
+ */
+const usedPlatformOptions = computed(() => options.value.platforms.filter((p) => p.usedCount > 0))
+const usedScenarioOptions = computed(() => options.value.scenarios.filter((s) => s.usedCount > 0))
+const usedAgentOptions = computed(() => options.value.agents.filter((a) => a.usedCount > 0))
+/** 芯片多选切换（数组内「或」关系） */
+function toggleIn<T>(arr: T[], v: T): void {
+  const i = arr.indexOf(v)
+  if (i >= 0) arr.splice(i, 1)
+  else arr.push(v)
+}
+const filteredExperts = computed(() => {
+  const ps = picker.expertPlatforms
+  const ss = picker.expertScenarios
+  return options.value.experts.filter((e) =>
+    (!ps.length || (e.platforms || []).some((p) => ps.includes(p as string))) &&
+    (!ss.length || (typeof e.scenarioId === 'number' && ss.includes(e.scenarioId)))
+  )
+})
+const filteredSkills = computed(() => {
+  const ps = picker.skillPlatforms
+  const ss = picker.skillScenarios
+  const as = picker.skillAgents
+  return options.value.skills.filter((sk) =>
+    (!ps.length || (sk.platforms || []).some((p) => ps.includes(p as string))) &&
+    (!ss.length || (typeof sk.scenarioId === 'number' && ss.includes(sk.scenarioId))) &&
+    (!as.length || (typeof sk.agentId === 'number' && as.includes(sk.agentId)))
+  )
+})
+
 /** 快捷日期范围（对齐前台今天-7天-30天习惯；点击即生效并立即查询，避免用户以为选中了却仍看旧数据） */
-const quickRange = ref<'today' | '7d' | '30d' | ''>('7d')
+const quickRange = ref<'today' | '7d' | '30d' | ''>('30d')
 function applyQuickRange(v: 'today' | '7d' | '30d' | '', immediate = true): void {
   quickRange.value = v
   const fmt = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -90,6 +139,9 @@ function queryParams(): Record<string, string | number> {
   if (query.expertIds.length) q.expertIds = query.expertIds.join(',')
   if (query.skillIds.length) q.skillIds = query.skillIds.join(',')
   if (query.mcpServerIds.length) q.mcpServerIds = query.mcpServerIds.join(',')
+  if (query.platforms.length) q.platforms = query.platforms.join(',')
+  if (query.scenarioIds.length) q.scenarioIds = query.scenarioIds.join(',')
+  if (query.agentIds.length) q.agentIds = query.agentIds.join(',')
   if (query.start) q.from = query.start
   if (query.end) q.to = query.end
   return q
@@ -121,8 +173,9 @@ function search(): void {
 }
 
 function reset(): void {
-  Object.assign(query, { phone: '', content: '', type: '', expertIds: [], skillIds: [], mcpServerIds: [], start: '', end: '', page: 1, pageSize: 20 })
-  applyQuickRange('7d', false)
+  Object.assign(query, { phone: '', content: '', type: '', expertIds: [], skillIds: [], mcpServerIds: [], platforms: [], scenarioIds: [], agentIds: [], start: '', end: '', page: 1, pageSize: 20 })
+  Object.assign(picker, { expertPlatforms: [], expertScenarios: [], skillPlatforms: [], skillScenarios: [], skillAgents: [] })
+  applyQuickRange('30d', false)
   void load()
 }
 
@@ -173,9 +226,34 @@ function toolSummary(r: CreditRecord): string {
 /** 成本价展示：接口单价很低，需要 4–6 位小数才看得出差异 */
 const moneyFine = (n?: number): string => (typeof n === 'number' ? `¥${n < 0.01 ? n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : n.toFixed(4)}` : '—')
 
+/** v48：会员状态 → 标签文案与配色（与用户管理同一口径 readMockMembership） */
+const MEMBERSHIP_META: Record<NonNullable<CreditRecord['membershipStatus']>, { label: string; type: 'success' | 'info' | 'warning' | 'danger' }> = {
+  ACTIVE: { label: '未到期', type: 'success' },
+  EXPIRED: { label: '已到期', type: 'danger' },
+  NONE: { label: '无会员', type: 'info' },
+  LIFETIME: { label: '终身', type: 'success' },
+  UNKNOWN: { label: '未知', type: 'warning' }
+}
+const membershipMeta = (r: CreditRecord): { label: string; type: 'success' | 'info' | 'warning' | 'danger' } =>
+  MEMBERSHIP_META[r.membershipStatus ?? 'UNKNOWN'] ?? { label: '未知', type: 'warning' }
+
+/** 到期时间：终身 / 无会员不出日期，避免把 null 显示成 1970 或空串 */
+function expiryText(r: CreditRecord): string {
+  if (r.membershipStatus === 'LIFETIME') return '长期有效'
+  if (r.membershipStatus === 'NONE') return '—'
+  if (!r.membershipExpireAt) return '—'
+  return r.membershipExpireAt.slice(0, 10)
+}
+/** 30 天内到期高亮：运营需要提前干预续费，已到期由标签本身标识 */
+function isExpiringSoon(r: CreditRecord): boolean {
+  if (r.membershipStatus !== 'ACTIVE' || !r.membershipExpireAt) return false
+  const left = Date.parse(r.membershipExpireAt) - Date.now()
+  return left > 0 && left < 30 * 86400000
+}
+
 onMounted(async () => {
-  applyQuickRange('7d')
-  try { options.value = await creditRecordOptions() } catch { options.value = { experts: [], skills: [], mcpServers: [] } }
+  applyQuickRange('30d')
+  try { options.value = await creditRecordOptions() } catch { options.value = { experts: [], skills: [], mcpServers: [], platforms: [], scenarios: [], agents: [] } }
   await load()
   window.addEventListener('resize', measureDetail)
 })
@@ -279,16 +357,80 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
 
         <div class="filter-row">
         <el-select v-model="query.expertIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="专家（可多选）" clearable style="width:170px" @change="search">
-          <el-option v-for="e in options.experts" :key="e.id" :value="e.id" :label="e.name">
+          <template #header>
+            <div class="pick-head" @click.stop @mousedown.stop>
+              <div class="pick-line">
+                <span class="pick-label">平台</span>
+                <div class="pick-chips">
+                  <button
+                    v-for="p in usedPlatformOptions" :key="p.value" type="button"
+                    class="pick-chip" :class="{ on: picker.expertPlatforms.includes(p.value) }"
+                    @click="toggleIn(picker.expertPlatforms, p.value)"
+                  >{{ p.label }}</button>
+                </div>
+              </div>
+              <div class="pick-line">
+                <span class="pick-label">场景</span>
+                <div class="pick-chips">
+                  <button
+                    v-for="s in usedScenarioOptions" :key="s.id" type="button"
+                    class="pick-chip" :class="{ on: picker.expertScenarios.includes(s.id) }"
+                    @click="toggleIn(picker.expertScenarios, s.id)"
+                  >{{ s.name }}</button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <el-option v-for="e in filteredExperts" :key="e.id" :value="e.id" :label="e.name">
             <span class="opt-name" :class="{ 'opt-idle': !e.usedCount }">{{ e.name }}</span>
             <span class="opt-meta">{{ e.usedCount ? `${e.usedCount} 条` : '无消耗' }}</span>
           </el-option>
+          <template #empty>
+            <div class="opt-empty">{{ picker.expertPlatforms.length || picker.expertScenarios.length ? '所选平台/场景下没有专家' : '暂无专家' }}</div>
+          </template>
         </el-select>
         <el-select v-model="query.skillIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="技能（可多选）" clearable style="width:170px" @change="search">
-          <el-option v-for="sk in options.skills" :key="sk.id" :value="sk.id" :label="sk.name">
+          <template #header>
+            <div class="pick-head" @click.stop @mousedown.stop>
+              <div class="pick-line">
+                <span class="pick-label">智能体</span>
+                <div class="pick-chips">
+                  <button
+                    v-for="a in usedAgentOptions" :key="a.id" type="button"
+                    class="pick-chip" :class="{ on: picker.skillAgents.includes(a.id) }"
+                    @click="toggleIn(picker.skillAgents, a.id)"
+                  >{{ a.name }}</button>
+                </div>
+              </div>
+              <div class="pick-line">
+                <span class="pick-label">平台</span>
+                <div class="pick-chips">
+                  <button
+                    v-for="p in usedPlatformOptions" :key="p.value" type="button"
+                    class="pick-chip" :class="{ on: picker.skillPlatforms.includes(p.value) }"
+                    @click="toggleIn(picker.skillPlatforms, p.value)"
+                  >{{ p.label }}</button>
+                </div>
+              </div>
+              <div class="pick-line">
+                <span class="pick-label">场景</span>
+                <div class="pick-chips">
+                  <button
+                    v-for="s in usedScenarioOptions" :key="s.id" type="button"
+                    class="pick-chip" :class="{ on: picker.skillScenarios.includes(s.id) }"
+                    @click="toggleIn(picker.skillScenarios, s.id)"
+                  >{{ s.name }}</button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <el-option v-for="sk in filteredSkills" :key="sk.id" :value="sk.id" :label="sk.name">
             <span class="opt-name" :class="{ 'opt-idle': !sk.usedCount }">{{ sk.name }}</span>
             <span class="opt-meta">{{ sk.usedCount ? `${sk.usedCount} 条` : '无消耗' }}</span>
           </el-option>
+          <template #empty>
+            <div class="opt-empty">{{ picker.skillAgents.length || picker.skillPlatforms.length || picker.skillScenarios.length ? '所选智能体/平台/场景下没有技能' : '暂无技能' }}</div>
+          </template>
         </el-select>
         <el-select v-model="query.mcpServerIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="MCP 服务（可多选）" clearable style="width:180px" @change="search">
           <el-option v-for="m in options.mcpServers" :key="m.id" :value="m.id" :label="m.name">
@@ -300,6 +442,24 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
           <el-option value="LLM_MODEL" label="LLM 模型" />
           <el-option value="MCP_TOOL" label="第三方工具" />
           <el-option value="SKILL" label="技能执行" />
+        </el-select>
+        <el-select v-model="query.platforms" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="平台（可多选）" clearable style="width:150px" @change="search">
+          <el-option v-for="p in options.platforms" :key="p.value" :value="p.value" :label="p.label">
+            <span class="opt-name" :class="{ 'opt-idle': !p.usedCount }">{{ p.label }}</span>
+            <span class="opt-meta">{{ p.usedCount ? `${p.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
+        </el-select>
+        <el-select v-model="query.scenarioIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="场景（可多选）" clearable style="width:150px" @change="search">
+          <el-option v-for="s in options.scenarios" :key="s.id" :value="s.id" :label="s.name">
+            <span class="opt-name" :class="{ 'opt-idle': !s.usedCount }">{{ s.name }}</span>
+            <span class="opt-meta">{{ s.usedCount ? `${s.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
+        </el-select>
+        <el-select v-model="query.agentIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="智能体（可多选）" clearable style="width:150px" @change="search">
+          <el-option v-for="a in options.agents" :key="a.id" :value="a.id" :label="a.name">
+            <span class="opt-name" :class="{ 'opt-idle': !a.usedCount }">{{ a.name }}</span>
+            <span class="opt-meta">{{ a.usedCount ? `${a.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
         </el-select>
         <el-input v-model="query.content" placeholder="消耗内容关键词" clearable style="width:160px" @keyup.enter="search" />
         <el-input v-model="query.phone" placeholder="手机号（支持多个）" clearable style="width:160px" @keyup.enter="search" />
@@ -321,20 +481,18 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
         class="credit-table"
         empty-text="所选条件下暂无消耗记录"
       >
-        <el-table-column label="成员" min-width="150">
+        <el-table-column label="成员" width="112">
           <template #default="{ row }">
-            <div class="member">
-              <b>{{ (row as CreditRecord).wechatNickname }}</b>
-              <small class="muted">{{ (row as CreditRecord).phone }}</small>
-            </div>
+            <!-- v48：成员列只放手机号（原「昵称在上、手机号在下」取消），昵称独立成列放右侧 -->
+            <span class="member-phone">{{ (row as CreditRecord).phone }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="消耗项目" width="160">
+        <el-table-column label="消耗项目" width="126">
           <template #default="{ row }">
             <span class="project">{{ (row as CreditRecord).projectName }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="消耗内容" min-width="260">
+        <el-table-column label="消耗内容" min-width="150">
           <template #default="{ row }">
             <el-button link type="primary" class="content-link" @click="openDetail(row as CreditRecord)">
               {{ (row as CreditRecord).content }}
@@ -344,26 +502,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="时间（北京）" width="185">
+        <el-table-column label="时间（北京）" width="146">
           <template #default="{ row }">{{ beijingTime((row as CreditRecord).createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="95">
+        <el-table-column label="状态" width="82">
           <template #default="{ row }">
             <el-tag size="small" :type="statusMeta((row as CreditRecord).status).type" effect="plain">
               {{ statusMeta((row as CreditRecord).status).label }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="算力变更" width="105" align="right">
+        <el-table-column label="算力变更" width="92" align="right">
           <template #default="{ row }">
             <span class="credit-val" :class="creditClass(row as CreditRecord)">{{ creditText(row as CreditRecord) }}</span>
             <small class="unit">分</small>
           </template>
         </el-table-column>
-        <el-table-column label="成本价" width="100" align="right">
+        <el-table-column label="成本价" width="86" align="right">
           <template #default="{ row }"><span class="cost-val">{{ money((row as CreditRecord).cost) }}</span></template>
         </el-table-column>
-        <el-table-column label="用户价" width="118" align="right">
+        <el-table-column label="用户价" width="96" align="right">
           <template #default="{ row }">
             <span v-if="(row as CreditRecord).status === 'CHARGED'" class="revenue-val">{{ money((row as CreditRecord).userPriceTotal ?? 0) }}</span>
             <span v-else class="revenue-void" :title="`原本应扣 ¥${((row as CreditRecord).originalUserPrice ?? 0).toFixed(4)}，已${(row as CreditRecord).status === 'REFUNDED' ? '全额退回' : '免费'}`">
@@ -371,8 +529,33 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="毛利" width="86" align="right">
+        <el-table-column label="毛利" width="74" align="right">
           <template #default="{ row }"><span class="margin-val">{{ percent((row as CreditRecord).grossMargin) }}</span></template>
+        </el-table-column>
+        <!-- v48：右侧新增客户维度列——微信昵称 / 套餐 / 是否到期 / 到期时间 -->
+        <el-table-column label="微信昵称" width="112" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="member-nick">{{ (row as CreditRecord).wechatNickname || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="套餐" width="96" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="plan-name">{{ (row as CreditRecord).planName || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="是否到期" width="88" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="membershipMeta(row as CreditRecord).type" effect="plain">
+              {{ membershipMeta(row as CreditRecord).label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期时间" width="104">
+          <template #default="{ row }">
+            <span class="expire-time" :class="{ 'expire-warn': isExpiringSoon(row as CreditRecord) }">
+              {{ expiryText(row as CreditRecord) }}
+            </span>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="96" fixed="right" align="center">
           <template #default="{ row }">
@@ -505,6 +688,26 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
 /* v46 筛选下拉：右侧显示该配置已产生的消耗条数，无消耗的条目淡化 */
 .opt-name.opt-idle { color: var(--el-text-color-placeholder); }
 .opt-meta { float: right; margin-left: 12px; font-size: 11px; color: var(--el-text-color-secondary); }
+/* v48 下拉内二级收窄（平台/场景/智能体）：芯片式多选，不占用页面筛选区 */
+.pick-head { padding: 6px 8px 8px; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 4px; }
+.pick-line { display: flex; align-items: flex-start; gap: 8px; }
+.pick-line + .pick-line { margin-top: 6px; }
+.pick-label { flex: none; width: 34px; font-size: 11px; line-height: 20px; color: var(--el-text-color-secondary); }
+.pick-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pick-chip {
+  padding: 0 8px; height: 20px; line-height: 18px; font-size: 11px; cursor: pointer;
+  border: 1px solid var(--el-border-color); border-radius: 10px; background: #fff;
+  color: var(--el-text-color-regular); transition: all .15s;
+}
+.pick-chip:hover { border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
+.pick-chip.on { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); font-weight: 600; }
+.opt-empty { padding: 14px 12px; text-align: center; font-size: 12px; color: var(--el-text-color-secondary); }
+/* v48 列表新增列：手机号独立展示、昵称/套餐/到期 */
+.member-phone { font-variant-numeric: tabular-nums; color: var(--el-text-color-primary); font-size: 12.5px; }
+.member-nick { color: var(--el-text-color-regular); }
+.plan-name { font-size: 12px; color: var(--el-text-color-regular); }
+.expire-time { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--el-text-color-regular); }
+.expire-time.expire-warn { color: #d97706; font-weight: 600; }
 .kpi-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .kpi-value.primary { color: var(--el-color-primary); }
 .kpi-value.cost { color: #d97706; }
