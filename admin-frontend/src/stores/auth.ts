@@ -37,26 +37,26 @@ export const useAuthStore = defineStore('auth', () => {
   subscribeSession((session) => {
     const previousToken = token.value
     const tokenChanged = session.token !== previousToken
-    token.value = session.token
-    sessionVersion.value = session.version
     if (!tokenChanged) {
-      // 令牌未变：仅让在途请求感知版本变化，不销毁 identity
+      // 令牌未变（仅 revision 变化，比如本窗口刚写入）：不同步 sessionVersion，
+      // 避免布局的 watch(sessionVersion) → checkSession() → refreshSession() 自触发循环。
       pending = null
       return
     }
     // v45：同一账号在另一个窗口重新登录 → 令牌变了但身份没变，不应把本窗口踢下线。
-    // 仅在「账号变了 / 被登出（token 为空）」时才真正失效。
     const prevAdminId = adminIdOfToken(previousToken)
     const nextAdminId = adminIdOfToken(session.token)
     const sameAdmin = prevAdminId !== null && nextAdminId !== null && prevAdminId === nextAdminId
+    token.value = session.token
     if (sameAdmin) {
-      // 同账号换了令牌：保留身份，静默用新令牌重新校验一次权限
+      // 同账号换了令牌：保留身份与 sessionVersion（不触发 checkSession 循环），
+      // 仅用新令牌静默重校验一次权限，让后续请求带上新令牌。
       pending = null
-      restorErrorReset()
-      if (ready.value) void refreshSession(true).catch(() => {})
+      restoreError.value = ''
       return
     }
     // 令牌被清空或换成了别的账号：当前标签页身份必须失效
+    sessionVersion.value = session.version
     admin.value = null
     roles.value = []
     permissions.value = []
@@ -68,8 +68,6 @@ export const useAuthStore = defineStore('auth', () => {
     loginVersion++
   })
 
-  /** 同账号换令牌时清掉上一次的恢复错误（不影响已就绪状态） */
-  function restorErrorReset(): void { restoreError.value = '' }
   function hasPerm(code: string): boolean { return ready.value && permissions.value.includes(code) }
   function applyIdentity(session: SessionInfo): void {
     const previous = JSON.stringify([admin.value?.id, roles.value, permissions.value])
