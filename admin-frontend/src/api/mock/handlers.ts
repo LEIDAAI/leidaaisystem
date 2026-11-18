@@ -20,6 +20,7 @@ import {
   persistMockDB,
   readMockMembership,
   readMockOrderExpiry,
+  syncTokensFromStorage,
   roleRefsOf,
   type MockAdmin,
   type MockFeedback,
@@ -1004,6 +1005,10 @@ export async function handleMockRequest(config: InternalAxiosRequestConfig): Pro
   const isPublic = (method === 'POST' && url === '/auth/login') || url.startsWith('/api/v1/workspace/')
   let adminId = 0
   if (!isPublic) {
+    // v45：跨窗口登录同步——其他标签页登录会把 token 写进 localStorage 的 mock 库，
+    // 本窗口内存里的 db.tokens 是旧快照，会导致「另一个窗口登录后本窗口 401 被踢」。
+    // 每次鉴权前先把持久化的 tokens 合并进来（并集，不动本窗口已有的）。
+    syncTokensFromStorage()
     const adminIdOfToken = token ? db.tokens.get(token) : undefined
     const issuedAt = Number(token.slice(token.lastIndexOf('-') + 1))
     if (adminIdOfToken === undefined || !issuedAt || Date.now() - issuedAt > MOCK_TOKEN_TTL_MS) return { code: 401, msg: '未登录或登录已过期', data: null }

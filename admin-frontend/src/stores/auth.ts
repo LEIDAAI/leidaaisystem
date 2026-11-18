@@ -5,7 +5,7 @@ import { ApiError } from '@/api/request'
 import type { AdminInfo, LoginResult, SessionInfo } from '@/api/types'
 import {
   captureSession, isSessionCurrent, subscribeSession, writeStoredToken, clearStoredToken,
-  broadcastPermissionsChanged, PERMISSIONS_STORAGE_KEY, markSessionReady
+  broadcastPermissionsChanged, PERMISSIONS_STORAGE_KEY, markSessionReady, adminIdOfToken
 } from '@/utils/token'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -23,9 +23,40 @@ export const useAuthStore = defineStore('auth', () => {
   let refreshVersion = 0
   let loginVersion = 0
 
+  /**
+   * 会话变化订阅（v45 修复多窗口互踢）。
+   *
+   * 修复前：本函数无条件清空 admin/ready 并 loginVersion++。
+   * 而 setSession() 内部调用 writeStoredToken() → notify() → 本回调，
+   * 于是「自己登录成功」的一瞬间就把自己刚写入的身份清掉，
+   * 且 login() 里的 attempt !== loginVersion 判定随之失败，登录被自己判为「会话已变化」。
+   *
+   * 修复后：只有「令牌真的变了」才重置身份状态；
+   * 同一令牌下的 revision 变化（另一窗口刷新/重新登录同账号）只更新版本号，不销毁当前身份。
+   */
   subscribeSession((session) => {
+    const previousToken = token.value
+    const tokenChanged = session.token !== previousToken
     token.value = session.token
     sessionVersion.value = session.version
+    if (!tokenChanged) {
+      // 令牌未变：仅让在途请求感知版本变化，不销毁 identity
+      pending = null
+      return
+    }
+    // v45：同一账号在另一个窗口重新登录 → 令牌变了但身份没变，不应把本窗口踢下线。
+    // 仅在「账号变了 / 被登出（token 为空）」时才真正失效。
+    const prevAdminId = adminIdOfToken(previousToken)
+    const nextAdminId = adminIdOfToken(session.token)
+    const sameAdmin = prevAdminId !== null && nextAdminId !== null && prevAdminId === nextAdminId
+    if (sameAdmin) {
+      // 同账号换了令牌：保留身份，静默用新令牌重新校验一次权限
+      pending = null
+      restorErrorReset()
+      if (ready.value) void refreshSession(true).catch(() => {})
+      return
+    }
+    // 令牌被清空或换成了别的账号：当前标签页身份必须失效
     admin.value = null
     roles.value = []
     permissions.value = []
@@ -37,6 +68,8 @@ export const useAuthStore = defineStore('auth', () => {
     loginVersion++
   })
 
+  /** 同账号换令牌时清掉上一次的恢复错误（不影响已就绪状态） */
+  function restorErrorReset(): void { restoreError.value = '' }
   function hasPerm(code: string): boolean { return ready.value && permissions.value.includes(code) }
   function applyIdentity(session: SessionInfo): void {
     const previous = JSON.stringify([admin.value?.id, roles.value, permissions.value])

@@ -19,6 +19,15 @@ export function readStoredToken(): string {
 }
 
 export interface SessionSnapshot { token: string; version: number }
+
+/**
+ * v45：登录令牌里携带的管理员 id（仅 Mock 令牌 `mock-token-<id>-<ts>` 与真实后端约定 `token` 无法解析时返回 null）。
+ * 用于跨标签页判断「新令牌是否同一账号」——同一账号在多窗口登录不应互相踢下线。
+ */
+export function adminIdOfToken(token: string): number | null {
+  const m = /^mock-token-(\d+)-/.exec(token || '')
+  return m ? Number(m[1]) : null
+}
 const revisionKey = `${AUTH_STORAGE_KEY}:revision`
 export const PERMISSIONS_STORAGE_KEY = `${AUTH_STORAGE_KEY}:permissions`
 function readRevision(): string {

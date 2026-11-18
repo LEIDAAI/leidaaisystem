@@ -1025,6 +1025,26 @@ function pruneExpiredTokens(): void {
 pruneExpiredTokens() // 恢复自 localStorage 的历史 token 先清理一次过期条目
 persistMockDB()
 
+/**
+ * v45：从 localStorage 合并其他标签页写入的登录令牌。
+ * Mock 库整体持久化在 localStorage，各标签页各持内存副本；
+ * 另一个窗口登录时只更新了自己的内存 + localStorage，
+ * 本窗口若不合并就会把有效 token 判成 401（表现为「双窗口互相踢下线」）。
+ */
+export function syncTokensFromStorage(): void {
+  try {
+    const raw = localStorage.getItem(DB_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw) as { tokens?: unknown }
+    if (!Array.isArray(saved.tokens)) return
+    for (const pair of saved.tokens) {
+      if (!Array.isArray(pair) || typeof pair[0] !== 'string') continue
+      const [tk, id] = pair as [string, number]
+      if (!db.tokens.has(tk)) db.tokens.set(tk, id)
+    }
+  } catch { /* 存储不可用或内容损坏时忽略，保持当前内存态 */ }
+}
+
 export function persistMockDB(): void {
   try {
     pruneExpiredTokens()
