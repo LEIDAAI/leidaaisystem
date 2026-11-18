@@ -1,6 +1,6 @@
 # 雷达AI 管理后台 Admin API 契约
 
-版本：v0.11 / Mock schema 27（2026-11-18 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；v40–v47 消耗明细见第 11.1 节；无真实 Java/交易服务联调）
+版本：v0.12 / Mock schema 28（2026-11-18 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；v40–v48 消耗明细见第 11.1 节；无真实 Java/交易服务联调）
 
 已拍板规则：标准/高级/旗舰三档同功能、单账号；升级按实付折算且负补差取 0，月转年即时并按 365 天重置锚点，年转月/降级到期切换，未来期锁价排队；当期/未来期一律不退款，无自动续费、提前 7 天提醒；常规赠分仅注册 100，积分包仅有效会员可购、365 天有效且不随会员到期清零。**规则文本、Mock 迁移及订单记录不等同真实报价、支付、会员时间轴、积分账本或提醒调度。** 本文明确保留当前写接口未强制规则的缺口，完整规则见 `../功能清单.md` 第 8 节。
 基础路径：`/admin/api`
@@ -10,6 +10,7 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.12 | 2026-11-18 | **三维筛选 + 客户列（v48）**：`/credit-records` 新增 `platforms`（枚举，逗号分隔）、`scenarioIds`、`agentIds` 三个多选筛选；`/credit-records/options` 新增 `platforms`（固定枚举带 usedCount）、`scenarios`（带 platformId）、`agents` 三类候选，`experts`/`skills` 候选补 `platforms`/`scenarioId`/`agentId` 供下拉内收窄。列表字段新增 `planName`/`membershipStatus`/`membershipExpireAt`。**口径要点**：记录的 `platforms` 取该次对话实际执行渠道（channelKey → 平台），不是专家绑定技能的平台并集——并集会让每条记录都等于「全部平台」，筛选形同虚设 |
 | v0.11 | 2026-11-18 | **详情展示顺序（v47）**：`GET /credit-records/:id` 返回的 `breakdown` 顺序不变（按 seed 生成顺序：第三方接口→技能→模型），改为**前端展示层排序**——`LLM_MODEL` 置顶（输入在输出前），其后 `MCP_TOOL`、`SKILL`；合计、成本、毛利仍按全量计算，不受排序影响。明细表限高内部滚动 + 表头固定 |
 | v0.10 | 2026-11-18 | **筛选候选改口径（v46）**：`/credit-records/options` 不再从消耗记录反推候选，改为取专家/技能/MCP 管理模块的**全量配置**，每项带 `usedCount`（已产生消耗条数）与 `status`；修复「已配置但暂无消耗」的专家/技能/服务在筛选器中不可选的问题。同时补 `SKILL` 类型 breakdown 行（此前技能维度只有筛选没有数据）。持久化 schema 26→27 |
 | v0.9 | 2026-11-18 | **消耗明细 /credit-records（v40–v45）**：新增后台对话扣点账接口——列表/汇总/候选/详情，权限 `credit:view`；记录按「一次对话回合」组织，breakdown 逐笔给出模型 token 与第三方 MCP 接口调用（含点数 `pointsPerCall`/`points`），并同时提供成本价 `costPrice` 与用户价 `userPrice` 双口径；v44 增专家/技能/MCP 多选与内容关键词筛选；计价规则见 `utils/credit-pricing.ts`（每分 ¥0.0049） |
@@ -322,7 +323,7 @@
 |---|---|---|---|
 | GET | /credit-records | credit:view | 列表（分页）。参数见下 |
 | GET | /credit-records/summary | credit:view | 顶部卡片：记录数、总扣分、总成本、总用户价、毛利率、接口点数、已扣减/免费条数、退回积分、按类型分布 |
-| GET | /credit-records/options | credit:view | v44 专家/技能/MCP 服务下拉候选。**v46 改口径**：取专家/技能/MCP 管理模块的**全量配置**（不再从消耗记录反推），每项 `{id,name,usedCount,status}`。`usedCount=0` 表示已配置但暂无消耗，前端淡化显示「无消耗」。此前的反推实现会漏掉「已配置但没有专家引用」的服务（实际 6 个 MCP 服务只显示 4 个），用户选了也永远查不到数据 |
+| GET | /credit-records/options | credit:view | v44 专家/技能/MCP 服务下拉候选。**v46 改口径**：取专家/技能/MCP 管理模块的**全量配置**（不再从消耗记录反推），每项 `{id,name,usedCount,status}`。`usedCount=0` 表示已配置但暂无消耗，前端淡化显示「无消耗」。此前的反推实现会漏掉「已配置但没有专家引用」的服务（实际 6 个 MCP 服务只显示 4 个），用户选了也永远查不到数据。**v48 扩展**：追加 `platforms`（固定枚举 `{value,label,usedCount}`，不按库内出现与否裁剪）、`scenarios`（来自场景管理，含 `platformId`、`usedCount`）、`agents`（来自智能体管理，含 `usedCount`）；`experts` 补 `platforms`/`scenarioId`，`skills` 补 `platforms`/`scenarioId`/`agentId`，供下拉内二级收窄使用 |
 | GET | /credit-records/projects | credit:view | 消耗项目候选（按库内记录去重） |
 | GET | /credit-records/{id} | credit:view | 单条详情（含逐笔 breakdown）；不存在返回 404 |
 
@@ -337,6 +338,8 @@
 | `type` | `LLM_MODEL` / `MCP_TOOL` / `SKILL`，命中该记录任一笔 breakdown 即保留 |
 | `expertIds` / `skillIds` / `mcpServerIds` | v44 新增，逗号分隔 ID 列表；**同组内多值为「或」，不同组之间为「与」** |
 | `content` | v44 新增，关键词模糊匹配 `content` / `projectName` / `expertName`（忽略大小写） |
+| `platforms` | v48 新增，逗号分隔**枚举值**（`1688,OZON,AMAZON,TEMU,TIKTOK,SHOPEE`，注意是枚举而非 ID）；命中该记录 `platforms` 任一即保留 |
+| `scenarioIds` / `agentIds` | v48 新增，逗号分隔 ID 列表；与上面三组同规则，组内「或」、组间「与」 |
 | `page` / `pageSize` | 默认 1 / 20，pageSize 上限 200 |
 
 记录结构（`CreditRecord`，一条 = 一次对话回合）：
@@ -345,6 +348,8 @@
 - 状态与算力：`status`（`CHARGED` 已扣减 / `FREE` 免费 / `REFUNDED` 已退回）、`credits`（用户看到的扣分）、`originalCredits`（免费/退回时保留的原始应扣分，对账用）
 - 双口径金额：`cost`（成本价合计，元）、`userPriceTotal`（用户价合计，元）、`grossMargin`（0–1）；免费/退回记录 `userPriceTotal=0`，原值留在 `originalUserPrice`
 - v44 维度：`expertId`/`expertName`、`skillIds`/`skillNames`、`mcpServerIds`/`mcpServerNames`（由会话 → 专家 → 绑定技能/服务推导）
+- v48 维度：`platforms[]`、`scenarioId`/`scenarioName`、`agentId`/`agentName`。**`platforms` 取该次对话实际执行的渠道**（`task.channelKey` → 平台映射），**不是**专家绑定技能的平台并集——一个专家绑定 7 个技能覆盖 4 个平台时，并集会等于「全部平台」，导致平台筛选形同虚设（v48 首版即此错误）。
+- v48 客户维度（列表展示用）：`planName`（用户套餐名快照）、`membershipStatus`（`ACTIVE`/`EXPIRED`/`NONE`/`LIFETIME`/`UNKNOWN`，与用户管理同一 `readMockMembership` 口径）、`membershipExpireAt`（到期 ISO，终身/无会员为 `null`）
 - `breakdown[]`：逐笔消耗，字段 `name`、`code`（接口编码）、`type`、`channel`、`basis`（如「3 次 × 5 点 = 15 点」）、`credits`、`costPrice`（成本价）、`userPrice`（用户价）、`grossMargin`、`markup`、`calls`、`pointsPerCall`、`points`
 - **三种 breakdown 类型都必须在一条记录里可共存**（v46 补齐）：`MCP_TOOL`（第三方接口，按点数成本）、`LLM_MODEL`（模型 token，按 tokens）、`SKILL`（技能执行，本地编排无第三方成本，`credits=0` 只记录调用次数与技能名）。v46 之前 `SKILL` 从未写入，导致「消耗类型=技能执行」恒返回空、「技能」筛选虽有候选但无法与明细对齐。
 
