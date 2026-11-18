@@ -832,13 +832,6 @@ if (storedVersion < 17) {
   // （旧库存量 plans 无营销新字段属正常，不强制回填，保存套餐时按表单增量写入）
   db.planVersions ||= {}
   db.creditPackages ||= seedCreditPackages()
-  // v26：消耗明细结构升级（v41 新增成本价/用户价/毛利）——旧记录缺 costPrice 则整体重播种子
-  if (Array.isArray(db.creditRecords) && db.creditRecords.length && !db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined))) {
-    db.creditRecords = []
-  }
-  if (!Array.isArray(db.creditRecords) || !db.creditRecords.length) {
-    db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
-  }
   db.billingSettings ||= seedBillingSettings()
 }
 if (storedVersion < 18) {
@@ -972,6 +965,16 @@ if (storedVersion < 22) {
   db.skills.forEach(skill => {
     if (!Object.prototype.hasOwnProperty.call(skill, 'agentId')) skill.agentId = 1
   })
+}
+// v26 幂等迁移（不受 storedVersion 门槛限制）：消耗明细结构升级至 v41 双价口径。
+// 判据：任何一条记录的 breakdown 缺少 costPrice，说明是旧口径数据 → 整体重播种子。
+// 注意必须放在 storedVersion 条件块之外，否则已存 v25 的库永远不会触发（v41 首版踩过这个坑）。
+// 判据收紧：已扣减记录必须有正的用户价（曾因赋值错误导致全部为 0，只校验 costPrice 无法自愈）
+const creditRecordsHealthy = Array.isArray(db.creditRecords) && db.creditRecords.length > 0 &&
+  db.creditRecords.some((r) => r.status === 'CHARGED' && (r.userPriceTotal ?? 0) > 0) &&
+  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined))
+if (!creditRecordsHealthy) {
+  db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
 }
 // R9 幂等增量迁移：历史演示回填非真实权益；仅补缺失字段，保留已有期限（含 null）。
 // 兼容早期 R9 的显式 mockMembership 记录；读取时不再按注册日期临时推算。

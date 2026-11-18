@@ -276,8 +276,13 @@ onMounted(async () => {
         <el-table-column label="成本价" width="100" align="right">
           <template #default="{ row }"><span class="cost-val">{{ money((row as CreditRecord).cost) }}</span></template>
         </el-table-column>
-        <el-table-column label="用户价" width="100" align="right">
-          <template #default="{ row }"><span class="revenue-val">{{ money((row as CreditRecord).userPriceTotal ?? 0) }}</span></template>
+        <el-table-column label="用户价" width="118" align="right">
+          <template #default="{ row }">
+            <span v-if="(row as CreditRecord).status === 'CHARGED'" class="revenue-val">{{ money((row as CreditRecord).userPriceTotal ?? 0) }}</span>
+            <span v-else class="revenue-void" :title="`原本应扣 ¥${((row as CreditRecord).originalUserPrice ?? 0).toFixed(4)}，已${(row as CreditRecord).status === 'REFUNDED' ? '全额退回' : '免费'}`">
+              0 <small class="void-note">（原 {{ money((row as CreditRecord).originalUserPrice ?? 0) }}）</small>
+            </span>
+          </template>
         </el-table-column>
         <el-table-column label="毛利" width="86" align="right">
           <template #default="{ row }"><span class="margin-val">{{ percent((row as CreditRecord).grossMargin) }}</span></template>
@@ -346,9 +351,10 @@ onMounted(async () => {
           <el-table-column label="用户价" width="82" align="right">
             <template #default="{ row }"><span class="revenue-val">{{ moneyFine(row.userPrice) }}</span></template>
           </el-table-column>
-          <el-table-column label="扣分" width="64" align="right">
+          <el-table-column label="扣分" width="72" align="right">
             <template #default="{ row }">
               <span class="credit-val" :class="row.credits > 0 ? 'credit-cost' : 'credit-free'">{{ row.credits > 0 ? `-${row.credits}` : '0' }}</span>
+              <div v-if="row.originalCredits" class="void-note">原 -{{ row.originalCredits }}</div>
             </template>
           </el-table-column>
           <el-table-column label="毛利" width="68" align="right">
@@ -359,7 +365,11 @@ onMounted(async () => {
         <div class="detail-sum">
           <span class="sum-label">合计</span>
           <span class="sum-item">成本价 <b class="cost-val">{{ money(current.cost) }}</b></span>
-          <span class="sum-item">用户价 <b class="revenue-val">{{ money(current.userPriceTotal ?? 0) }}</b></span>
+          <span class="sum-item">
+            用户价
+            <b class="revenue-val">{{ money(current.userPriceTotal ?? 0) }}</b>
+            <small v-if="current.status !== 'CHARGED' && current.originalUserPrice" class="void-note">（原 {{ money(current.originalUserPrice) }}，已{{ current.status === 'REFUNDED' ? '退回' : '免费' }}）</small>
+          </span>
           <span class="sum-item">扣分 <b class="credit-cost">{{ Math.abs(current.credits) }}</b></span>
           <span class="sum-item">毛利 <b class="margin-val">{{ percent(current.grossMargin) }}</b></span>
         </div>
@@ -449,4 +459,6 @@ onMounted(async () => {
 .revenue-val { color: #0f766e; font-variant-numeric: tabular-nums; }
 .margin-val { color: #7c3aed; font-variant-numeric: tabular-nums; }
 .detail-table { font-size: 12px; }
+.revenue-void { color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; }
+.void-note { font-size: 11px; color: var(--el-text-color-secondary); }
 </style>

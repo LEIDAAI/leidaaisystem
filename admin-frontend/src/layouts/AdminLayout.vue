@@ -14,7 +14,8 @@ const icons: Record<string, Component> = {
   '/dashboard': Grid, '/users': User, '/orders': Tickets, '/experts': Cpu,
   '/skills': Setting, '/mcp': Connection, '/knowledge': Reading, '/models': MagicStick,
   '/admins': Avatar, '/roles': Lock, '/plans': Collection, '/credit-packages': Coin,
-  '/billing-settings': Money, '/chats': ChatDotRound, '/feedback': ChatLineRound
+  '/billing-settings': Money, '/chats': ChatDotRound, '/feedback': ChatLineRound,
+  '/credits': Coin
 }
 const visibleGroups = computed(() => {
   const menus = router.getRoutes()

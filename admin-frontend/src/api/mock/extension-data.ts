@@ -967,9 +967,14 @@ export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phon
         createdAt: at,
         status: isRefunded ? 'REFUNDED' : isFree ? 'FREE' : 'CHARGED',
         credits: isRefunded ? totalCredits : isFree ? 0 : -totalCredits,
-        breakdown: isFree || isRefunded ? breakdown.map((b) => ({ ...b, credits: 0, userPrice: 0, grossMargin: undefined })) : breakdown,
+        // 免费/已退回：本次不计费（金额归零），但 breakdown 保留原始成本价与应扣分，便于对账「原本该扣多少、已退回多少」
+        breakdown: isFree || isRefunded
+          ? breakdown.map((b) => ({ ...b, originalCredits: b.credits, credits: 0, userPrice: 0, grossMargin: undefined }))
+          : breakdown,
         cost: totalCost,
+        // 已扣减：用户价即实收；免费/已退回：实收 0，原值留在 originalUserPrice 供对账
         userPriceTotal: isFree || isRefunded ? 0 : totalUserPrice,
+        originalUserPrice: isFree || isRefunded ? totalUserPrice : undefined,
         grossMargin: isFree || isRefunded ? undefined : marginOf(totalCost, totalCredits),
         source: 'Mock 演示计量（方案 v1 口径）'
       })

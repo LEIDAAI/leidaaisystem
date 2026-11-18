@@ -320,6 +320,8 @@ export interface CreditBreakdown {
   markup?: number
   /** 本次折算成本（元，等价 costPrice；保留兼容） */
   cost?: number
+  /** 免费/已退回时保留的原始应扣分（对账用：原本该扣多少） */
+  originalCredits?: number
   /** 数量（tokens 或调用次数） */
   quantity?: number
   /** 单位（tokens / 次） */
@@ -355,6 +357,8 @@ export interface CreditRecord {
   userPriceTotal?: number
   /** 该回合毛利率（0–1） */
   grossMargin?: number
+  /** 免费/已退回时保留的原始用户价（对账用） */
+  originalUserPrice?: number
   /** 数据来源标记：Mock 演示 / 真实计量 */
   source: string
 }
