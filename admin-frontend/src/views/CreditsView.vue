@@ -226,16 +226,16 @@ function toolSummary(r: CreditRecord): string {
 /** 成本价展示：接口单价很低，需要 4–6 位小数才看得出差异 */
 const moneyFine = (n?: number): string => (typeof n === 'number' ? `¥${n < 0.01 ? n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : n.toFixed(4)}` : '—')
 
-/** v48：会员状态 → 标签文案与配色（与用户管理同一口径 readMockMembership） */
-const MEMBERSHIP_META: Record<NonNullable<CreditRecord['membershipStatus']>, { label: string; type: 'success' | 'info' | 'warning' | 'danger' }> = {
+/** v50：到期状态 → 标签文案与配色（与用户管理 USER_EXPIRY_STATUS 完全同一口径） */
+const MEMBERSHIP_META: Record<NonNullable<CreditRecord['membershipStatus']>, { label: string; type: 'success' | 'primary' | 'info' | 'warning' | 'danger' }> = {
   ACTIVE: { label: '未到期', type: 'success' },
   EXPIRED: { label: '已到期', type: 'danger' },
   NONE: { label: '无会员', type: 'info' },
-  LIFETIME: { label: '终身', type: 'success' },
-  UNKNOWN: { label: '未知', type: 'warning' }
+  LIFETIME: { label: '长期有效', type: 'primary' },
+  UNKNOWN: { label: '期限未知', type: 'warning' }
 }
-const membershipMeta = (r: CreditRecord): { label: string; type: 'success' | 'info' | 'warning' | 'danger' } =>
-  MEMBERSHIP_META[r.membershipStatus ?? 'UNKNOWN'] ?? { label: '未知', type: 'warning' }
+const membershipMeta = (r: CreditRecord): { label: string; type: 'success' | 'primary' | 'info' | 'warning' | 'danger' } =>
+  MEMBERSHIP_META[r.membershipStatus ?? 'UNKNOWN'] ?? { label: '期限未知', type: 'warning' }
 
 /** 到期时间：终身 / 无会员不出日期，避免把 null 显示成 1970 或空串 */
 function expiryText(r: CreditRecord): string {
@@ -543,7 +543,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
             <span class="plan-name">{{ (row as CreditRecord).planName || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="是否到期" width="88" align="center">
+        <el-table-column label="到期状态" width="96" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="membershipMeta(row as CreditRecord).type" effect="plain">
               {{ membershipMeta(row as CreditRecord).label }}

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { beijingTime } from '@/utils/chat-time'
 import { dashboard, type Dashboard } from '@/api/operations'
+import { USER_EXPIRY_STATUS } from '@/constants'
 import { USE_MOCK } from '@/utils/constants'
 import { User, ShoppingCart, ChatDotRound, Money, TrendCharts, Clock } from '@element-plus/icons-vue'
 
@@ -362,10 +363,10 @@ onMounted(load)
           <el-table v-if="data" :data="data.recentUsers" size="small">
             <el-table-column prop="wechatNickname" label="微信昵称" min-width="100" />
             <el-table-column prop="planName" label="套餐" min-width="100" />
-            <el-table-column label="状态" width="80" align="center">
+            <el-table-column label="到期状态" width="100" align="center">
               <template #default="{ row }">
-                <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small" effect="light">
-                  {{ row.status === 1 ? '正常' : '封禁' }}
+                <el-tag :type="USER_EXPIRY_STATUS[row.expiryStatus]?.type ?? 'info'" size="small" effect="light">
+                  {{ USER_EXPIRY_STATUS[row.expiryStatus]?.label ?? '期限未知' }}
                 </el-tag>
               </template>
             </el-table-column>

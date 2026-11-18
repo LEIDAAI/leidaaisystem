@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 
 import ProTable from '@/components/ProTable.vue'
-import StatusTag from '@/components/StatusTag.vue'
-import { listUsers, updateUserStatus } from '@/api/user'
-import type { ProTableHandle, UserItem, UserQuery } from '@/api/types'
+import { listUsers } from '@/api/user'
+import type { ProTableHandle, UserExpiryStatus, UserItem, UserQuery } from '@/api/types'
+import { USER_EXPIRY_STATUS, USER_EXPIRY_STATUS_OPTIONS } from '@/constants'
 import { formatDateTime, formatMembership } from '@/utils/format'
-import { promptText } from '@/utils/feedback'
 import UserDetailDrawer from './UserDetailDrawer.vue'
 
 const tableRef = ref<ProTableHandle | null>(null)
 
-const filter = reactive<{ keyword: string; status: number | ''; dateRange: string[] }>({
+const filter = reactive<{ keyword: string; expiryStatus: UserExpiryStatus | ''; dateRange: string[] }>({
   keyword: '',
-  status: '',
+  expiryStatus: '',
   dateRange: []
 })
 
@@ -25,7 +23,7 @@ async function fetcher(query: { page: number; pageSize: number } & Record<string
 function handleSearch() {
   tableRef.value?.search({
     keyword: filter.keyword.trim(),
-    status: filter.status,
+    expiryStatus: filter.expiryStatus,
     start: filter.dateRange?.[0] ?? '',
     end: filter.dateRange?.[1] ?? ''
   })
@@ -33,7 +31,7 @@ function handleSearch() {
 
 function handleReset() {
   filter.keyword = ''
-  filter.status = ''
+  filter.expiryStatus = ''
   filter.dateRange = []
   handleSearch()
 }
@@ -47,29 +45,16 @@ function openDetail(row: UserItem) {
   detailVisible.value = true
 }
 
-// -------------------------------------------------- 封禁 / 解封（封禁=数据冻结无法登录；解封=恢复登录并顺延会员到期）
-async function handleBan(row: UserItem) {
-  const reason = await promptText(`封禁用户「${row.wechatNickname}」后无法登录，权益冻结；请填写封禁原因`, '封禁用户', {
-    inputPattern: /^.{2,}$/,
-    inputErrorMessage: '请填写至少 2 个字的原因'
-  })
-  if (reason === null) return
-  await updateUserStatus(row.id, true, reason.trim())
-  ElMessage.success('已封禁，会员到期时间将在解封时按冻结时长顺延')
-  tableRef.value?.refresh()
+/** v50 到期状态：统一走 USER_EXPIRY_STATUS，与订单页「到期状态」同一套文案与配色 */
+function expiryOf(row: UserItem) {
+  const status = (row.membership?.status ?? 'UNKNOWN') as string
+  return { status, ...(USER_EXPIRY_STATUS[status] ?? USER_EXPIRY_STATUS.UNKNOWN) }
 }
 
-async function handleUnban(row: UserItem) {
-  const reason = await promptText(`解除用户「${row.wechatNickname}」的封禁，恢复登录与权益；请填写解封原因`, '解除封禁', {
-    inputPattern: /^.{2,}$/,
-    inputErrorMessage: '请填写至少 2 个字的原因'
-  })
-  if (reason === null) return
-  await updateUserStatus(row.id, false, reason.trim())
-  ElMessage.success('已解封，会员到期时间已按冻结时长顺延')
-  tableRef.value?.refresh()
+/** 只有有效 / 已到期才展示具体到期日期，无会员与未知不编造日期 */
+function hasDate(status: string): boolean {
+  return status === 'ACTIVE' || status === 'EXPIRED'
 }
-
 </script>
 
 <template>
@@ -81,18 +66,16 @@ async function handleUnban(row: UserItem) {
             <el-form-item label="关键词">
               <el-input
                 v-model="filter.keyword"
-                placeholder="手机 / 邮箱 / ID"
+                placeholder="手机 / 邮箱 / 昵称 / ID"
                 clearable
                 style="width: 210px"
                 @keyup.enter="handleSearch"
                 @clear="handleSearch"
               />
             </el-form-item>
-            <el-form-item label="状态">
-              <el-select v-model="filter.status" style="width: 130px" @change="handleSearch">
-                <el-option label="全部" value="" />
-                <el-option label="正常" :value="1" />
-                <el-option label="已封禁" :value="0" />
+            <el-form-item label="到期状态">
+              <el-select v-model="filter.expiryStatus" clearable placeholder="全部" style="width: 140px" @change="handleSearch">
+                <el-option v-for="item in USER_EXPIRY_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
               </el-select>
             </el-form-item>
             <el-form-item label="注册时间">
@@ -116,11 +99,6 @@ async function handleUnban(row: UserItem) {
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="phone" label="手机号" min-width="130" />
         <el-table-column prop="wechatNickname" label="微信昵称" min-width="140" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <StatusTag kind="user" :value="row.status" />
-          </template>
-        </el-table-column>
         <el-table-column prop="planName" label="套餐" width="100">
           <template #default="{ row }">{{ row.planName || '-' }}</template>
         </el-table-column>
@@ -128,38 +106,20 @@ async function handleUnban(row: UserItem) {
         <el-table-column label="注册时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.registeredAt) }}</template>
         </el-table-column>
-        <el-table-column label="会员状态 / 到期时间" width="190">
+        <el-table-column label="到期状态 / 到期时间" width="200">
           <template #default="{ row }">
-            <el-tag size="small" :type="formatMembership(row.membership).type">{{ formatMembership(row.membership).text }}</el-tag>
-            <div v-if="row.membership?.status !== 'LIFETIME' && row.membership?.status !== 'NONE'">{{ formatMembership(row.membership).time }}</div>
+            <el-tag size="small" :type="expiryOf(row).type" disable-transitions>{{ expiryOf(row).label }}</el-tag>
+            <div v-if="hasDate(expiryOf(row).status)" class="cell-sub">{{ formatMembership(row.membership).time }}</div>
           </template>
         </el-table-column>
         <el-table-column label="最后登录时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
         </el-table-column>
         <el-table-column prop="region" label="客户地区" min-width="110" />
-        <el-table-column label="操作" width="170" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-              <el-button
-                v-if="row.status === 1"
-                v-perm="'user:ban'"
-                link
-                type="danger"
-                @click="handleBan(row)"
-              >
-                封禁
-              </el-button>
-              <el-button
-                v-if="row.status === 0"
-                v-perm="'user:ban'"
-                link
-                type="success"
-                @click="handleUnban(row)"
-              >
-                解封
-              </el-button>
             </div>
           </template>
         </el-table-column>
@@ -169,3 +129,7 @@ async function handleUnban(row: UserItem) {
     <UserDetailDrawer v-model="detailVisible" :user-id="detailUserId" @changed="tableRef?.refresh()" />
   </div>
 </template>
+
+<style scoped>
+.cell-sub { font-size: 11.5px; color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; margin-top: 2px; }
+</style>

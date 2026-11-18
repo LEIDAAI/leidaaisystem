@@ -1,6 +1,6 @@
 import { beijingDate, beijingTime } from '../../utils/chat-time'
 import { createExcelBlob } from '../../utils/excel'
-import { db, nowStr, permissionCodesOf } from './db'
+import { db, nowStr, permissionCodesOf, readMockMembership } from './db'
 import { redact, buildChatAnalysis, buildAskAnalysis } from './extension-data'
 import type { Chat } from './extension-data'
 import type { Context, Services } from './config-handlers'
@@ -54,9 +54,9 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
       const date=beijingDate(new Date(Date.now()-(6-i)*86400000).toISOString())
       return {date,users:db.users.filter(u=>beijingDate(u.registeredAt)===date).length,orders:db.orders.filter(o=>beijingDate(o.createdAt)===date).length,chats:activeChats.filter(c=>beijingDate(c.createdAt)===date).length}
     })
-    /* 用户状态：status=1 正常, status=0 封禁 */
-    const userActive=db.users.filter(u=>u.status===1).length
-    const userBanned=db.users.filter(u=>u.status===0).length
+    /* v50 用户到期状态（封禁功能已下线）：与用户列表/详情同一 readMockMembership 口径 */
+    const userExpired=db.users.filter(u=>readMockMembership(u).status==='EXPIRED').length
+    const userActive=db.users.filter(u=>['ACTIVE','LIFETIME'].includes(readMockMembership(u).status)).length
     /* 订单四态 */
     const orderPending=db.orders.filter(o=>o.status==='PENDING').length
     const orderPaid=paidOrders.length
@@ -75,9 +75,9 @@ export function registerOperationsHandlers({route,error:ErrorType,audit}:Service
     activeChats.forEach(c=>{const e=db.experts.find(x=>x.id===c.expertId);const n=e?.name||'未知专家';expertMap.set(n,(expertMap.get(n)||0)+1)})
     const chatsByExpert=[...expertMap.entries()].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count)
     /* 最近注册用户 */
-    const recentUsers=[...db.users].sort((a,b)=>b.registeredAt.localeCompare(a.registeredAt)).slice(0,5).map(u=>({wechatNickname:u.wechatNickname,planName:u.planName,status:u.status,registeredAt:u.registeredAt}))
+    const recentUsers=[...db.users].sort((a,b)=>b.registeredAt.localeCompare(a.registeredAt)).slice(0,5).map(u=>({wechatNickname:u.wechatNickname,planName:u.planName,expiryStatus:readMockMembership(u).status,registeredAt:u.registeredAt}))
     /* 最近订单 */
     const recentOrders=[...db.orders].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5).map(o=>{const u=db.users.find(x=>x.id===o.userId);return {orderNo:o.orderNo,wechatNickname:u?.wechatNickname||'—',planName:o.planName,amount:o.amount,status:o.status,payChannel:o.payChannel,createdAt:o.createdAt}})
-    return {source:'Mock 本地实际记录汇总；非生产数据',userTotal:db.users.length,userToday:db.users.filter(u=>beijingDate(u.registeredAt)===today).length,userActive,userBanned,orderTotal:db.orders.length,orderPending,orderPaid,orderClosed,orderWechat,orderAlipay,revenueTotal:paidOrders.reduce((s,o)=>s+o.amount,0),chatTotal:activeChats.length,chatToday,chatMessages,expertTotal:db.experts.length,skillTotal:db.skills.length,serverTotal:db.servers.length,trend,planDist,chatsByExpert,recentUsers,recentOrders}
+    return {source:'Mock 本地实际记录汇总；非生产数据',userTotal:db.users.length,userToday:db.users.filter(u=>beijingDate(u.registeredAt)===today).length,userActive,userExpired,orderTotal:db.orders.length,orderPending,orderPaid,orderClosed,orderWechat,orderAlipay,revenueTotal:paidOrders.reduce((s,o)=>s+o.amount,0),chatTotal:activeChats.length,chatToday,chatMessages,expertTotal:db.experts.length,skillTotal:db.skills.length,serverTotal:db.servers.length,trend,planDist,chatsByExpert,recentUsers,recentOrders}
   })
 }

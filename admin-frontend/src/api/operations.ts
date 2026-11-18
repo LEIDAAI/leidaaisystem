@@ -9,13 +9,13 @@ export interface ChatAnalysisTable { title:string;columns:string[];rows:string[]
 export interface ChatAnalysis { steps:ChatAnalysisStep[];table:ChatAnalysisTable;reportHtml:string }
 export interface NameCount { name:string;count:number }
 export interface Dashboard {
-  source:string;userTotal:number;userToday:number;userActive:number;userBanned:number
+  source:string;userTotal:number;userToday:number;userActive:number;userExpired:number
   orderTotal:number;orderPending:number;orderPaid:number;orderClosed:number;orderWechat:number;orderAlipay:number
   revenueTotal:number;chatTotal:number;chatToday:number;chatMessages:number
   expertTotal:number;skillTotal:number;serverTotal:number
   trend:Array<{date:string;users:number;orders:number;chats:number}>
   planDist:NameCount[];chatsByExpert:NameCount[]
-  recentUsers:Array<{wechatNickname:string;planName:string;status:number;registeredAt:string}>
+  recentUsers:Array<{wechatNickname:string;planName:string;expiryStatus:string;registeredAt:string}>
   recentOrders:Array<{orderNo:string;wechatNickname:string;planName:string;amount:number;status:string;payChannel:string;createdAt:string}>
 }
 export const listChats=(query:object)=>get<{total:number;list:ChatItem[]}>('/chats',query)

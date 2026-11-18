@@ -12,8 +12,18 @@ export interface RolePayload { code: string; name: string; remark: string; permi
 export interface RoleItem extends RolePayload { id: number; status: number; createdAt: string }
 export interface Permission { id: number; code: string; name: string; type: number; sort: number }
 export interface PermissionModule { module: string; permissions: Permission[] }
-export interface UserQuery { keyword?: string; status?: number | ''; start?: string; end?: string; page?: number; pageSize?: number }
-export interface UserProfile { id: number; phone: string; email: string; status: number; registeredAt: string; lastLoginAt: string | null }
+/** v50 用户到期状态：直接复用会员五态，列表/筛选/详情同一口径 */
+export type UserExpiryStatus = 'ACTIVE' | 'EXPIRED' | 'LIFETIME' | 'NONE' | 'UNKNOWN'
+export interface UserQuery {
+  keyword?: string
+  /** v50 到期状态筛选（原 status 正常/封禁已随封禁功能一并移除） */
+  expiryStatus?: UserExpiryStatus | ''
+  start?: string
+  end?: string
+  page?: number
+  pageSize?: number
+}
+export interface UserProfile { id: number; phone: string; email: string; registeredAt: string; lastLoginAt: string | null }
 export interface UserItem extends UserProfile { planName: string; chatCount: number; wechatNickname: string; region: string; expireAt: string | null }
 export interface EntitlementPayload { resourceType: 'EXPERT' | 'SKILL' | 'MCP_TOOL'; resourceId: number; quotaType: 'CHAT_COUNT' | 'SKILL_CALL'; quotaLimit: number; quotaPeriod: 'DAY' | 'MONTH' | 'LIFETIME' }
 export interface Entitlement extends EntitlementPayload { resourceName: string; used: number }
@@ -25,7 +35,28 @@ export interface UserDetail {
   chatStats: { conversationCount: number; messageCount: number; lastChatAt: string | null }
   loginLogs: { ip: string; userAgent: string; loginAt: string }[]
 }
-export interface OrderQuery { orderNo?: string; userId?: number | string; status?: string; payChannel?: string; start?: string; end?: string; page?: number; pageSize?: number }
+/** v49 到期状态筛选枚举：未到期 / 已到期 / 长期有效 / 未生效（待支付、已关闭）；UNKNOWN 仅用于展示兜底 */
+export type OrderExpiryStatus = 'ACTIVE' | 'EXPIRED' | 'LIFETIME' | 'INACTIVE' | 'UNKNOWN'
+export interface OrderQuery {
+  orderNo?: string
+  userId?: number | string
+  /** v49 关键字：手机号 / 微信昵称 / 用户ID 模糊匹配 */
+  keyword?: string
+  status?: string
+  /** v49 订单来源 ONLINE / MANUAL / GIFT */
+  source?: string
+  /** v49 购买动作 FIRST_PURCHASE / RENEW / UPGRADE / SWITCH / PACK */
+  orderCategory?: string
+  /** v49 到期状态 */
+  expiryStatus?: OrderExpiryStatus | ''
+  /** v49 套餐 id */
+  planId?: number | ''
+  payChannel?: string
+  start?: string
+  end?: string
+  page?: number
+  pageSize?: number
+}
 export type DurationMode = 'LIFETIME' | 'CUSTOM_DAYS' | 'MEMBERSHIP'
 export interface MembershipInfo {
   source: 'MOCK'

@@ -1,6 +1,6 @@
 # 雷达AI 管理后台 Admin API 契约
 
-版本：v0.12 / Mock schema 28（2026-11-18 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；v40–v48 消耗明细见第 11.1 节；无真实 Java/交易服务联调）
+版本：v0.14 / Mock schema 29（2026-11-18 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；v40–v48 消耗明细见第 11.1 节；无真实 Java/交易服务联调）
 
 已拍板规则：标准/高级/旗舰三档同功能、单账号；升级按实付折算且负补差取 0，月转年即时并按 365 天重置锚点，年转月/降级到期切换，未来期锁价排队；当期/未来期一律不退款，无自动续费、提前 7 天提醒；常规赠分仅注册 100，积分包仅有效会员可购、365 天有效且不随会员到期清零。**规则文本、Mock 迁移及订单记录不等同真实报价、支付、会员时间轴、积分账本或提醒调度。** 本文明确保留当前写接口未强制规则的缺口，完整规则见 `../功能清单.md` 第 8 节。
 基础路径：`/admin/api`
@@ -10,6 +10,8 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.14 | 2026-11-18 | **删除封禁 + 到期状态（v50）**：`PUT /users/{id}/status`（封禁/解封）整条删除，权限点 `user:ban` 从字典与全部角色移除；`GET /users` 的 `status`(1正常/0封禁) 筛选替换为 `expiryStatus`（ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN），用户列表项去掉 `status`/`assetsFrozen`、新增 `expiryStatus`；`keyword` 补微信昵称模糊匹配。**口径统一**：`formatMembership()` 文案改为「未到期 / 已到期 / 长期有效 / 无会员 / 期限未知」，用户管理、订单、消耗明细三处共用；`MockUser` 去掉 `status` 与 `frozenPeriods`，`readMockOrderExpiry` 不再按冻结期顺延。持久化 schema 28→29 |
+| v0.13 | 2026-11-18 | **订单状态全覆盖 + 筛选（v49）**：`GET /orders` 新增 `keyword`（手机号/微信昵称/用户ID 模糊）、`source`（ONLINE/MANUAL/GIFT）、`orderCategory`（FIRST_PURCHASE/RENEW/UPGRADE/SWITCH/PACK）、`expiryStatus`（ACTIVE/EXPIRED/LIFETIME/INACTIVE）、`planId` 五个筛选参数；`/orders/export` 同参。**到期状态口径**：服务端复用 `formatOrderExpiry().status`，与列表徽标、导出三处同源——原逻辑前端只展示不筛选，且各处各写一套判据 |
 | v0.12 | 2026-11-18 | **三维筛选 + 客户列（v48）**：`/credit-records` 新增 `platforms`（枚举，逗号分隔）、`scenarioIds`、`agentIds` 三个多选筛选；`/credit-records/options` 新增 `platforms`（固定枚举带 usedCount）、`scenarios`（带 platformId）、`agents` 三类候选，`experts`/`skills` 候选补 `platforms`/`scenarioId`/`agentId` 供下拉内收窄。列表字段新增 `planName`/`membershipStatus`/`membershipExpireAt`。**口径要点**：记录的 `platforms` 取该次对话实际执行渠道（channelKey → 平台），不是专家绑定技能的平台并集——并集会让每条记录都等于「全部平台」，筛选形同虚设 |
 | v0.11 | 2026-11-18 | **详情展示顺序（v47）**：`GET /credit-records/:id` 返回的 `breakdown` 顺序不变（按 seed 生成顺序：第三方接口→技能→模型），改为**前端展示层排序**——`LLM_MODEL` 置顶（输入在输出前），其后 `MCP_TOOL`、`SKILL`；合计、成本、毛利仍按全量计算，不受排序影响。明细表限高内部滚动 + 表头固定 |
 | v0.10 | 2026-11-18 | **筛选候选改口径（v46）**：`/credit-records/options` 不再从消耗记录反推候选，改为取专家/技能/MCP 管理模块的**全量配置**，每项带 `usedCount`（已产生消耗条数）与 `status`；修复「已配置但暂无消耗」的专家/技能/服务在筛选器中不可选的问题。同时补 `SKILL` 类型 breakdown 行（此前技能维度只有筛选没有数据）。持久化 schema 26→27 |
@@ -146,23 +148,33 @@
 
 | 方法 | 路径 | 权限点 | 说明 |
 |---|---|---|---|
-| GET | /users | user:view | 参数 `keyword`(手机号/邮箱/昵称/ID)、`status`(1正常 0封禁)、`start`/`end`(注册时间)、分页 |
+| GET | /users | user:view | 参数 `keyword`(手机号/邮箱/微信昵称/ID)、`expiryStatus`(ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN)、`start`/`end`(注册时间)、分页 |
 | GET | /users/{id} | user:view | 用户详情 |
-| PUT | /users/{id}/status | user:ban | `{banned:boolean, reason:string}`；true封禁、false解封；原因trim后必填且≤200字；重复状态409 |
 | PUT | /users/{id}/entitlements | user:entitlement | 个体权益覆盖：`[{resourceType, resourceId, quotaType, quotaLimit}]` |
 
-状态处理为 Mock：banned 非 boolean、reason 为空或超长返回422；用户不存在404；重复状态或非0/1账户状态409。封禁记录 `{startedAt,endedAt:null}` 冻结区间；解封关闭区间，若会员期限在封禁开始时仍有效，则按已记录冻结时长顺延期限；已过期/未知期限不凭空补会员。历史封禁无起点仅从迁移时刻建基线，不推算未知历史。返回 data=null，审计 `user.ban/user.unban`，含原因、状态和期限；冻结中拒绝权益调整和新订单。**接口已有解封，当前 UsersView 仍缺解封按钮；真实账号登录阻断、注销及积分/未来期资产冻结恢复未形成服务闭环。**
+**v50：封禁/解封接口（原 `PUT /users/{id}/status`）整条下线**，权限点 `user:ban` 同步从权限字典与全部角色中移除（存量 localStorage 角色在 schema 29 迁移中回收 id=6）。用户列表不再有「正常/封禁」状态列与对应筛选、操作列只保留「详情」。原有 Mock 冻结区间（`frozenPeriods`）与按冻结时长顺延会员到期的逻辑一并删除：`readMockMembership` 只按当前时间与 `membershipExpireAt` 判定，`readMockOrderExpiry` 直接返回订单自身期限快照。真实账号登录阻断、注销及积分/未来期资产冻结恢复从未闭环，本次删除也不代表这些能力已具备。
 
 ### GET /users 列表项
-`{id, wechatNickname, phone, email, region, status, planName, chatCount, registeredAt, lastLoginAt, expireAt, membership, assetsFrozen}`。
+`{id, wechatNickname, phone, email, region, planName, chatCount, registeredAt, lastLoginAt, expireAt, expiryStatus, membership}`。
 
-`membership={source:'MOCK',status:'ACTIVE'|'EXPIRED'|'NONE'|'LIFETIME'|'UNKNOWN',expiresAt:string|null,isLifetime:boolean}`；列表在顶层、详情在 `plan.membership`；`expireAt` 为同源兼容字段。只有显式 LIFETIME 显示长期，NONE为无会员，UNKNOWN为期限未知，空日期不得推断终身；`assetsFrozen` 表示当前用户封禁。会员模式订单同用此来源。详情读取/权益保存由前端捕获目标ID与请求序号、复制提交载荷，旧回包失效，错误可重试。
+`membership={source:'MOCK',status:'ACTIVE'|'EXPIRED'|'NONE'|'LIFETIME'|'UNKNOWN',expiresAt:string|null,isLifetime:boolean}`；列表在顶层、详情在 `plan.membership`；`expiryStatus` 是同一来源的扁平化字段，供列表标签与筛选直接使用；`expireAt` 为同源兼容字段。只有显式 LIFETIME 显示长期，NONE 为无会员，UNKNOWN 为期限未知，空日期不得推断终身。会员模式订单同用此来源。详情读取/权益保存由前端捕获目标ID与请求序号、复制提交载荷，旧回包失效，错误可重试。
+
+### 到期状态口径（v50 统一）
+| 值 | 列表文案 | 配色 | 是否展示日期 |
+|---|---|---|---|
+| ACTIVE | 未到期 | success（绿） | 是 |
+| EXPIRED | 已到期 | danger（红） | 是 |
+| LIFETIME | 长期有效 | primary（蓝） | 否，显示「长期有效」 |
+| NONE | 无会员 | info（灰） | 否 |
+| UNKNOWN | 期限未知 | warning（橙） | 否 |
+
+用户管理列表/详情、订单管理「到期状态」、消耗明细「到期状态」三处使用同一张映射（`USER_EXPIRY_STATUS` / `MEMBERSHIP_META`）与同一文案，不再出现「有效会员 / 会员已到期」旧说法。
 
 ### GET /users/{id} 详情
 ```json
 {
-  "profile": { "id": 1, "nickname": "...", "phone": "...", "email": "...", "status": 1, "registeredAt": "...", "lastLoginAt": "..." },
-  "plan": { "planId": 1, "planName": "标准版", "expireAt": "...", "membership": { "source": "MOCK", "status": "ACTIVE", "expiresAt": "...", "isLifetime": false }, "assetsFrozen": false },
+  "profile": { "id": 1, "nickname": "...", "phone": "...", "email": "...", "registeredAt": "...", "lastLoginAt": "..." },
+  "plan": { "planId": 1, "planName": "标准版", "expireAt": "...", "expiryStatus": "ACTIVE", "membership": { "source": "MOCK", "status": "ACTIVE", "expiresAt": "...", "isLifetime": false } },
   "entitlements": [{ "resourceType": "EXPERT", "resourceId": 3, "resourceName": "1688分销选品", "quotaType": "CHAT_COUNT", "quotaLimit": 100, "used": 32 }],
   "orders": { "totalCount": 5, "totalAmount": 897.00, "list": [ /* 最近10条，同订单列表项 */ ] },
   "chatStats": { "conversationCount": 12, "messageCount": 356, "lastChatAt": "..." },

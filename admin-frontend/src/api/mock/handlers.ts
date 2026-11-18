@@ -188,7 +188,7 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; assetsFrozen: boolean; quoteExpired?: boolean } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; quoteExpired?: boolean } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   const membership = o.durationMode === 'MEMBERSHIP' ? readMockMembership(user) : undefined
@@ -197,8 +197,7 @@ function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNi
   const quoteExpired = o.status === 'PENDING' && Number.isFinite(quoteExpireAt) && quoteExpireAt <= Date.now()
   return {
     ...rest,
-    expiresAt: readMockOrderExpiry(o, user),
-    assetsFrozen: user?.status === 0,
+    expiresAt: readMockOrderExpiry(o),
     ...(quoteExpired ? { quoteExpired: true } : {}),
     ...(membership ? { membership, expiresAt: membership.expiresAt, durationMonths: null, durationDays: undefined } : {}),
     phone: user?.phone || '—',
@@ -472,10 +471,15 @@ route('GET', '/permissions', () => {
 })
 
 // ------------------------------------------------------------------ 用户（C 端）
+/** v50 到期状态判据：与 readMockMembership / 列表标签 / 详情同源，筛选不再用封禁状态 */
+function userExpiryStatus(u: Parameters<typeof readMockMembership>[0]): string {
+  return readMockMembership(u).status
+}
+
 route('GET', '/users', (ctx) => {
   assertPerm(ctx, 'user:view')
   const keyword = qStr(ctx.query, 'keyword')
-  const status = qNum(ctx.query, 'status')
+  const expiryStatus = qStr(ctx.query, 'expiryStatus')
   const start = qStr(ctx.query, 'start')
   const end = qStr(ctx.query, 'end')
   let list = [...db.users].sort((a, b) => b.id - a.id)
@@ -484,10 +488,11 @@ route('GET', '/users', (ctx) => {
       (u) =>
         u.phone.includes(keyword) ||
         u.email.includes(keyword) ||
+        u.wechatNickname.includes(keyword) ||
         String(u.id) === keyword
     )
   }
-  if (status !== '') list = list.filter((u) => u.status === status)
+  if (expiryStatus) list = list.filter((u) => userExpiryStatus(u) === expiryStatus)
   if (start) list = list.filter((u) => u.registeredAt.slice(0, 10) >= start)
   if (end) list = list.filter((u) => u.registeredAt.slice(0, 10) <= end)
   const p = paginate(list, ctx.query)
@@ -499,14 +504,13 @@ route('GET', '/users', (ctx) => {
       email: u.email,
       wechatNickname: u.wechatNickname,
       region: u.region,
-      status: u.status,
       planName: u.planName,
       chatCount: db.chats.filter((c) => c.userId === u.id).length,
       registeredAt: u.registeredAt,
       lastLoginAt: u.lastLoginAt,
       expireAt: readMockMembership(u).expiresAt,
-      membership: readMockMembership(u),
-      assetsFrozen: u.status === 0
+      expiryStatus: readMockMembership(u).status,
+      membership: readMockMembership(u)
     }))
   }
 })
@@ -520,7 +524,6 @@ route('GET', '/users/:id', (ctx) => {
       id: u.id,
       phone: u.phone,
       email: u.email,
-      status: u.status,
       registeredAt: u.registeredAt,
       lastLoginAt: u.lastLoginAt
     },
@@ -528,8 +531,8 @@ route('GET', '/users/:id', (ctx) => {
       planId: u.planId,
       planName: u.planName,
       expireAt: readMockMembership(u).expiresAt,
-      membership: readMockMembership(u),
-      assetsFrozen: u.status === 0
+      expiryStatus: readMockMembership(u).status,
+      membership: readMockMembership(u)
     },
     entitlements: u.entitlements.map((e) => ({ ...e })),
     orders: {
@@ -550,45 +553,11 @@ route('GET', '/users/:id', (ctx) => {
   }
 })
 
-route('PUT', '/users/:id/status', (ctx) => {
-  assertPerm(ctx, 'user:ban')
-  const u = findOr404(db.users, ctx.params.id, '用户')
-  const b = (ctx.body ?? {}) as Record<string, unknown>
-  if (typeof b.banned !== 'boolean') throw new MockApiError(422, '封禁参数须为布尔值')
-  const reason = typeof b.reason === 'string' ? b.reason.trim() : ''
-  if (!reason || reason.length > 200) throw new MockApiError(422, '请填写不超过 200 字的封禁或解封原因')
-  const status = b.banned ? 0 : 1
-  if (u.status === status) throw new MockApiError(409, b.banned ? '用户已封禁' : '用户已解除封禁')
-  if (u.status !== 0 && u.status !== 1) throw new MockApiError(409, '当前账户状态不支持封禁或解封')
-  const before = { status: u.status, membershipExpireAt: u.membershipExpireAt }
-  const at = Date.now()
-  u.frozenPeriods ||= []
-  if (b.banned) {
-    u.frozenPeriods.push({ startedAt: at, endedAt: null })
-  } else {
-    const period = u.frozenPeriods.find(p => p.endedAt === null)
-    if (period) {
-      period.endedAt = at
-      const expiry = dayjs(u.membershipExpireAt).valueOf()
-      if (Number.isFinite(expiry) && expiry > period.startedAt) {
-        u.membershipExpireAt = dayjs(expiry + Math.max(0, at - period.startedAt)).format('YYYY-MM-DD HH:mm:ss')
-      }
-    }
-  }
-  u.status = status
-  recordAudit(ctx.adminId, b.banned ? 'user.ban' : 'user.unban', 'user', u.id, before, {
-    status: u.status,
-    assetsFrozen: b.banned,
-    membershipExpireAt: u.membershipExpireAt,
-    reason
-  })
-  return null
-})
+// v50：封禁/解封接口随封禁功能下线一并移除（PUT /users/{id}/status）
 
 route('PUT', '/users/:id/entitlements', (ctx) => {
   assertPerm(ctx, 'user:entitlement')
   const u = findOr404(db.users, ctx.params.id, '用户')
-  if (u.status !== 1) throw new MockApiError(409, '账户权益已冻结，解除封禁后才能调整')
   const items = ctx.body
   if (!Array.isArray(items)) throw new MockApiError(422, '权益数据格式错误')
   const before = u.entitlements.map((e) => ({ ...e }))
@@ -599,20 +568,45 @@ route('PUT', '/users/:id/entitlements', (ctx) => {
 })
 
 // ------------------------------------------------------------------ 订单
+/**
+ * v49 订单列表筛选：状态 / 来源 / 购买动作 / 到期状态 / 套餐 / 渠道 / 关键字（手机号、昵称、用户ID）。
+ * 到期状态取 formatOrderExpiry 的 status，与列表徽标、导出三处同源，避免口径漂移。
+ */
 function filterOrders(ctx: MockContext): MockOrder[] {
   const orderNo = qStr(ctx.query, 'orderNo')
   const userId = qNum(ctx.query, 'userId')
+  const keyword = qStr(ctx.query, 'keyword').trim()
   const status = qStr(ctx.query, 'status')
+  const source = qStr(ctx.query, 'source')
+  const orderCategory = qStr(ctx.query, 'orderCategory')
+  const expiryStatus = qStr(ctx.query, 'expiryStatus')
+  const planId = qNum(ctx.query, 'planId')
   const payChannel = qStr(ctx.query, 'payChannel')
   const start = qStr(ctx.query, 'start')
   const end = qStr(ctx.query, 'end')
   let list = [...db.orders]
   if (orderNo) list = list.filter((o) => o.orderNo.includes(orderNo))
   if (userId !== '') list = list.filter((o) => o.userId === userId)
+  if (keyword) {
+    const kw = keyword.toLowerCase()
+    list = list.filter((o) => {
+      const u = db.users.find((x) => x.id === o.userId)
+      const phone = u?.phone ?? ''
+      const nickname = (u?.wechatNickname ?? '').toLowerCase()
+      return phone.includes(keyword) || nickname.includes(kw) || String(o.userId) === keyword
+    })
+  }
   if (status) list = list.filter((o) => o.status === status)
+  if (source) list = list.filter((o) => o.source === source)
+  if (orderCategory) list = list.filter((o) => o.orderCategory === orderCategory)
+  if (planId !== '') list = list.filter((o) => o.planId === planId)
   if (payChannel) list = list.filter((o) => o.payChannel === payChannel)
   if (start) list = list.filter((o) => o.createdAt.slice(0, 10) >= start)
   if (end) list = list.filter((o) => o.createdAt.slice(0, 10) <= end)
+  if (expiryStatus) {
+    const now = Date.now()
+    list = list.filter((o) => formatOrderExpiry(toOrderItem(o), now).status === expiryStatus)
+  }
   return list
 }
 
@@ -633,7 +627,6 @@ route('GET', '/orders/:id', (ctx) => {
 function findUserByPhone(phone: string): MockUser {
   const u = db.users.find((x) => x.phone === phone)
   if (!u) throw new MockApiError(422, '手机号对应用户不存在')
-  if (u.status !== 1) throw new MockApiError(422, '该用户已被禁用，无法创建订单')
   return u
 }
 

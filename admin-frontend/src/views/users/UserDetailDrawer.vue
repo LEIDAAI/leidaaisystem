@@ -8,6 +8,7 @@ import { getUserDetail, updateUserEntitlements, type UserDetailWithMembership } 
 import { listChats, chatMessages, type ChatItem, type Message } from '@/api/operations'
 import { ApiError } from '@/api/request'
 import type { EntitlementPayload } from '@/api/types'
+import { USER_EXPIRY_STATUS } from '@/constants'
 import { formatAmount, formatDateTime, formatMembership, orDash } from '@/utils/format'
 import { confirmAction } from '@/utils/feedback'
 
@@ -234,10 +235,13 @@ watch(() => [props.modelValue, props.userId] as const, ([open, id]) => {
             <el-descriptions-item label="用户ID">{{ detail.profile.id }}</el-descriptions-item>
             <el-descriptions-item label="手机号">{{ orDash(detail.profile.phone) }}</el-descriptions-item>
             <el-descriptions-item label="邮箱">{{ orDash(detail.profile.email) }}</el-descriptions-item>
-            <el-descriptions-item label="状态">
-              <StatusTag kind="user" :value="detail.profile.status" />
+            <el-descriptions-item label="到期状态">
+              <el-tag size="small" :type="USER_EXPIRY_STATUS[detail.plan.expiryStatus ?? 'UNKNOWN']?.type ?? 'info'">
+                {{ USER_EXPIRY_STATUS[detail.plan.expiryStatus ?? 'UNKNOWN']?.label ?? '期限未知' }}
+              </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="当前套餐">{{ detail.plan.planName }}</el-descriptions-item>
+            <el-descriptions-item label="到期时间">{{ formatMembership(detail.plan.membership ?? detail.membership).time }}</el-descriptions-item>
             <el-descriptions-item label="注册时间">{{ formatDateTime(detail.profile.registeredAt) }}</el-descriptions-item>
             <el-descriptions-item label="最后登录">{{ formatDateTime(detail.profile.lastLoginAt) }}</el-descriptions-item>
           </el-descriptions>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import ProTable from '@/components/ProTable.vue'
@@ -8,6 +8,13 @@ import { createGiftOrder, createManualOrder, exportOrders, listOrders, updateOrd
 import { listConfig } from '@/api/config'
 import type { ConfigItem } from '@/api/config'
 import type { OrderItem, OrderQuery, ProTableHandle } from '@/api/types'
+import {
+  ORDER_CATEGORY,
+  ORDER_CATEGORY_OPTIONS,
+  ORDER_EXPIRY_STATUS_OPTIONS,
+  ORDER_SOURCE,
+  ORDER_SOURCE_OPTIONS
+} from '@/constants'
 import { formatAmount, formatDateTime, formatOrderExpiry, formatOrderDuration, isValidMoney } from '@/utils/format'
 import { promptText } from '@/utils/feedback'
 import { useAuthStore } from '@/stores/auth'
@@ -19,19 +26,45 @@ onUnmounted(() => window.clearInterval(expiryTimer))
 const auth = useAuthStore()
 const tableRef = ref<ProTableHandle | null>(null)
 const optionalColumns = [
-  { key: 'expiry', label: '到期状态 / 时间' }, { key: 'credits', label: '剩余积分' },
+  { key: 'credits', label: '剩余积分' },
   { key: 'duration', label: '套餐时长' }, { key: 'usage', label: '近7日消耗' },
   { key: 'goods', label: '商品金额' }, { key: 'discount', label: '优惠金额' },
+  { key: 'channel', label: '支付渠道' },
   { key: 'paidAt', label: '支付时间' }, { key: 'createdAt', label: '下单时间' }, { key: 'remark', label: '备注' }
 ]
-const selectedColumns = ref<string[]>([])
+/** 默认全开：订单详情里的状态类字段（到期/积分/时长/消耗/金额/渠道/时间）在列表一次看全，列设置可关 */
+const selectedColumns = ref<string[]>(optionalColumns.map((c) => c.key))
 
-const filter = reactive<{ orderNo: string; userId: string; status: string; payChannel: string; dateRange: string[] }>({
+const filter = reactive<{
+  orderNo: string
+  keyword: string
+  status: string
+  source: string
+  orderCategory: string
+  expiryStatus: string
+  planId: number | ''
+  payChannel: string
+  dateRange: string[]
+}>({
   orderNo: '',
-  userId: '',
+  keyword: '',
   status: '',
+  source: '',
+  orderCategory: '',
+  expiryStatus: '',
+  planId: '',
   payChannel: '',
   dateRange: []
+})
+
+/** 套餐筛选候选：仅启用套餐，含赠送套餐（赠送单也需可筛） */
+const planOptions = ref<ConfigItem[]>([])
+onMounted(async () => {
+  try {
+    planOptions.value = (await listConfig('plans')).filter((p) => p.status === 1)
+  } catch {
+    planOptions.value = []
+  }
 })
 
 async function fetcher(query: { page: number; pageSize: number } & Record<string, unknown>) {
@@ -41,8 +74,12 @@ async function fetcher(query: { page: number; pageSize: number } & Record<string
 function buildQuery(): Record<string, unknown> {
   return {
     orderNo: filter.orderNo.trim(),
-    userId: filter.userId.trim(),
+    keyword: filter.keyword.trim(),
     status: filter.status,
+    source: filter.source,
+    orderCategory: filter.orderCategory,
+    expiryStatus: filter.expiryStatus,
+    planId: filter.planId,
     payChannel: filter.payChannel,
     start: filter.dateRange?.[0] ?? '',
     end: filter.dateRange?.[1] ?? ''
@@ -55,8 +92,12 @@ function handleSearch() {
 
 function handleReset() {
   filter.orderNo = ''
-  filter.userId = ''
+  filter.keyword = ''
   filter.status = ''
+  filter.source = ''
+  filter.orderCategory = ''
+  filter.expiryStatus = ''
+  filter.planId = ''
   filter.payChannel = ''
   filter.dateRange = []
   handleSearch()
@@ -125,9 +166,9 @@ async function submitPrice() {
   }
 }
 
-/** v11 订单来源中文标签与标签色 */
-const ORDER_SOURCE_LABELS: Record<string, string> = { ONLINE: '线上订单', MANUAL: '手工订单', GIFT: '赠送订单' }
-const ORDER_SOURCE_TAG_TYPES: Record<string, 'info' | 'warning' | 'success'> = { ONLINE: 'info', MANUAL: 'warning', GIFT: 'success' }
+/** v49 筛选区折叠：常用条件常显，购买动作/套餐/渠道收进「更多筛选」 */
+const moreVisible = ref(false)
+const CHANNEL_LABELS: Record<string, string> = { WECHAT: '微信支付', ALIPAY: '支付宝', OFFLINE: '线下录入' }
 
 // -------------------------------------------------- 创建手工订单 / 创建赠送订单（v11，与套餐管理联动）
 const plans = ref<ConfigItem[]>([])
@@ -298,110 +339,157 @@ async function submitGift() {
     <div class="page-card">
       <ProTable ref="tableRef" :fetcher="fetcher">
         <template #filter>
-          <el-form inline @submit.prevent>
-            <el-form-item label="订单号">
-              <el-input
-                v-model="filter.orderNo"
-                placeholder="请输入订单号"
-                clearable
-                style="width: 190px"
-                @keyup.enter="handleSearch"
-                @clear="handleSearch"
-              />
-            </el-form-item>
-            <el-form-item label="用户ID">
-              <el-input v-model="filter.userId" placeholder="用户ID" clearable style="width: 110px" @keyup.enter="handleSearch" />
-            </el-form-item>
-            <el-form-item label="状态">
-              <el-select v-model="filter.status" style="width: 120px" @change="handleSearch">
-                <el-option label="全部" value="" />
-                <el-option label="待支付" value="PENDING" />
-                <el-option label="已支付" value="PAID" />
-                <el-option label="已关闭" value="CLOSED" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="渠道">
-              <el-select v-model="filter.payChannel" style="width: 120px" @change="handleSearch">
-                <el-option label="全部" value="" />
-                <el-option label="微信支付" value="WECHAT" />
-                <el-option label="支付宝" value="ALIPAY" />
-                <el-option label="线下录入" value="OFFLINE" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="下单时间">
-              <el-date-picker
-                v-model="filter.dateRange"
-                type="daterange"
-                value-format="YYYY-MM-DD"
-                range-separator="至"
-                start-placeholder="开始日期"
-                end-placeholder="结束日期"
-                style="width: 260px"
-              />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="handleSearch">查询</el-button>
-              <el-button @click="handleReset">重置</el-button>
-              <el-button v-perm="'order:export'" @click="handleExport">导出 XLSX</el-button>
-              <el-button v-perm="'order:create'" type="primary" plain @click="openManual">创建手工订单</el-button>
-              <el-button v-perm="'order:gift'" type="success" plain @click="openGift">运营特批赠送</el-button>
-              <el-popover trigger="click" width="240">
-                <template #reference><el-button>列设置</el-button></template>
-                <p>关键列固定显示，可选信息也可在详情查看。</p>
-                <el-checkbox-group v-model="selectedColumns">
-                  <el-checkbox v-for="column in optionalColumns" :key="column.key" :value="column.key">{{ column.label }}</el-checkbox>
-                </el-checkbox-group>
-              </el-popover>
-            </el-form-item>
-          </el-form>
+          <div class="filter-wrap">
+            <el-form inline @submit.prevent>
+              <el-form-item label="订单号">
+                <el-input
+                  v-model="filter.orderNo"
+                  placeholder="请输入订单号"
+                  clearable
+                  style="width: 170px"
+                  @keyup.enter="handleSearch"
+                  @clear="handleSearch"
+                />
+              </el-form-item>
+              <el-form-item label="用户">
+                <el-input
+                  v-model="filter.keyword"
+                  placeholder="手机号 / 微信昵称 / 用户ID"
+                  clearable
+                  style="width: 190px"
+                  @keyup.enter="handleSearch"
+                  @clear="handleSearch"
+                />
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="filter.status" style="width: 110px" @change="handleSearch">
+                  <el-option label="全部" value="" />
+                  <el-option label="待支付" value="PENDING" />
+                  <el-option label="已支付" value="PAID" />
+                  <el-option label="已关闭" value="CLOSED" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="到期状态">
+                <el-select v-model="filter.expiryStatus" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+                  <el-option v-for="item in ORDER_EXPIRY_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="订单来源">
+                <el-select v-model="filter.source" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
+                  <el-option v-for="item in ORDER_SOURCE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="下单时间">
+                <el-date-picker
+                  v-model="filter.dateRange"
+                  type="daterange"
+                  value-format="YYYY-MM-DD"
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                  style="width: 240px"
+                />
+              </el-form-item>
+              <el-form-item label=" ">
+                <el-button type="primary" @click="handleSearch">查询</el-button>
+                <el-button @click="handleReset">重置</el-button>
+                <el-button link type="primary" @click="moreVisible = !moreVisible">
+                  {{ moreVisible ? '收起筛选' : '更多筛选' }}
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <el-form v-show="moreVisible" inline class="filter-more" @submit.prevent>
+              <el-form-item label="购买动作">
+                <el-select v-model="filter.orderCategory" clearable placeholder="全部" style="width: 150px" @change="handleSearch">
+                  <el-option v-for="item in ORDER_CATEGORY_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="套餐">
+                <el-select v-model="filter.planId" clearable filterable placeholder="全部套餐" style="width: 160px" @change="handleSearch">
+                  <el-option v-for="p in planOptions" :key="p.id" :label="p.name" :value="p.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="支付渠道">
+                <el-select v-model="filter.payChannel" style="width: 120px" @change="handleSearch">
+                  <el-option label="全部" value="" />
+                  <el-option label="微信支付" value="WECHAT" />
+                  <el-option label="支付宝" value="ALIPAY" />
+                  <el-option label="线下录入" value="OFFLINE" />
+                </el-select>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <div class="filter-actions">
+            <el-button v-perm="'order:export'" @click="handleExport">导出 XLSX</el-button>
+            <el-button v-perm="'order:create'" type="primary" plain @click="openManual">创建手工订单</el-button>
+            <el-button v-perm="'order:gift'" type="success" plain @click="openGift">运营特批赠送</el-button>
+            <el-popover trigger="click" width="240">
+              <template #reference><el-button>列设置</el-button></template>
+              <p>状态、到期状态、来源、购买动作为固定列，其余可在列设置里开关。</p>
+              <el-checkbox-group v-model="selectedColumns">
+                <el-checkbox v-for="column in optionalColumns" :key="column.key" :value="column.key">{{ column.label }}</el-checkbox>
+              </el-checkbox-group>
+            </el-popover>
+          </div>
         </template>
 
         <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
-        <el-table-column label="用户" min-width="145" show-overflow-tooltip>
+        <el-table-column label="用户" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
-            <div>{{ row.phone || row.wechatNickname || '—' }}</div>
-            <small>ID: {{ row.userId }}</small>
+            <div>{{ row.phone || '—' }}</div>
+            <small>{{ row.wechatNickname || '-' }} · ID: {{ row.userId }}</small>
           </template>
         </el-table-column>
         <el-table-column prop="planName" label="商品" min-width="100" show-overflow-tooltip />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="88">
           <template #default="{ row }"><StatusTag kind="order" :value="row.status" /></template>
         </el-table-column>
-        <el-table-column label="应付 / 成交金额" width="135">
-          <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
-        </el-table-column>
-        <el-table-column label="订单来源" width="100">
+        <el-table-column label="到期状态" width="185">
           <template #default="{ row }">
-            <el-tag :type="ORDER_SOURCE_TAG_TYPES[row.source] ?? 'info'" size="small" disable-transitions>
-              {{ ORDER_SOURCE_LABELS[row.source] ?? row.source }}
+            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
+            <div class="cell-sub">{{ formatOrderExpiry(row, now).time }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="订单来源" width="96">
+          <template #default="{ row }">
+            <el-tag :type="ORDER_SOURCE[row.source]?.type ?? 'info'" size="small" disable-transitions>
+              {{ ORDER_SOURCE[row.source]?.label ?? row.source }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('expiry')" label="到期状态 / 时间" width="185">
+        <el-table-column label="购买动作" width="120">
           <template #default="{ row }">
-            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
-            <div>{{ formatOrderExpiry(row, now).time }}</div>
+            <span v-if="row.orderCategory">{{ ORDER_CATEGORY[row.orderCategory]?.label ?? row.orderCategory }}</span>
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('credits')" prop="remainingCredits" label="剩余积分" width="100" />
-        <el-table-column v-if="selectedColumns.includes('duration')" label="套餐时长" width="110">
+        <el-table-column label="应付 / 成交金额" width="130">
+          <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
+        </el-table-column>
+        <el-table-column v-if="selectedColumns.includes('credits')" prop="remainingCredits" label="剩余积分" width="94" />
+        <el-table-column v-if="selectedColumns.includes('duration')" label="套餐时长" width="96">
           <template #default="{ row }">{{ formatOrderDuration(row) }}</template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('usage')" prop="last7DaysUsage" label="近7日消耗" width="110" />
-        <el-table-column v-if="selectedColumns.includes('goods')" label="商品金额" width="110">
+        <el-table-column v-if="selectedColumns.includes('usage')" prop="last7DaysUsage" label="近7日消耗" width="100" />
+        <el-table-column v-if="selectedColumns.includes('goods')" label="商品金额" width="106">
           <template #default="{ row }">{{ formatAmount(row.goodsAmount) }}</template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('discount')" label="优惠金额" width="110">
+        <el-table-column v-if="selectedColumns.includes('discount')" label="优惠金额" width="106">
           <template #default="{ row }">{{ formatAmount(row.discountAmount) }}</template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('paidAt')" label="支付时间" width="170">
+        <el-table-column v-if="selectedColumns.includes('channel')" label="支付渠道" width="100">
+          <template #default="{ row }">{{ CHANNEL_LABELS[row.payChannel] ?? row.payChannel }}</template>
+        </el-table-column>
+        <el-table-column v-if="selectedColumns.includes('paidAt')" label="支付时间" width="166">
           <template #default="{ row }">{{ formatDateTime(row.paidAt) }}</template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('createdAt')" label="下单时间" width="170">
+        <el-table-column v-if="selectedColumns.includes('createdAt')" label="下单时间" width="166">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column v-if="selectedColumns.includes('remark')" prop="remark" label="备注" min-width="130" show-overflow-tooltip />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
@@ -518,3 +606,13 @@ async function submitGift() {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+/* v49 筛选区：常用条件 + 折叠的更多条件；操作按钮单独一行，避免与筛选控件抢宽度 */
+.filter-wrap { display: block; }
+.filter-wrap :deep(.el-form--inline) { display: flex; flex-wrap: wrap; }
+.filter-more { border-top: 1px dashed var(--el-border-color-lighter); padding-top: 14px; margin-top: 2px; }
+.filter-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+.filter-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.cell-sub { font-size: 11.5px; color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; margin-top: 2px; }
+</style>

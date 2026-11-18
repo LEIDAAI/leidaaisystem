@@ -4,17 +4,13 @@ import { computed } from 'vue'
 type TagType = 'success' | 'warning' | 'danger' | 'info' | 'primary'
 
 interface Props {
-  kind: 'user' | 'admin' | 'role' | 'order' | 'feedback'
+  kind: 'admin' | 'role' | 'order' | 'feedback'
   value: string | number
 }
 
 const props = defineProps<Props>()
 
 const PRESETS: Record<Props['kind'], Record<string | number, { label: string; type: TagType }>> = {
-  user: {
-    1: { label: '正常', type: 'success' },
-    0: { label: '已封禁', type: 'danger' }
-  },
   admin: {
     1: { label: '启用', type: 'success' },
     0: { label: '禁用', type: 'info' }

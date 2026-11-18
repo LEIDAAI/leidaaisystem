@@ -61,7 +61,6 @@ export interface MockUser {
   email: string
   wechatNickname: string
   region: string
-  status: number
   planId: number
   planName: string
   chatCount: number
@@ -72,8 +71,6 @@ export interface MockUser {
   /** 持久化演示会员期限；null 表示未知或无会员，不能据此判断终身。 */
   membershipExpireAt: string | null
   membershipIsLifetime?: boolean
-  /** 封禁期间暂停权益时钟；旧订单的原始期限快照保持不变。 */
-  frozenPeriods?: Array<{ startedAt: number; endedAt: number | null }>
 }
 
 /** 唯一 Mock 会员源，只读取显式会员记录；真实会员服务尚未接入。 */
@@ -84,22 +81,12 @@ export function readMockMembership(user: MockUser | undefined, now = Date.now())
   if (user.membershipIsLifetime === true) return result('LIFETIME')
   const expiry = user.membershipExpireAt
   if (!expiry || !dayjs(expiry).isValid()) return result('UNKNOWN')
-  const frozenAt = user.status === 0 ? user.frozenPeriods?.find(p => p.endedAt === null)?.startedAt : undefined
-  const effectiveNow = frozenAt === undefined ? now : Math.min(now, frozenAt)
-  return result(dayjs(expiry).valueOf() > effectiveNow ? 'ACTIVE' : 'EXPIRED', expiry)
+  return result(dayjs(expiry).valueOf() > now ? 'ACTIVE' : 'EXPIRED', expiry)
 }
 
-/** 展示冻结后的权益到期日，禁止回写历史订单商品/金额/期限快照。 */
-export function readMockOrderExpiry(order: MockOrder, user: MockUser | undefined, now = Date.now()): string | null | undefined {
-  if (!order.expiresAt || order.status !== 'PAID' || !user?.frozenPeriods?.length) return order.expiresAt
-  let expiry = dayjs(order.expiresAt).valueOf()
-  const paidAt = dayjs(order.paidAt || order.createdAt).valueOf()
-  if (!Number.isFinite(expiry) || !Number.isFinite(paidAt)) return order.expiresAt
-  for (const period of [...user.frozenPeriods].sort((a, b) => a.startedAt - b.startedAt)) {
-    const start = Math.max(period.startedAt, paidAt)
-    if (expiry > start) expiry += Math.max(0, Math.min(period.endedAt ?? now, now) - start)
-  }
-  return fmt(dayjs(expiry))
+/** 展示订单到期日；v50 移除封禁冻结区间后直接读订单自身快照，不再按冻结期顺延。 */
+export function readMockOrderExpiry(order: MockOrder): string | null | undefined {
+  return order.expiresAt
 }
 
 export interface MockTxn {
@@ -219,7 +206,6 @@ const PERMISSIONS: MockPermission[] = [
   { id: 3, code: 'admin:edit', name: '管理员编辑', module: 'admin', type: 2, sort: 11 },
   { id: 4, code: 'role:manage', name: '角色管理', module: 'admin', type: 2, sort: 12 },
   { id: 5, code: 'user:view', name: '用户查看', module: 'user', type: 1, sort: 20 },
-  { id: 6, code: 'user:ban', name: '用户封禁', module: 'user', type: 2, sort: 21 },
   { id: 7, code: 'user:entitlement', name: '用户权益调整', module: 'user', type: 2, sort: 22 },
   { id: 8, code: 'order:view', name: '订单查看', module: 'order', type: 1, sort: 30 },
   { id: 10, code: 'order:export', name: '订单导出', module: 'order', type: 2, sort: 32 },
@@ -276,7 +262,7 @@ const ROLES: MockRole[] = [
     name: '运营',
     remark: '套餐/用户/订单',
     status: 1,
-    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34, 37, 39],
+    permissionIds: [1, 5, 7, 8, 10, 11, 19, 34, 37, 39],
     createdAt: daysAgo(280)
   },
   // v5：模型管理仅超管/运营持有；客服与只读均不授予（无模型菜单，见下方无条件回收）
@@ -369,19 +355,24 @@ function buildUsers(): MockUser[] {
       userAgent: UA_POOL[(i + k) % UA_POOL.length],
       loginAt: daysAgo((i % 5) + k * 3, 9 + ((i + k) % 12))
     }))
+    const isLifetime = planId >= 2 && i % 17 === 0
+    // 到期状态演示样本：付费用户里固定若干已到期（近几天刚过期），其余为未到期
+    const expiredDays = i % 6 === 0 ? (i % 4) + 1 : 0
     users.push({
       id: i,
       phone: maskedPhone(i),
       email: `${EMAIL_PREFIXES[i - 1]}${i}@${EMAIL_DOMAINS[i % EMAIL_DOMAINS.length]}`,
       wechatNickname: userWechatNickname(i),
       region: userRegion(i),
-      status: i % 9 === 4 ? 0 : 1,
       planId,
       planName: PLANS[planId - 1].name,
       chatCount: (i * 37) % 520,
       registeredAt,
-      membershipExpireAt: planId >= 2 ? fmt(dayjs(registeredAt).add(1, 'year')) : null,
-      membershipIsLifetime: false,
+      membershipExpireAt:
+        planId >= 2 && !isLifetime
+          ? fmt(expiredDays ? dayjs().subtract(expiredDays, 'day') : dayjs(registeredAt).add(1, 'year'))
+          : null,
+      membershipIsLifetime: isLifetime,
       lastLoginAt: lastLogin,
       entitlements,
       loginLogs
@@ -541,12 +532,12 @@ const AUDIT_SAMPLES: Array<{
   build: (i: number) => { before: Record<string, unknown> | null; after: Record<string, unknown>; objectId: string }
 }> = [
   {
-    action: 'user.ban',
+    action: 'user.entitlement.update',
     objectType: 'user',
     build: (i) => ({
-      objectId: String(4 + (i % 30)),
-      before: { status: 1 },
-      after: { status: 0, reason: '违规使用批量注册，封禁处理' }
+      objectId: String(1 + (i % 20)),
+      before: { quotaLimit: 100 },
+      after: { quotaLimit: 100 + (i % 5) * 50, quotaType: 'CHAT_COUNT' }
     })
   },
   {
@@ -563,9 +554,9 @@ const AUDIT_SAMPLES: Array<{
     objectType: 'role',
     build: (i) => ({
       objectId: String(2 + (i % 3)),
-      before: { name: '运营', permissionIds: [1, 5, 6, 8] },
-      // 权限 id 必须真实存在于字典（9 已废弃，订单备注为 19），避免前端按 id 反查展示悬空
-      after: { name: '运营', permissionIds: [1, 5, 6, 7, 8, 19, 10] }
+      before: { name: '运营', permissionIds: [1, 5, 8] },
+      // 权限 id 必须真实存在于字典（6 用户封禁已随封禁功能下线、9 已废弃，订单备注为 19），避免前端按 id 反查展示悬空
+      after: { name: '运营', permissionIds: [1, 5, 7, 8, 19, 10] }
     })
   },
   {
@@ -685,7 +676,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 26 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 29 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -713,6 +704,10 @@ try {
 db.roles.filter(r => r.code === 'SUPER_ADMIN').forEach(r => { r.permissionIds = [...ALL_PERM_IDS] })
 let storedVersion=0
 try { storedVersion=Number(JSON.parse(localStorage.getItem(DB_KEY) || '{}').version || 0) } catch { storedVersion=0 }
+if (storedVersion > 0 && storedVersion < 29) {
+  // v29：封禁功能下线，回收存量角色里的 user:ban（id=6），避免角色抽屉出现指向已删权限点的悬空勾选
+  db.roles.forEach(r => { r.permissionIds = r.permissionIds.filter(id => id !== 6) })
+}
 if (storedVersion < 3) {
   db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds,20,21])] })
   db.users.forEach(u => u.entitlements.forEach(e => { e.quotaPeriod = e.quotaPeriod || 'MONTH' }))
@@ -778,7 +773,7 @@ if (storedVersion < 11) {
     })
   }
   // 3) 幂等种演示单：1 笔手工订单 + 1 笔赠送订单（unshift 置顶便于演示）
-  const activeUsers = db.users.filter((u) => u.status === 1)
+  const activeUsers = db.users
   const manualUser = activeUsers[1] || activeUsers[0]
   const manualPlan = db.plans.find((p) => (p.planType || 'NORMAL') !== 'GIFT' && p.status === 1 && Number(p.price) > 0)
   if (manualUser && manualPlan && !db.orders.some((o) => o.source === 'MANUAL')) {
@@ -912,12 +907,11 @@ if (storedVersion < 19) {
   db.creditPackages.forEach(pack => { pack.bonusCredits = 0 })
 }
 db.commerceRules = MOCK_COMMERCE_RULES
+// v50：封禁功能下线，存量用户上的 status / frozenPeriods 一并清理（幂等）
 db.users.forEach(user => {
-  user.frozenPeriods ||= []
-  // 旧封禁缺少可靠起点，从迁移时开始冻结，不猜测历史封禁时长。
-  if (user.status === 0 && !user.frozenPeriods.some(p => p.endedAt === null)) {
-    user.frozenPeriods.push({ startedAt: Date.now(), endedAt: null })
-  }
+  const legacy = user as MockUser & { status?: number; frozenPeriods?: unknown }
+  delete legacy.status
+  delete legacy.frozenPeriods
 })
 db.billingSettings.creditSlider.defaultValue ??= db.billingSettings.creditSlider.min
 if (storedVersion < 20) {
@@ -1098,7 +1092,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 28,
+        version: 29,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],
