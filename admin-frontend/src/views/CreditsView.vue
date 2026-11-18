@@ -86,7 +86,6 @@ const platformsOfExpert = (e: CreditRecordOption): string[] => (e.platforms || [
  */
 const usedPlatformOptions = computed(() => options.value.platforms.filter((p) => p.usedCount > 0))
 const usedScenarioOptions = computed(() => options.value.scenarios.filter((s) => s.usedCount > 0))
-const usedAgentOptions = computed(() => options.value.agents.filter((a) => a.usedCount > 0))
 /** 芯片多选切换（数组内「或」关系） */
 function toggleIn<T>(arr: T[], v: T): void {
   const i = arr.indexOf(v)
@@ -388,9 +387,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
               <div class="pick-line">
                 <span class="pick-label">智能体</span>
                 <div class="pick-chips">
+                  <!-- v53：智能体芯片列全量（不按消耗裁剪）——演示数据只有一个智能体有消耗时，「有消耗才显示」会让其他智能体凭空消失 -->
                   <button
-                    v-for="a in usedAgentOptions" :key="a.id" type="button"
-                    class="pick-chip" :class="{ on: picker.skillAgents.includes(a.id) }"
+                    v-for="a in options.agents" :key="a.id" type="button"
+                    class="pick-chip" :class="{ on: picker.skillAgents.includes(a.id), idle: !a.usedCount }"
                     @click="toggleIn(picker.skillAgents, a.id)"
                   >{{ a.name }}</button>
                 </div>
@@ -674,6 +674,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
 }
 .pick-chip:hover { border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); }
 .pick-chip.on { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); color: var(--el-color-primary); font-weight: 600; }
+.pick-chip.idle { color: var(--el-text-color-placeholder); border-style: dashed; }
 .opt-empty { padding: 14px 12px; text-align: center; font-size: 12px; color: var(--el-text-color-secondary); }
 /* v48 列表新增列：手机号独立展示、昵称/套餐/到期 */
 .member-phone { font-variant-numeric: tabular-nums; color: var(--el-text-color-primary); font-size: 12.5px; }

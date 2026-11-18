@@ -676,7 +676,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 30 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 31 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -723,6 +723,27 @@ if (storedVersion > 0 && storedVersion < 30) {
     user.membershipExpireAt = fmt(dayjs().subtract((patched % 4) + 1, 'day'))
     patched++
   }
+}
+if (storedVersion > 0 && storedVersion < 31) {
+  // v31：技能归属智能体从「全部归有维AI」分散到三个智能体（有维AI/WorkBuddy/千问）。
+  // 存量库所有技能 agentId=1，消耗记录的 agentId 又取自绑定技能，导致消耗明细的智能体
+  // 收窄芯片只剩「有维AI」一个。这里按与新种子一致的 id 映射重排技能归属，并同步回写
+  // 消耗记录的 agentId/agentName。幂等：映射是确定性的，重复执行结果一致。
+  const AGENT_MAP: Record<number, number> = { 11: 1, 12: 2, 13: 3, 14: 1, 15: 2, 16: 3, 17: 1 }
+  db.skills.forEach(skill => {
+    const target = AGENT_MAP[skill.id]
+    if (target) skill.agentId = target
+  })
+  const agentNameOf = (id: number | undefined): string | undefined =>
+    typeof id === 'number' ? (db.agents || []).find(a => a.id === id)?.name : undefined
+  db.creditRecords.forEach(r => {
+    const bound = (r.skillIds || []).map(id => db.skills.find(s => s.id === id)).filter(Boolean) as typeof db.skills
+    // 与种子生成同一公式：按 chatId 在绑定技能间轮转（不再固定取首个，否则千问恒为空）
+    const pick = bound.length ? bound[(r.chatId || 0) % bound.length] : undefined
+    const agentId = pick && typeof pick.agentId === 'number' ? pick.agentId : undefined
+    r.agentId = agentId
+    r.agentName = agentNameOf(agentId)
+  })
 }
 if (storedVersion < 3) {
   db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds,20,21])] })
@@ -1108,7 +1129,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 30,
+        version: 31,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

@@ -412,8 +412,8 @@ SKU 数量 > 0 且含价格，否则视为解析失败。
     platforms: ({ 11: ['1688'], 12: ['1688', 'AMAZON', 'TEMU'], 13: ['1688'], 14: ['1688', 'AMAZON', 'TEMU'], 15: ['1688'], 16: ['1688', 'AMAZON', 'TEMU'], 17: ['1688', 'OZON', 'AMAZON', 'TEMU'] } as Record<number, PlatformType[]>)[id] || ['1688'],
     // v7 场景分组：按技能功能分配到对应场景
     scenarioId: ({ 11: 1, 12: 3, 13: 1, 14: 1, 15: 2, 16: 1, 17: 1 } as Record<number, number>)[id],
-    // v25 归属智能体：存量技能默认归有维AI（id=1），各智能体相互独立
-    agentId: 1,
+    // v25 归属智能体：按 id 分配到三个智能体（有维AI/WorkBuddy/千问），让消耗明细的智能体筛选有区分度
+    agentId: ({ 11: 1, 12: 2, 13: 3, 14: 1, 15: 2, 16: 3, 17: 1 } as Record<number, number>)[id] || 1,
     paramSchema: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] },
     execConfig: { handler: 'demo', timeoutMs: 30000 }
   }))
@@ -1073,8 +1073,10 @@ export function seedCreditRecords(
       // 场景：优先专家自己的 scenarioId，缺省回落到首个绑定技能的 scenarioId
       const boundSkills = skillIds.map((id) => skills.find((s3) => s3.id === id)).filter((s3): s3 is NonNullable<typeof s3> => !!s3)
       const recordScenarioId = expert?.scenarioId ?? boundSkills.find((s3) => typeof s3.scenarioId === 'number')?.scenarioId
-      // 智能体：专家不直接挂智能体，取其绑定技能的归属智能体（多个时取首个命中的，保持单值便于筛选）
-      const recordAgentId = boundSkills.find((s3) => typeof s3.agentId === 'number')?.agentId
+      // 智能体：专家不直接挂智能体，取其绑定技能的归属智能体；按 chatId 在绑定技能间轮转，
+      // 保证三个智能体（有维AI/WorkBuddy/千问）都有演示数据（v53：原「取首个」会让后面两个恒为空）
+      const agentSkill = boundSkills.length ? boundSkills[chat.id % boundSkills.length] : undefined
+      const recordAgentId = agentSkill && typeof agentSkill.agentId === 'number' ? agentSkill.agentId : undefined
       const userPlan = userPlans.find((p) => p.id === user.id)
       records.push({
         id: rid++, userId: user.id, phone: user.phone, wechatNickname: user.wechatNickname,
