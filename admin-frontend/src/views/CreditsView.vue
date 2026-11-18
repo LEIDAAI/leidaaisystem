@@ -6,7 +6,7 @@
  * - 明细表：成员 / 消耗项目 / 消耗内容 / 时间 / 状态 / 算力变更 + 行内「消耗详情」
  * - 右侧详情抽屉：执行过程 / 消耗类型 / 消耗算力 三列，逐笔核对模型 token 用量与第三方接口调用成本
  */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   listCreditRecords, creditRecordSummary, creditRecordOptions,
@@ -16,6 +16,33 @@ import { beijingTime } from '@/utils/chat-time'
 import { useTableMaxHeight } from '@/composables/useTableMax'
 
 const { max: tableMax, bind: bindTable } = useTableMaxHeight(96)
+/**
+ * v47：详情抽屉明细表限高——超出后表格内部滚动、表头固定可见。
+ * 不用 useTableMaxHeight：抽屉是 fixed 定位 + 有进入动画，用视口高度推算会算错，
+ * 改为按「抽屉可视高度 − 表格在抽屉内的偏移 − 下方合计/说明/页脚预留」实测。
+ */
+const detailMax = ref<number | undefined>(undefined)
+let detailTableEl: HTMLElement | null = null
+const bindDetailTable = (el: unknown): void => {
+  const inst = el as { $el?: unknown } | HTMLElement | null
+  detailTableEl = !inst ? null : inst instanceof HTMLElement ? inst : inst.$el instanceof HTMLElement ? inst.$el : null
+  // 表格在 v-if 内，挂载时抽屉可能还在动画中，等一帧不够，稍等再量
+  setTimeout(measureDetail, 320)
+}
+function measureDetail(): void {
+  const table = detailTableEl
+  if (!table || !table.isConnected) { detailMax.value = undefined; return }
+  const body = table.closest('.el-drawer__body') as HTMLElement | null
+  if (!body) return
+  const bodyRect = body.getBoundingClientRect()
+  const tableRect = table.getBoundingClientRect()
+  // 表格上方已占用（详情标题区 + 小标题）
+  const above = tableRect.top - bodyRect.top - (parseFloat(getComputedStyle(body).paddingTop) || 0)
+  // 表格下方要保留：合计行 36 + 间距 24 + 说明 108 + 表格下边距 12 + 抽屉内边距 24 + 余量 14 ≈ 216
+  const below = 216
+  const avail = body.clientHeight - above - below
+  detailMax.value = avail > 200 ? Math.round(avail) : 200
+}
 
 const rows = ref<CreditRecord[]>([])
 const total = ref(0)
@@ -107,6 +134,17 @@ function openDetail(row: CreditRecord): void {
   detailVisible.value = true
 }
 
+/**
+ * v47：抽屉明细展示顺序——模型输入/输出固定置顶，其后第三方接口、技能执行。
+ * 只影响展示顺序（Array.prototype.sort 稳定，同类型内保持种子生成顺序：输入在输出前）。
+ * 不改 breakdown 本身，合计与毛利仍按全量计算。
+ */
+const TYPE_ORDER: Record<CreditItemType, number> = { LLM_MODEL: 0, MCP_TOOL: 1, SKILL: 2 }
+const detailRows = computed(() => {
+  const rows = current.value?.breakdown ?? []
+  return [...rows].sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9))
+})
+
 // ---------------------------------------------------------------- 展示辅助
 const STATUS_META: Record<CreditRecord['status'], { label: string; type: 'success' | 'info' | 'warning' }> = {
   CHARGED: { label: '已扣减', type: 'success' },
@@ -139,7 +177,9 @@ onMounted(async () => {
   applyQuickRange('7d')
   try { options.value = await creditRecordOptions() } catch { options.value = { experts: [], skills: [], mcpServers: [] } }
   await load()
+  window.addEventListener('resize', measureDetail)
 })
+onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
 </script>
 
 <template>
@@ -378,7 +418,7 @@ onMounted(async () => {
         </div>
 
         <div class="detail-section-title">消耗明细（逐个接口 / 模型）</div>
-        <el-table :data="current.breakdown" size="small" class="detail-table">
+        <el-table :data="detailRows" size="small" class="detail-table" :ref="bindDetailTable" :max-height="detailMax">
           <el-table-column label="执行过程" min-width="190">
             <template #default="{ row }">
               <div class="exec-name">
