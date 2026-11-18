@@ -676,7 +676,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 29 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 30 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -707,6 +707,22 @@ try { storedVersion=Number(JSON.parse(localStorage.getItem(DB_KEY) || '{}').vers
 if (storedVersion > 0 && storedVersion < 29) {
   // v29：封禁功能下线，回收存量角色里的 user:ban（id=6），避免角色抽屉出现指向已删权限点的悬空勾选
   db.roles.forEach(r => { r.permissionIds = r.permissionIds.filter(id => id !== 6) })
+}
+if (storedVersion > 0 && storedVersion < 30) {
+  // v30：「已到期」演示样本回填。
+  // 存量库的付费用户到期日一律是「注册时间 +1 年」，全部落在未来，导致线上「到期状态 = 已到期」
+  // 筛选恒为 0 条，无法验收。这里挑少量付费、非长期、仍在有效期内的用户，把到期日改成近几天，
+  // 让五种到期状态在存量库里都拿得到样本。幂等：只处理到期日仍在未来的用户，跑过一次后自然跳过。
+  let patched = 0
+  for (const user of db.users) {
+    if (patched >= 6) break
+    if (!user.planId || user.planId === 1) continue
+    if (user.membershipIsLifetime === true) continue
+    const exp = dayjs(user.membershipExpireAt)
+    if (!user.membershipExpireAt || !exp.isValid() || exp.valueOf() <= Date.now()) continue
+    user.membershipExpireAt = fmt(dayjs().subtract((patched % 4) + 1, 'day'))
+    patched++
+  }
 }
 if (storedVersion < 3) {
   db.roles.filter(r => r.code === 'OPS').forEach(r => { r.permissionIds = [...new Set([...r.permissionIds,20,21])] })
@@ -1092,7 +1108,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 29,
+        version: 30,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],
