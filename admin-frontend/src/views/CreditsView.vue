@@ -170,7 +170,17 @@ onMounted(async () => {
             <div class="kpi-value revenue">{{ money(summary?.totalUserPrice ?? 0) }}</div>
           </div>
           <div class="kpi">
-            <div class="kpi-label">毛利率</div>
+            <div class="kpi-label">
+              毛利率
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  区间整体毛利率＝1 − 总成本 / 总用户价。<br>
+                  免费与已退回的回合成本已实际发生、用户价为 0，会把整体毛利率拉低，<br>
+                  因此通常低于单条明细的毛利率（明细按该回合实收计）。
+                </template>
+                <span class="kpi-hint">?</span>
+              </el-tooltip>
+            </div>
             <div class="kpi-value margin">{{ percent(summary?.grossMargin) }}</div>
           </div>
           <div class="kpi">
@@ -428,7 +438,8 @@ onMounted(async () => {
 .summary-kpis { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
 .kpi { display: flex; flex-direction: column; gap: 4px; min-width: 104px; padding: 0 20px; border-left: 1px solid var(--el-border-color-lighter); }
 .kpi:first-child { border-left: none; padding-left: 0; }
-.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); display: flex; align-items: center; gap: 4px; }
+.kpi-hint { display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--el-fill-color-dark); color: var(--el-text-color-secondary); font-size: 9px; cursor: help; line-height: 1; }
 .kpi-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .kpi-value.primary { color: var(--el-color-primary); }
 .kpi-value.cost { color: #d97706; }
