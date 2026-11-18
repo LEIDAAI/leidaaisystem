@@ -435,7 +435,6 @@ async function submitGift() {
           </div>
         </template>
 
-        <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
         <el-table-column label="用户" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <div>{{ row.phone || '—' }}</div>
@@ -445,12 +444,6 @@ async function submitGift() {
         <el-table-column prop="planName" label="商品" min-width="100" show-overflow-tooltip />
         <el-table-column label="状态" width="88">
           <template #default="{ row }"><StatusTag kind="order" :value="row.status" /></template>
-        </el-table-column>
-        <el-table-column label="到期状态" width="185">
-          <template #default="{ row }">
-            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
-            <div class="cell-sub">{{ formatOrderExpiry(row, now).time }}</div>
-          </template>
         </el-table-column>
         <el-table-column label="订单来源" width="96">
           <template #default="{ row }">
@@ -464,6 +457,27 @@ async function submitGift() {
             <span v-if="row.orderCategory">{{ ORDER_CATEGORY[row.orderCategory]?.label ?? row.orderCategory }}</span>
             <span v-else class="muted">—</span>
           </template>
+        </el-table-column>
+        <!-- v52 列调整：到期状态只留标签；注册/下单/到期三个时间列紧跟其后 -->
+        <el-table-column label="到期状态" width="96" align="center">
+          <template #default="{ row }">
+            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="注册时间" width="166">
+          <template #default="{ row }">{{ row.registeredAt ? formatDateTime(row.registeredAt) : '—' }}</template>
+        </el-table-column>
+        <el-table-column v-if="selectedColumns.includes('createdAt')" label="下单时间" width="166">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="到期时间" width="166">
+          <template #default="{ row }">{{ formatOrderExpiry(row, now).time }}</template>
+        </el-table-column>
+        <el-table-column v-if="selectedColumns.includes('channel')" label="支付渠道" width="100">
+          <template #default="{ row }">{{ CHANNEL_LABELS[row.payChannel] ?? row.payChannel }}</template>
+        </el-table-column>
+        <el-table-column v-if="selectedColumns.includes('paidAt')" label="支付时间" width="166">
+          <template #default="{ row }">{{ formatDateTime(row.paidAt) }}</template>
         </el-table-column>
         <el-table-column label="应付 / 成交金额" width="130">
           <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
@@ -479,16 +493,8 @@ async function submitGift() {
         <el-table-column v-if="selectedColumns.includes('discount')" label="优惠金额" width="106">
           <template #default="{ row }">{{ formatAmount(row.discountAmount) }}</template>
         </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('channel')" label="支付渠道" width="100">
-          <template #default="{ row }">{{ CHANNEL_LABELS[row.payChannel] ?? row.payChannel }}</template>
-        </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('paidAt')" label="支付时间" width="166">
-          <template #default="{ row }">{{ formatDateTime(row.paidAt) }}</template>
-        </el-table-column>
-        <el-table-column v-if="selectedColumns.includes('createdAt')" label="下单时间" width="166">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
         <el-table-column v-if="selectedColumns.includes('remark')" prop="remark" label="备注" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
@@ -614,5 +620,4 @@ async function submitGift() {
 .filter-more { border-top: 1px dashed var(--el-border-color-lighter); padding-top: 14px; margin-top: 2px; }
 .filter-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
 .filter-actions :deep(.el-button + .el-button) { margin-left: 0; }
-.cell-sub { font-size: 11.5px; color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; margin-top: 2px; }
 </style>

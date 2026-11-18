@@ -66,6 +66,8 @@ export interface MembershipInfo {
 }
 export interface OrderItem {
   id: number; orderNo: string; userId: number; wechatNickname: string; planId: number; planName: string
+  /** v52 用户注册时间（取自用户表，用户缺失时缺省），订单列表展示用 */
+  registeredAt?: string
   /** 订单来源：ONLINE 线上订单 / MANUAL 手工订单 / GIFT 赠送订单 */
   source: string
   /** v21 购买动作类型（可缺省）：首购/续费/升级/切换/增购 */

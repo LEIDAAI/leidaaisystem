@@ -102,17 +102,19 @@ function hasDate(status: string): boolean {
         <el-table-column prop="planName" label="套餐" width="100">
           <template #default="{ row }">{{ row.planName || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="chatCount" label="对话数" width="90" />
-        <el-table-column label="注册时间" width="170">
+        <el-table-column prop="chatCount" label="对话数" width="90" sortable="custom" />
+        <el-table-column prop="registeredAt" label="注册时间" width="170" sortable="custom">
           <template #default="{ row }">{{ formatDateTime(row.registeredAt) }}</template>
         </el-table-column>
-        <el-table-column label="到期状态 / 到期时间" width="200">
+        <el-table-column label="到期状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="expiryOf(row).type" disable-transitions>{{ expiryOf(row).label }}</el-tag>
-            <div v-if="hasDate(expiryOf(row).status)" class="cell-sub">{{ formatMembership(row.membership).time }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="最后登录时间" width="170">
+        <el-table-column prop="expireAt" label="到期时间" width="170" sortable="custom">
+          <template #default="{ row }">{{ hasDate(expiryOf(row).status) ? formatMembership(row.membership).time : '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="lastLoginAt" label="最后登录时间" width="170" sortable="custom">
           <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
         </el-table-column>
         <el-table-column prop="region" label="客户地区" min-width="110" />
@@ -131,5 +133,4 @@ function hasDate(status: string): boolean {
 </template>
 
 <style scoped>
-.cell-sub { font-size: 11.5px; color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; margin-top: 2px; }
 </style>

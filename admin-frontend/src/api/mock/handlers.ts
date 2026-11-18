@@ -188,7 +188,7 @@ function sessionPayload(admin: MockAdmin): {
   }
 }
 
-function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; quoteExpired?: boolean } {
+function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNickname: string; phone: string; registeredAt?: string; quoteExpired?: boolean } {
   const { transactions: _transactions, ...rest } = o
   const user = db.users.find((u) => u.id === o.userId)
   const membership = o.durationMode === 'MEMBERSHIP' ? readMockMembership(user) : undefined
@@ -201,7 +201,9 @@ function toOrderItem(o: MockOrder): Omit<MockOrder, 'transactions'> & { wechatNi
     ...(quoteExpired ? { quoteExpired: true } : {}),
     ...(membership ? { membership, expiresAt: membership.expiresAt, durationMonths: null, durationDays: undefined } : {}),
     phone: user?.phone || '—',
-    wechatNickname: user ? (user.wechatNickname || '-') : '-'
+    wechatNickname: user ? (user.wechatNickname || '-') : '-',
+    // v52 列调整：订单列表展示用户注册时间（取自用户表，用户缺失时留空）
+    ...(user?.registeredAt ? { registeredAt: user.registeredAt } : {})
   }
 }
 
@@ -483,6 +485,29 @@ route('GET', '/users', (ctx) => {
   const start = qStr(ctx.query, 'start')
   const end = qStr(ctx.query, 'end')
   let list = [...db.users].sort((a, b) => b.id - a.id)
+  // v52 列排序：sort 白名单 + order(asc/desc)；空值（未登录 / 无到期日）恒排最后，同空值回退 ID 倒序
+  const sortField = qStr(ctx.query, 'sort')
+  const sortOrder = qStr(ctx.query, 'order') === 'asc' ? 1 : -1
+  const sortGetters: Record<string, (u: Parameters<typeof readMockMembership>[0]) => number | null> = {
+    chatCount: (u) => db.chats.filter((c) => c.userId === u.id).length,
+    registeredAt: (u) => (dayjs(u.registeredAt).isValid() ? dayjs(u.registeredAt).valueOf() : null),
+    expireAt: (u) => {
+      const exp = readMockMembership(u).expiresAt
+      return exp && dayjs(exp).isValid() ? dayjs(exp).valueOf() : null
+    },
+    lastLoginAt: (u) => (u.lastLoginAt && dayjs(u.lastLoginAt).isValid() ? dayjs(u.lastLoginAt).valueOf() : null)
+  }
+  const sortGetter = sortGetters[sortField]
+  if (sortGetter) {
+    const keyed = list.map((u) => ({ u, v: sortGetter(u) }))
+    keyed.sort((a, b) => {
+      if (a.v === null && b.v === null) return b.u.id - a.u.id
+      if (a.v === null) return 1
+      if (b.v === null) return -1
+      return (a.v - b.v) * sortOrder || b.u.id - a.u.id
+    })
+    list = keyed.map((k) => k.u)
+  }
   if (keyword) {
     list = list.filter(
       (u) =>

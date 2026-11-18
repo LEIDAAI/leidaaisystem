@@ -24,6 +24,16 @@ const page = ref(1)
 const size = ref(props.pageSize)
 let extraParams: Record<string, unknown> = {}
 
+/** v52 服务端排序：sortable="custom" 列触发 sort-change 后随下次 load 透传给 fetcher；筛选/翻页时排序保持 */
+const sortParams = ref<{ sort?: string; order?: string }>({})
+
+function onSortChange({ prop, order }: { prop?: string; order?: string | null }): void {
+  if (!prop || !order) sortParams.value = {}
+  else sortParams.value = { sort: prop, order: order === 'ascending' ? 'asc' : 'desc' }
+  page.value = 1
+  void load()
+}
+
 /** 竞态守卫：仅接受最新一次 load 的响应，快速翻页/切换筛选时丢弃过期数据 */
 let loadSeq = 0
 
@@ -31,7 +41,7 @@ async function load(): Promise<void> {
   const cur = ++loadSeq
   loading.value = true
   try {
-    const data = await props.fetcher({ page: page.value, pageSize: size.value, ...extraParams })
+    const data = await props.fetcher({ page: page.value, pageSize: size.value, ...extraParams, ...sortParams.value })
     if (cur !== loadSeq) return
     rows.value = data.list
     total.value = data.total
@@ -81,7 +91,7 @@ onMounted(() => {
     <div v-if="$slots.filter" class="pro-table__filter">
       <slot name="filter" />
     </div>
-    <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的数据" :max-height="tableMax" scrollbar-always-on :ref="bindTable">
+    <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的数据" :max-height="tableMax" scrollbar-always-on :ref="bindTable" @sort-change="onSortChange">
       <slot />
     </el-table>
     <div class="pro-table__footer">

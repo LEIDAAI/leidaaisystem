@@ -481,10 +481,35 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
         class="credit-table"
         empty-text="所选条件下暂无消耗记录"
       >
-        <el-table-column label="成员" width="112">
+        <el-table-column label="手机号" width="118">
           <template #default="{ row }">
-            <!-- v48：成员列只放手机号（原「昵称在上、手机号在下」取消），昵称独立成列放右侧 -->
+            <!-- v48：成员列只放手机号（原「昵称在上、手机号在下」取消）；v52 列头改「手机号」 -->
             <span class="member-phone">{{ (row as CreditRecord).phone }}</span>
+          </template>
+        </el-table-column>
+        <!-- v52：客户维度列（微信昵称 / 套餐 / 到期状态 / 到期时间）紧跟手机号 -->
+        <el-table-column label="微信昵称" width="112" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="member-nick">{{ (row as CreditRecord).wechatNickname || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="套餐" width="96" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="plan-name">{{ (row as CreditRecord).planName || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期状态" width="96" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="membershipMeta(row as CreditRecord).type" effect="plain">
+              {{ membershipMeta(row as CreditRecord).label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="到期时间" width="104">
+          <template #default="{ row }">
+            <span class="expire-time" :class="{ 'expire-warn': isExpiringSoon(row as CreditRecord) }">
+              {{ expiryText(row as CreditRecord) }}
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="消耗项目" width="126">
@@ -502,7 +527,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="时间（北京）" width="146">
+        <el-table-column label="消耗时间" width="146">
           <template #default="{ row }">{{ beijingTime((row as CreditRecord).createdAt) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="82">
@@ -531,31 +556,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
         </el-table-column>
         <el-table-column label="毛利" width="74" align="right">
           <template #default="{ row }"><span class="margin-val">{{ percent((row as CreditRecord).grossMargin) }}</span></template>
-        </el-table-column>
-        <!-- v48：右侧新增客户维度列——微信昵称 / 套餐 / 是否到期 / 到期时间 -->
-        <el-table-column label="微信昵称" width="112" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="member-nick">{{ (row as CreditRecord).wechatNickname || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="套餐" width="96" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="plan-name">{{ (row as CreditRecord).planName || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="到期状态" width="96" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="membershipMeta(row as CreditRecord).type" effect="plain">
-              {{ membershipMeta(row as CreditRecord).label }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="到期时间" width="104">
-          <template #default="{ row }">
-            <span class="expire-time" :class="{ 'expire-warn': isExpiringSoon(row as CreditRecord) }">
-              {{ expiryText(row as CreditRecord) }}
-            </span>
-          </template>
         </el-table-column>
         <el-table-column label="操作" width="96" fixed="right" align="center">
           <template #default="{ row }">
