@@ -118,6 +118,13 @@ const creditClass = (r: CreditRecord): string => (r.status === 'REFUNDED' ? 'cre
 const money = (n: number): string => `¥${Number(n || 0).toFixed(4)}`
 /** 毛利率展示：0–1 → 89.9%；undefined（无用户价）显示 — */
 const percent = (n?: number): string => (typeof n === 'number' && Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '—')
+/** 列表副行：把该次调用的第三方接口与点数摘出来（最多 2 个 + 其余计数） */
+function toolSummary(r: CreditRecord): string {
+  const tools = r.breakdown.filter((b) => b.type === 'MCP_TOOL')
+  if (!tools.length) return r.breakdown.map((b) => typeLabel(b.type)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')
+  const head = tools.slice(0, 2).map((b) => `${b.name}${b.points ? ` ${b.points}点` : ''}`).join('、')
+  return tools.length > 2 ? `${head} 等 ${tools.length} 个接口` : head
+}
 /** 成本价展示：接口单价很低，需要 4–6 位小数才看得出差异 */
 const moneyFine = (n?: number): string => (typeof n === 'number' ? `¥${n < 0.01 ? n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : n.toFixed(4)}` : '—')
 
@@ -252,8 +259,8 @@ onMounted(async () => {
             <el-button link type="primary" class="content-link" @click="openDetail(row as CreditRecord)">
               {{ (row as CreditRecord).content }}
             </el-button>
-            <div class="content-sub muted">
-              {{ (row as CreditRecord).breakdown.map((b) => typeLabel(b.type)).filter((v, i, a) => a.indexOf(v) === i).join(' · ') }}
+            <div class="content-sub muted" :title="(row as CreditRecord).breakdown.filter((b) => b.type === 'MCP_TOOL').map((b) => `${b.name}${b.points ? ` ${b.points}点` : ''}`).join('、')">
+              {{ toolSummary(row as CreditRecord) }}
             </div>
           </template>
         </el-table-column>
@@ -314,7 +321,7 @@ onMounted(async () => {
     </el-card>
 
     <!-- 消耗详情抽屉：执行过程 / 消耗类型 / 消耗算力 三列 -->
-    <el-drawer v-model="detailVisible" title="消耗详情" size="680px" append-to-body>
+    <el-drawer v-model="detailVisible" title="消耗详情" size="860px" append-to-body>
       <template v-if="current">
         <div class="detail-head">
           <div class="detail-title">
@@ -332,7 +339,7 @@ onMounted(async () => {
 
         <div class="detail-section-title">消耗明细（逐个接口 / 模型）</div>
         <el-table :data="current.breakdown" size="small" class="detail-table">
-          <el-table-column label="执行过程" min-width="200">
+          <el-table-column label="执行过程" min-width="190">
             <template #default="{ row }">
               <div class="exec-name">
                 {{ row.name }}
@@ -342,22 +349,32 @@ onMounted(async () => {
               <div class="exec-basis muted">{{ row.basis }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="消耗类型" width="82">
+          <el-table-column label="调用/点数" width="92" align="center">
+            <template #default="{ row }">
+              <template v-if="row.calls">
+                <span class="calls-times">{{ row.calls }} 次</span>
+                <span class="points-tag">{{ row.points }} 点</span>
+                <div class="points-sub muted">{{ row.calls }} × {{ row.pointsPerCall }} 点</div>
+              </template>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="76">
             <template #default="{ row }"><span class="exec-type">{{ typeLabel(row.type) }}</span></template>
           </el-table-column>
-          <el-table-column label="成本价" width="82" align="right">
+          <el-table-column label="成本价" width="80" align="right">
             <template #default="{ row }"><span class="cost-val">{{ moneyFine(row.costPrice) }}</span></template>
           </el-table-column>
-          <el-table-column label="用户价" width="82" align="right">
+          <el-table-column label="用户价" width="80" align="right">
             <template #default="{ row }"><span class="revenue-val">{{ moneyFine(row.userPrice) }}</span></template>
           </el-table-column>
-          <el-table-column label="扣分" width="72" align="right">
+          <el-table-column label="扣分" width="64" align="right">
             <template #default="{ row }">
               <span class="credit-val" :class="row.credits > 0 ? 'credit-cost' : 'credit-free'">{{ row.credits > 0 ? `-${row.credits}` : '0' }}</span>
               <div v-if="row.originalCredits" class="void-note">原 -{{ row.originalCredits }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="毛利" width="68" align="right">
+          <el-table-column label="毛利" width="72" align="right">
             <template #default="{ row }"><span class="margin-val">{{ percent(row.grossMargin) }}</span></template>
           </el-table-column>
         </el-table>
@@ -459,6 +476,13 @@ onMounted(async () => {
 .revenue-val { color: #0f766e; font-variant-numeric: tabular-nums; }
 .margin-val { color: #7c3aed; font-variant-numeric: tabular-nums; }
 .detail-table { font-size: 12px; }
+.detail-table :deep(.el-table__cell) { padding: 7px 0; }
+.detail-table .cost-val, .detail-table .revenue-val, .detail-table .margin-val { font-size: 11.5px; white-space: nowrap; }
+.detail-table :deep(.el-table__cell) { padding: 7px 0; }
+.detail-table .cost-val, .detail-table .revenue-val, .detail-table .margin-val { font-size: 11.5px; white-space: nowrap; }
 .revenue-void { color: var(--el-text-color-secondary); font-variant-numeric: tabular-nums; }
+.calls-times { font-variant-numeric: tabular-nums; color: var(--el-text-color-regular); }
+.points-tag { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 4px; background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-size: 11px; line-height: 16px; font-weight: 600; }
+.points-sub { font-size: 10px; line-height: 1.3; }
 .void-note { font-size: 11px; color: var(--el-text-color-secondary); }
 </style>

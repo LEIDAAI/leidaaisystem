@@ -872,24 +872,75 @@ export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): 
   return genChatAnalysis({ ...c, createdAt: ask?.createdAt || c.createdAt }, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
 }
 /**
- * v41：消耗明细种子（严格按《积分消耗与定价方案 v1》口径生成）。
+ * v43：消耗明细种子（逐接口 + 点数口径）。
  *
- * 一条记录 = 一次对话回合；breakdown = 该回合里逐笔真实接口调用 + 模型 token 消耗：
- *   - 接口类：渠道单位成本 = 月采购 ÷ 月额度 → 成本价；扣分 = 成本 × 加价倍数 ÷ ¥0.0049 向上取整
- *     （云启 OZON/TEMU 27 分/次、1688 18 分/次、亚马逊按额度差异 7 分/额度、TK 179、虾皮 204）
- *   - 模型类：输入 4 分/千 tokens、输出 16 分/千 tokens（成本 ¥2/¥8 每百万 ×10）
- * 这样后台能回答：「这次 OZON 选品扣 577 分里，接口 297 分、AI 280 分；接口成本 ¥0.146、用户价 ¥1.455」。
+ * 与 v41 的差别：不再把接口调用合并成一行「亚马逊数据接口」，
+ * 而是**每个第三方接口单独一行**，并明确标出「调用次数 × 每次点数 = 总点数」，
+ * 让后台能直接对账「product_detail 调了 8 次共 8 点、similar_product_feature 调了 2 次共 10 点」。
+ *
+ * 点数口径（供应商计价单位）：
+ *   - 亚马逊 Sorftime 逐接口不同：product_detail=1、product_search=1、similar_product_feature=5、product_reviews=10、专利图搜=450…
+ *   - 云启 OZON/TEMU、1688、TK、虾皮：按次计，1 次 = 1 点；云启字典/字段/配额查询 = 0 点
+ * 成本价 = 点数 × 渠道单位成本；扣分 = ceil(点数 × 单位成本 × 加价倍数 ÷ ¥0.0049)
  */
 export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phone: string; wechatNickname: string }>): import('../config').CreditRecord[] {
   const { CHANNEL_RULES, MODEL_RULE, toolCostPrice, toolCredits, marginOf } = pricing
-  /** 业务项目 → 该任务典型调用链（严格对应方案第 6 章的任务消耗示例） */
-  const TASK_CHAINS: Record<string, { project: string; channelKey: string; tools: string[]; detailCalls: number }> = {
-    OZON: { project: 'OZON 选品分析', channelKey: 'yunqi-ozon', tools: ['yq_ozon_goods_search'], detailCalls: 10 },
-    TEMU: { project: 'TEMU 选品分析', channelKey: 'yunqi-temu', tools: ['yq_goods_search'], detailCalls: 10 },
-    亚马逊: { project: '亚马逊选品分析', channelKey: 'amazon', tools: ['amazon_product_search'], detailCalls: 10 },
-    1688: { project: '1688 分销选品', channelKey: 'dld-1688', tools: ['product_search_list'], detailCalls: 10 },
-    TK: { project: 'TK 内容选品', channelKey: 'fastmoss', tools: ['echotik_video_search'], detailCalls: 10 },
-    虾皮: { project: '虾皮选品分析', channelKey: 'shopee', tools: ['shopee_product_search'], detailCalls: 10 }
+
+  /** 每个任务链：主接口 + 典型的逐接口调用清单（接口名, 调用次数） */
+  const TASK_CHAINS: Record<string, {
+    project: string; channelKey: string
+    calls: Array<{ tool: string; times: number }>
+  }> = {
+    OZON: {
+      project: 'OZON 选品分析', channelKey: 'yunqi-ozon',
+      calls: [
+        { tool: 'yq_ozon_goods_search', times: 1 },
+        { tool: 'yq_ozon_goods_detail', times: 8 },
+        { tool: 'yq_ozon_mall_detail', times: 3 },
+        { tool: 'yq_dict_lookup', times: 2 }
+      ]
+    },
+    TEMU: {
+      project: 'TEMU 选品分析', channelKey: 'yunqi-temu',
+      calls: [
+        { tool: 'yq_goods_search', times: 1 },
+        { tool: 'yq_goods_detail', times: 6 },
+        { tool: 'yq_mall_detail', times: 2 }
+      ]
+    },
+    亚马逊: {
+      project: '亚马逊选品分析', channelKey: 'amazon',
+      calls: [
+        { tool: 'product_search', times: 1 },
+        { tool: 'product_detail', times: 8 },
+        { tool: 'similar_product_feature', times: 2 },
+        { tool: 'product_reviews', times: 1 }
+      ]
+    },
+    1688: {
+      project: '1688 分销选品', channelKey: 'dld-1688',
+      calls: [
+        { tool: 'product_search_list', times: 1 },
+        { tool: 'product_info', times: 8 },
+        { tool: 'ali_offer_sku_prices', times: 4 },
+        { tool: 'get_category_info', times: 1 }
+      ]
+    },
+    TK: {
+      project: 'TK 内容选品', channelKey: 'fastmoss',
+      calls: [
+        { tool: 'echotik_video_search', times: 1 },
+        { tool: 'echotik_influencer_ranklist', times: 5 },
+        { tool: 'echotik_live_list', times: 5 }
+      ]
+    },
+    虾皮: {
+      project: '虾皮选品分析', channelKey: 'shopee',
+      calls: [
+        { tool: 'shopee_product_search', times: 1 },
+        { tool: 'shopee_shop_search', times: 9 }
+      ]
+    }
   }
   const pickTask = (topic: string): typeof TASK_CHAINS[string] => {
     if (/Ozon/i.test(topic)) return TASK_CHAINS.OZON
@@ -908,39 +959,48 @@ export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phon
     if (!user) return
     const task = pickTask(chat.title)
     const channel = channelByKey(task.channelKey)
-    const mainTool = channel.tools.find((t) => t.name === task.tools[0]) || channel.tools[0]
     const askTimes = chat.messages.filter((m) => m.role === 'user').map((m) => m.createdAt)
     askTimes.forEach((at, ri) => {
       const breakdown: import('../config').CreditBreakdown[] = []
-      // ① 列表检索：1 次主接口调用
-      const listCost = toolCostPrice(channel, mainTool)
-      const listCredits = toolCredits(channel, mainTool)
-      breakdown.push({
-        name: mainTool.label, code: mainTool.name, type: 'MCP_TOOL', channel: channel.label,
-        basis: `1 次有效调用（${channel.granularity}；单位成本 ¥${channel.unitCost}/次，×${channel.markup} 倍）`,
-        credits: listCredits, costPrice: listCost, userPrice: Number((listCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
-        grossMargin: marginOf(listCost, listCredits), markup: channel.markup, cost: listCost, quantity: 1, unit: '次'
+      // ① 逐个第三方接口成行：调用次数 × 每次点数 = 总点数
+      task.calls.forEach((c) => {
+        const tool = channel.tools.find((t) => t.name === c.tool)
+        if (!tool) return
+        // 追问回合只补查部分详情，避免每轮都一样
+        const times = ri === 0 ? c.times : Math.max(1, Math.round(c.times / 3))
+        const points = times * tool.pointsPerCall
+        if (points === 0) return // 0 点接口（云启字典/字段/配额）不计费，不占一行
+        const cost = toolCostPrice(channel, tool, times)
+        const credits = toolCredits(channel, tool, times)
+        breakdown.push({
+          name: tool.label,
+          code: tool.name,
+          type: 'MCP_TOOL',
+          channel: channel.label,
+          basis: `${times} 次 × ${tool.pointsPerCall} 点 = ${points} 点（单位成本 ¥${channel.unitCost}/点，×${channel.markup} 倍）`,
+          credits,
+          costPrice: cost,
+          userPrice: Number((credits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
+          grossMargin: marginOf(cost, credits),
+          markup: channel.markup,
+          cost,
+          calls: times,
+          pointsPerCall: tool.pointsPerCall,
+          points,
+          quantity: times,
+          unit: '次'
+        })
       })
-      // ② 详情补查：按任务链补 N 个详情（首回合多、追问少）
-      const detailCalls = ri === 0 ? task.detailCalls : Math.max(2, Math.round(task.detailCalls / 3))
-      const detailCost = Number((listCost * detailCalls).toFixed(6))
-      const detailCredits = listCredits * detailCalls
-      breakdown.push({
-        name: `${mainTool.label.replace('搜索', '详情')}`, code: mainTool.name.replace('search', 'detail'), type: 'MCP_TOOL', channel: channel.label,
-        basis: `补查详情 ${detailCalls} 次（${channel.granularity}）`,
-        credits: detailCredits, costPrice: detailCost, userPrice: Number((detailCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
-        grossMargin: marginOf(detailCost, detailCredits), markup: channel.markup, cost: detailCost, quantity: detailCalls, unit: '次'
-      })
-      // ③ AI 分析：模型 token（输入 5 万 / 输出 5 千，多轮累计口径）
-      const inTok = 38000 + ((ci * 431 + ri * 617) % 24000)
-      const outTok = 3600 + ((ci * 137 + ri * 211) % 2200)
+      // ② 模型 token（输入/输出分两行，按千 tokens 计分）
+      const inTok = 34000 + ((ci * 431 + ri * 617) % 22000)
+      const outTok = 3200 + ((ci * 137 + ri * 211) % 2100)
       const inCredits = Math.ceil((inTok / 1000) * MODEL_RULE.inputCreditsPerKToken)
       const outCredits = Math.ceil((outTok / 1000) * MODEL_RULE.outputCreditsPerKToken)
       const inCost = Number(((inTok / 1e6) * MODEL_RULE.inputCostPerMillion).toFixed(6))
       const outCost = Number(((outTok / 1e6) * MODEL_RULE.outputCostPerMillion).toFixed(6))
       breakdown.push({
         name: `${MODEL_RULE.label} 输入`, code: 'deepseek-input', type: 'LLM_MODEL', channel: MODEL_RULE.label,
-        basis: `${(inTok / 1000).toFixed(1)}K tokens（¥${MODEL_RULE.inputCostPerMillion}/百万，${MODEL_RULE.inputCreditsPerKToken} 分/千 tokens，含系统提示+工具定义+历史+工具返回）`,
+        basis: `${(inTok / 1000).toFixed(1)}K tokens（¥${MODEL_RULE.inputCostPerMillion}/百万，${MODEL_RULE.inputCreditsPerKToken} 分/千 tokens）`,
         credits: inCredits, costPrice: inCost, userPrice: Number((inCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
         grossMargin: marginOf(inCost, inCredits), markup: MODEL_RULE.markup, cost: inCost, quantity: inTok, unit: 'tokens'
       })
@@ -950,14 +1010,9 @@ export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phon
         credits: outCredits, costPrice: outCost, userPrice: Number((outCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
         grossMargin: marginOf(outCost, outCredits), markup: MODEL_RULE.markup, cost: outCost, quantity: outTok, unit: 'tokens'
       })
-      // ④ 部分任务追加报告生成（技能执行，不计费，仅记录链路便于核对）
-      if ((ci + ri) % 4 === 1) {
-        breakdown.push({ name: '选品分析报告生成', code: 'skill-report', type: 'SKILL', channel: '应用内', basis: '技能内部执行，不单独计费', credits: 0, costPrice: 0, userPrice: 0, cost: 0 })
-      }
       const totalCredits = breakdown.reduce((s2, b) => s2 + b.credits, 0)
       const totalCost = Number(breakdown.reduce((s2, b) => s2 + (b.costPrice || 0), 0).toFixed(6))
       const totalUserPrice = Number((totalCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4))
-      // 少量记录演示免费（活动期）与已退回（调用失败自动返还）
       const isFree = (ci * 7 + ri) % 11 === 3
       const isRefunded = (ci * 5 + ri) % 17 === 5
       records.push({
@@ -967,12 +1022,10 @@ export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phon
         createdAt: at,
         status: isRefunded ? 'REFUNDED' : isFree ? 'FREE' : 'CHARGED',
         credits: isRefunded ? totalCredits : isFree ? 0 : -totalCredits,
-        // 免费/已退回：本次不计费（金额归零），但 breakdown 保留原始成本价与应扣分，便于对账「原本该扣多少、已退回多少」
         breakdown: isFree || isRefunded
           ? breakdown.map((b) => ({ ...b, originalCredits: b.credits, credits: 0, userPrice: 0, grossMargin: undefined }))
           : breakdown,
         cost: totalCost,
-        // 已扣减：用户价即实收；免费/已退回：实收 0，原值留在 originalUserPrice 供对账
         userPriceTotal: isFree || isRefunded ? 0 : totalUserPrice,
         originalUserPrice: isFree || isRefunded ? totalUserPrice : undefined,
         grossMargin: isFree || isRefunded ? undefined : marginOf(totalCost, totalCredits),

@@ -322,6 +322,12 @@ export interface CreditBreakdown {
   cost?: number
   /** 免费/已退回时保留的原始应扣分（对账用：原本该扣多少） */
   originalCredits?: number
+  /** 本次调用次数 */
+  calls?: number
+  /** 每次调用消耗点数（Sorftime 逐接口不同：product_detail=1、similar_product_feature=5、专利图搜=450；其余渠道 1） */
+  pointsPerCall?: number
+  /** 本次消耗总点数 = calls × pointsPerCall（模型类为 tokens 折算，不填） */
+  points?: number
   /** 数量（tokens 或调用次数） */
   quantity?: number
   /** 单位（tokens / 次） */

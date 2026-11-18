@@ -36,8 +36,13 @@ export interface ChannelRule {
   margin: number
   /** 计费粒度说明 */
   granularity: string
-  /** 该渠道下的工具（工具名 → 中文名；亚马逊的额度消耗差异另行标注） */
-  tools: Array<{ name: string; label: string; /** 亚马逊专用：每次消耗额度数（决定扣分） */ quotaPerCall?: number }>
+  /**
+   * 该渠道下的工具。
+   * pointsPerCall = 每次调用消耗的「点数」（供应商计价单位）：
+   *   - 亚马逊 Sorftime：逐接口不同（similar_product_feature=5、product_detail=1、专利图搜=450…），以官方文档「调用消耗」为准
+   *   - 云启 / 1688 / TK / 虾皮：按次计，1 次 = 1 点
+   */
+  tools: Array<{ name: string; label: string; /** 每次调用消耗点数（点数 × 单位成本 = 成本价） */ pointsPerCall: number }>
 }
 
 /** 按方案 v1 第 1/3 章的五个渠道（+模型）硬编码规则；改价只需改这里 */
@@ -53,14 +58,19 @@ export const CHANNEL_RULES: ChannelRule[] = [
     creditsPerCall: 7,
     margin: 1 - 0.0033 / (7 * CREDIT_UNIT_PRICE),
     granularity: '逐工具扣量（1/2/5/10/60/150/450 额度/次）',
+    // 点数以 Sorftime 官方文档「调用消耗」为准（用户提供的 MCP 能力文档截图）
     tools: [
-      { name: 'amazon_product_search', label: '商品搜索', quotaPerCall: 1 },
-      { name: 'amazon_product_detail', label: '商品详情', quotaPerCall: 1 },
-      { name: 'amazon_category_report', label: '类目报告', quotaPerCall: 2 },
-      { name: 'amazon_keyword_research', label: '关键词研究', quotaPerCall: 5 },
-      { name: 'amazon_reviews', label: '评论抓取', quotaPerCall: 10 },
-      { name: 'amazon_patent_keyword', label: '专利检索', quotaPerCall: 60 },
-      { name: 'amazon_patent_image', label: '专利图搜', quotaPerCall: 450 }
+      { name: 'product_detail', label: '产品详情', pointsPerCall: 1 },
+      { name: 'product_search', label: '产品搜索', pointsPerCall: 1 },
+      { name: 'similar_product_feature', label: '相似产品特征', pointsPerCall: 5 },
+      { name: 'product_customers_say', label: '评论 AI 提炼', pointsPerCall: 5 },
+      { name: 'category_report', label: '类目报告', pointsPerCall: 5 },
+      { name: 'category_keywords', label: '类目关键词', pointsPerCall: 5 },
+      { name: 'keyword_research', label: '关键词研究', pointsPerCall: 5 },
+      { name: 'product_reviews', label: '评论抓取', pointsPerCall: 10 },
+      { name: 'seller_search', label: '卖家搜索', pointsPerCall: 5 },
+      { name: 'patent_search_from_keyword', label: '专利检索', pointsPerCall: 60 },
+      { name: 'patent_search_from_image', label: '专利图搜', pointsPerCall: 450 }
     ]
   },
   {
@@ -75,17 +85,18 @@ export const CHANNEL_RULES: ChannelRule[] = [
     margin: 1 - 0.0133 / (27 * CREDIT_UNIT_PRICE),
     granularity: '按次扣（不分工具）；字典/字段/额度查询不计次',
     tools: [
-      { name: 'yq_ozon_goods_search', label: 'Ozon 商品搜索' },
-      { name: 'yq_ozon_goods_detail', label: 'Ozon 商品详情' },
-      { name: 'yq_ozon_spu_search', label: 'Ozon SPU 搜索' },
-      { name: 'yq_ozon_spu_detail', label: 'Ozon SPU 详情' },
-      { name: 'yq_ozon_mall_search', label: 'Ozon 店铺搜索' },
-      { name: 'yq_ozon_mall_detail', label: 'Ozon 店铺详情' },
-      { name: 'yq_ozon_market_stat', label: 'Ozon 大盘统计' },
-      { name: 'yq_ozon_brand_search', label: 'Ozon 品牌搜索' },
-      { name: 'yq_dict_lookup', label: '字典查询', },
-      { name: 'yq_fields_lookup', label: '字段查询' },
-      { name: 'yq_quota_status', label: '配额查询' }
+      { name: 'yq_ozon_goods_search', label: 'Ozon 商品搜索', pointsPerCall: 1 },
+      { name: 'yq_ozon_goods_detail', label: 'Ozon 商品详情', pointsPerCall: 1 },
+      { name: 'yq_ozon_spu_search', label: 'Ozon SPU 搜索', pointsPerCall: 1 },
+      { name: 'yq_ozon_spu_detail', label: 'Ozon SPU 详情', pointsPerCall: 1 },
+      { name: 'yq_ozon_mall_search', label: 'Ozon 店铺搜索', pointsPerCall: 1 },
+      { name: 'yq_ozon_mall_detail', label: 'Ozon 店铺详情', pointsPerCall: 1 },
+      { name: 'yq_ozon_market_stat', label: 'Ozon 大盘统计', pointsPerCall: 1 },
+      { name: 'yq_ozon_brand_search', label: 'Ozon 品牌搜索', pointsPerCall: 1 },
+      // 通用三件套（方案原文）：不计次 → 0 点
+      { name: 'yq_dict_lookup', label: '字典查询', pointsPerCall: 0 },
+      { name: 'yq_fields_lookup', label: '字段查询', pointsPerCall: 0 },
+      { name: 'yq_quota_status', label: '配额查询', pointsPerCall: 0 }
     ]
   },
   {
@@ -100,16 +111,16 @@ export const CHANNEL_RULES: ChannelRule[] = [
     margin: 1 - 0.0133 / (27 * CREDIT_UNIT_PRICE),
     granularity: '按次扣（不分工具）',
     tools: [
-      { name: 'yq_goods_search', label: 'TEMU 商品搜索' },
-      { name: 'yq_goods_detail', label: 'TEMU 商品详情' },
-      { name: 'yq_goods_comment', label: 'TEMU 商品评论' },
-      { name: 'yq_goods_img_search', label: 'TEMU 图搜' },
-      { name: 'yq_goods_data', label: 'TEMU 商品数据' },
-      { name: 'yq_mall_search', label: 'TEMU 店铺搜索' },
-      { name: 'yq_mall_detail', label: 'TEMU 店铺详情' },
-      { name: 'yq_brand_search', label: 'TEMU 品牌搜索' },
-      { name: 'yq_market_semi', label: 'TEMU 大盘半托管' },
-      { name: 'yq_market_fully', label: 'TEMU 大盘全托管' }
+      { name: 'yq_goods_search', label: 'TEMU 商品搜索', pointsPerCall: 1 },
+      { name: 'yq_goods_detail', label: 'TEMU 商品详情', pointsPerCall: 1 },
+      { name: 'yq_goods_comment', label: 'TEMU 商品评论', pointsPerCall: 1 },
+      { name: 'yq_goods_img_search', label: 'TEMU 图搜', pointsPerCall: 1 },
+      { name: 'yq_goods_data', label: 'TEMU 商品数据', pointsPerCall: 1 },
+      { name: 'yq_mall_search', label: 'TEMU 店铺搜索', pointsPerCall: 1 },
+      { name: 'yq_mall_detail', label: 'TEMU 店铺详情', pointsPerCall: 1 },
+      { name: 'yq_brand_search', label: 'TEMU 品牌搜索', pointsPerCall: 1 },
+      { name: 'yq_market_semi', label: 'TEMU 大盘半托管', pointsPerCall: 1 },
+      { name: 'yq_market_fully', label: 'TEMU 大盘全托管', pointsPerCall: 1 }
     ]
   },
   {
@@ -124,21 +135,21 @@ export const CHANNEL_RULES: ChannelRule[] = [
     margin: 1 - 0.018 / (18 * CREDIT_UNIT_PRICE),
     granularity: '按次扣（1 次业务操作 = 1 点）',
     tools: [
-      { name: 'product_search_list', label: '选品库' },
-      { name: 'cross_border_product_search_list', label: '跨境选品库' },
-      { name: 'product_trend_new_list', label: '趋势新品' },
-      { name: 'product_billboard_list', label: '商品榜' },
-      { name: 'product_info', label: '商品分析' },
-      { name: 'monitor_shop_analysis', label: '店铺分析' },
-      { name: 'get_category_info', label: '类目查询' },
-      { name: 'image_search', label: '图搜' },
-      { name: 'shop_rank_list', label: '店铺榜' },
-      { name: 'ali_offer_realtime_detail', label: '属性与证书' },
-      { name: 'ali_offer_sku_prices', label: 'SKU 价格' },
-      { name: 'monitor_shop_add', label: '店铺监控' },
-      { name: 'monitor_offer_add', label: '商品监控' },
-      { name: 'get_ali_offerRates', label: '评论抓取' },
-      { name: 'global_image_search', label: '全网图搜' }
+      { name: 'product_search_list', label: '选品库', pointsPerCall: 1 },
+      { name: 'cross_border_product_search_list', label: '跨境选品库', pointsPerCall: 1 },
+      { name: 'product_trend_new_list', label: '趋势新品', pointsPerCall: 1 },
+      { name: 'product_billboard_list', label: '商品榜', pointsPerCall: 1 },
+      { name: 'product_info', label: '商品分析', pointsPerCall: 1 },
+      { name: 'monitor_shop_analysis', label: '店铺分析', pointsPerCall: 1 },
+      { name: 'get_category_info', label: '类目查询', pointsPerCall: 1 },
+      { name: 'image_search', label: '图搜', pointsPerCall: 1 },
+      { name: 'shop_rank_list', label: '店铺榜', pointsPerCall: 1 },
+      { name: 'ali_offer_realtime_detail', label: '属性与证书', pointsPerCall: 1 },
+      { name: 'ali_offer_sku_prices', label: 'SKU 价格', pointsPerCall: 1 },
+      { name: 'monitor_shop_add', label: '店铺监控', pointsPerCall: 1 },
+      { name: 'monitor_offer_add', label: '商品监控', pointsPerCall: 1 },
+      { name: 'get_ali_offerRates', label: '评论抓取', pointsPerCall: 1 },
+      { name: 'global_image_search', label: '全网图搜', pointsPerCall: 1 }
     ]
   },
   {
@@ -153,9 +164,9 @@ export const CHANNEL_RULES: ChannelRule[] = [
     margin: 1 - 0.0878 / (179 * CREDIT_UNIT_PRICE),
     granularity: '按 credits 扣',
     tools: [
-      { name: 'echotik_video_search', label: 'TK 视频搜索' },
-      { name: 'echotik_influencer_ranklist', label: '达人榜' },
-      { name: 'echotik_live_list', label: '直播榜' }
+      { name: 'echotik_video_search', label: 'TK 视频搜索', pointsPerCall: 1 },
+      { name: 'echotik_influencer_ranklist', label: '达人榜', pointsPerCall: 1 },
+      { name: 'echotik_live_list', label: '直播榜', pointsPerCall: 1 }
     ]
   },
   {
@@ -170,8 +181,8 @@ export const CHANNEL_RULES: ChannelRule[] = [
     margin: 1 - 0.0999 / (204 * CREDIT_UNIT_PRICE),
     granularity: '按次扣',
     tools: [
-      { name: 'shopee_product_search', label: '虾皮商品搜索' },
-      { name: 'shopee_shop_search', label: '虾皮店铺搜索' }
+      { name: 'shopee_product_search', label: '虾皮商品搜索', pointsPerCall: 1 },
+      { name: 'shopee_shop_search', label: '虾皮店铺搜索', pointsPerCall: 1 }
     ]
   }
 ]
@@ -189,7 +200,7 @@ export const MODEL_RULE = {
 }
 
 /** 按工具名查渠道规则 */
-export function channelOfTool(toolName: string): { channel: ChannelRule; tool: { name: string; label: string; quotaPerCall?: number } } | null {
+export function channelOfTool(toolName: string): { channel: ChannelRule; tool: { name: string; label: string; pointsPerCall: number } } | null {
   for (const channel of CHANNEL_RULES) {
     const tool = channel.tools.find((t) => t.name === toolName)
     if (tool) return { channel, tool }
@@ -197,16 +208,16 @@ export function channelOfTool(toolName: string): { channel: ChannelRule; tool: {
   return null
 }
 
-/** 工具的单次成本价（元）：亚马逊按额度差异折算（unitCost × 额度数），其余按单位成本 */
-export function toolCostPrice(channel: ChannelRule, tool?: { quotaPerCall?: number }): number {
-  const quota = tool?.quotaPerCall ?? 1
-  return Number((channel.unitCost * quota).toFixed(6))
+/** 工具单次成本价（元）= 渠道单位成本 × 本次消耗点数（亚马逊逐接口 1/5/10/60/450，其余 1） */
+export function toolCostPrice(channel: ChannelRule, tool?: { pointsPerCall?: number }, calls = 1): number {
+  const points = (tool?.pointsPerCall ?? 1) * calls
+  return Number((channel.unitCost * points).toFixed(6))
 }
 
-/** 工具的单次扣分（用户价）：亚马逊按额度差异折算，其余用渠道标准扣分 */
-export function toolCredits(channel: ChannelRule, tool?: { quotaPerCall?: number }): number {
-  const quota = tool?.quotaPerCall ?? 1
-  const raw = (channel.unitCost * quota * channel.markup) / CREDIT_UNIT_PRICE
+/** 工具本次扣分 = ceil(单位成本 × 点数 × 加价倍数 ÷ 每分价) */
+export function toolCredits(channel: ChannelRule, tool?: { pointsPerCall?: number }, calls = 1): number {
+  const points = (tool?.pointsPerCall ?? 1) * calls
+  const raw = (channel.unitCost * points * channel.markup) / CREDIT_UNIT_PRICE
   return Math.ceil(raw)
 }
 
