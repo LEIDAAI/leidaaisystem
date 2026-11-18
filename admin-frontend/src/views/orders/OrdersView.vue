@@ -458,17 +458,17 @@ async function submitGift() {
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <!-- v52 列调整：到期状态只留标签；注册/下单/到期三个时间列紧跟其后 -->
-        <el-table-column label="到期状态" width="96" align="center">
-          <template #default="{ row }">
-            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
-          </template>
-        </el-table-column>
+        <!-- v53 列调整：注册/下单两个时间列在前，到期状态紧跟到期时间之前 -->
         <el-table-column label="注册时间" width="166">
           <template #default="{ row }">{{ row.registeredAt ? formatDateTime(row.registeredAt) : '—' }}</template>
         </el-table-column>
         <el-table-column v-if="selectedColumns.includes('createdAt')" label="下单时间" width="166">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="到期状态" width="96" align="center">
+          <template #default="{ row }">
+            <el-tag :type="formatOrderExpiry(row, now).type" size="small" disable-transitions>{{ formatOrderExpiry(row, now).text }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="到期时间" width="166">
           <template #default="{ row }">{{ formatOrderExpiry(row, now).time }}</template>

@@ -61,10 +61,6 @@ const query = reactive({
   expertIds: [] as number[],
   skillIds: [] as number[],
   mcpServerIds: [] as number[],
-  /** v48：平台（枚举串）/ 场景 / 智能体（多选 id） */
-  platforms: [] as string[],
-  scenarioIds: [] as number[],
-  agentIds: [] as number[],
   start: '',
   end: '',
   page: 1,
@@ -139,9 +135,6 @@ function queryParams(): Record<string, string | number> {
   if (query.expertIds.length) q.expertIds = query.expertIds.join(',')
   if (query.skillIds.length) q.skillIds = query.skillIds.join(',')
   if (query.mcpServerIds.length) q.mcpServerIds = query.mcpServerIds.join(',')
-  if (query.platforms.length) q.platforms = query.platforms.join(',')
-  if (query.scenarioIds.length) q.scenarioIds = query.scenarioIds.join(',')
-  if (query.agentIds.length) q.agentIds = query.agentIds.join(',')
   if (query.start) q.from = query.start
   if (query.end) q.to = query.end
   return q
@@ -173,7 +166,7 @@ function search(): void {
 }
 
 function reset(): void {
-  Object.assign(query, { phone: '', content: '', type: '', expertIds: [], skillIds: [], mcpServerIds: [], platforms: [], scenarioIds: [], agentIds: [], start: '', end: '', page: 1, pageSize: 20 })
+  Object.assign(query, { phone: '', content: '', type: '', expertIds: [], skillIds: [], mcpServerIds: [], start: '', end: '', page: 1, pageSize: 20 })
   Object.assign(picker, { expertPlatforms: [], expertScenarios: [], skillPlatforms: [], skillScenarios: [], skillAgents: [] })
   applyQuickRange('30d', false)
   void load()
@@ -443,24 +436,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
           <el-option value="MCP_TOOL" label="第三方工具" />
           <el-option value="SKILL" label="技能执行" />
         </el-select>
-        <el-select v-model="query.platforms" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="平台（可多选）" clearable style="width:150px" @change="search">
-          <el-option v-for="p in options.platforms" :key="p.value" :value="p.value" :label="p.label">
-            <span class="opt-name" :class="{ 'opt-idle': !p.usedCount }">{{ p.label }}</span>
-            <span class="opt-meta">{{ p.usedCount ? `${p.usedCount} 条` : '无消耗' }}</span>
-          </el-option>
-        </el-select>
-        <el-select v-model="query.scenarioIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="场景（可多选）" clearable style="width:150px" @change="search">
-          <el-option v-for="s in options.scenarios" :key="s.id" :value="s.id" :label="s.name">
-            <span class="opt-name" :class="{ 'opt-idle': !s.usedCount }">{{ s.name }}</span>
-            <span class="opt-meta">{{ s.usedCount ? `${s.usedCount} 条` : '无消耗' }}</span>
-          </el-option>
-        </el-select>
-        <el-select v-model="query.agentIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="智能体（可多选）" clearable style="width:150px" @change="search">
-          <el-option v-for="a in options.agents" :key="a.id" :value="a.id" :label="a.name">
-            <span class="opt-name" :class="{ 'opt-idle': !a.usedCount }">{{ a.name }}</span>
-            <span class="opt-meta">{{ a.usedCount ? `${a.usedCount} 条` : '无消耗' }}</span>
-          </el-option>
-        </el-select>
+        <!-- v53：平台/场景/智能体三个筛选下拉已删（演示数据里智能体只有「有维AI」一个，筛选无意义） -->
         <el-input v-model="query.content" placeholder="消耗内容关键词" clearable style="width:160px" @keyup.enter="search" />
         <el-input v-model="query.phone" placeholder="手机号（支持多个）" clearable style="width:160px" @keyup.enter="search" />
         <el-button type="primary" @click="search">查询</el-button>
@@ -656,9 +632,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureDetail))
 
         <div class="detail-foot muted">
           <p>· <b>成本价</b>= 渠道采购单价（月采购 ÷ 月额度）× 用量；<b>用户价</b>= 成本价 × 加价倍数（1688 为 5×，其余 10×）× 每分 ¥0.0049。</p>
-          <p>· 计费粒度：亚马逊逐工具扣量（1/2/5/10/60/150/450 额度/次）；云启（OZON/TEMU）按次不分工具（字典/字段/额度查询不计次）；1688 按次不分工具。</p>
-          <p>· 模型：输入 4 分/千 tokens、输出 16 分/千 tokens（成本 ¥2 / ¥8 每百万），多轮累计后统一向上取整。</p>
-          <p>· 前台只展示「本次消耗 N 积分」；成本价、毛利与逐笔接口明细仅后台可见。数据来源：{{ current.source }}。</p>
         </div>
       </template>
       <template #footer>
