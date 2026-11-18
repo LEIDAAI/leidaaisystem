@@ -1,6 +1,6 @@
 # 雷达AI 管理后台 Admin API 契约
 
-版本：v0.8 / Mock schema 19（2026-11-08 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；无真实 Java/交易服务联调）
+版本：v0.9 / Mock schema 26（2026-11-18 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；本轮 33 缺陷、8 交互、2 组规则详见功能清单第 9 节；v40–v45 消耗明细见第 11.1 节；无真实 Java/交易服务联调）
 
 已拍板规则：标准/高级/旗舰三档同功能、单账号；升级按实付折算且负补差取 0，月转年即时并按 365 天重置锚点，年转月/降级到期切换，未来期锁价排队；当期/未来期一律不退款，无自动续费、提前 7 天提醒；常规赠分仅注册 100，积分包仅有效会员可购、365 天有效且不随会员到期清零。**规则文本、Mock 迁移及订单记录不等同真实报价、支付、会员时间轴、积分账本或提醒调度。** 本文明确保留当前写接口未强制规则的缺口，完整规则见 `../功能清单.md` 第 8 节。
 基础路径：`/admin/api`
@@ -10,6 +10,7 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.9 | 2026-11-18 | **消耗明细 /credit-records（v40–v45）**：新增后台对话扣点账接口——列表/汇总/候选/详情，权限 `credit:view`；记录按「一次对话回合」组织，breakdown 逐笔给出模型 token 与第三方 MCP 接口调用（含点数 `pointsPerCall`/`points`），并同时提供成本价 `costPrice` 与用户价 `userPrice` 双口径；v44 增专家/技能/MCP 多选与内容关键词筛选；计价规则见 `utils/credit-pricing.ts`（每分 ¥0.0049） |
 | v0.8 | 2026-11-08 | 角色选项、封禁/解封、会员五态、modelId、上传响应 ID、默认专家 PUT、候选校验后提交/完整恢复、MCP 工具快照、特批权限/原因；明确自动保存与真实交易边界 |
 | v0.1 | 2026-10-28 | P0：认证 / 管理员 / 角色 / 用户 / 订单 / 审计 |
 | v0.2 | 2026-10-28 | P1 初版：套餐/专家/技能/MCP CRUD、权益绑定、变更刷新联动 |
@@ -310,6 +311,49 @@
 
 - JSON 保留原 `{filename,content}` Mock 描述，真实模式按 Blob 接收。XLSX Mock 在业务包装 data 中返回真正 OOXML Blob；`exportFile` 保留两种响应支持，真实后端待按相同二进制契约实现。下载文件名 `chat-{id}.xlsx`，MIME 与订单 XLSX 相同。
 - XLSX 单表「对话消息」，列为角色、消息内容、创建时间，宽度 16/80/25；创建时间为完整秒级文本、缺失/非法为 `—`。与订单复用 R8 统一绿色表头/浅绿斑马纹/细边框/冻结/自动筛选及按内容调整行高；消息保持脱敏结果，以文本写入不生成公式；空消息也有完整表头。保留 chat:export、审计与原目标会话范围；缺权限 403、会话不存在 404。历史跨会话「全量 CSV」待实现；专家/技能 JSON、技能 ZIP 与报告 HTML 不属于表格改造。
+
+## 11.1 消耗明细 /credit-records（v40–v45，后端 Mock）
+
+后台把「一次对话扣了多少积分」拆成可对账的成本账，回答「钱花在哪个模型、哪个第三方接口」。前台只展示总扣分，本组接口仅供后台。
+
+| 方法 | 路径 | 权限点 | 说明 |
+|---|---|---|---|
+| GET | /credit-records | credit:view | 列表（分页）。参数见下 |
+| GET | /credit-records/summary | credit:view | 顶部卡片：记录数、总扣分、总成本、总用户价、毛利率、接口点数、已扣减/免费条数、退回积分、按类型分布 |
+| GET | /credit-records/options | credit:view | v44 专家/技能/MCP 服务下拉候选（只列库内实际出现过的，避免空选项） |
+| GET | /credit-records/projects | credit:view | 消耗项目候选（按库内记录去重） |
+| GET | /credit-records/{id} | credit:view | 单条详情（含逐笔 breakdown）；不存在返回 404 |
+
+列表查询参数（过滤条件与 `/summary` 共用同一实现，保证卡片与列表口径一致）：
+
+| 参数 | 说明 |
+|---|---|
+| `phone` | 手机号片段搜索，支持顿号/逗号/分号/空格分隔多个，命中任一即保留 |
+| `project` | 消耗项目精确匹配 |
+| `from` / `to` | `YYYY-MM-DD` 或完整 ISO；**结束日含当日**（内部按 `23:59:59` 处理） |
+| `status` | `CHARGED` / `FREE` / `REFUNDED`。v44 起页面不再提供该筛选项，状态仍在列表展示，接口保留 |
+| `type` | `LLM_MODEL` / `MCP_TOOL` / `SKILL`，命中该记录任一笔 breakdown 即保留 |
+| `expertIds` / `skillIds` / `mcpServerIds` | v44 新增，逗号分隔 ID 列表；**同组内多值为「或」，不同组之间为「与」** |
+| `content` | v44 新增，关键词模糊匹配 `content` / `projectName` / `expertName`（忽略大小写） |
+| `page` / `pageSize` | 默认 1 / 20，pageSize 上限 200 |
+
+记录结构（`CreditRecord`，一条 = 一次对话回合）：
+
+- 主体：`id`、`userId`、`phone`、`wechatNickname`、`chatId`、`projectName`、`content`、`createdAt`、`source`
+- 状态与算力：`status`（`CHARGED` 已扣减 / `FREE` 免费 / `REFUNDED` 已退回）、`credits`（用户看到的扣分）、`originalCredits`（免费/退回时保留的原始应扣分，对账用）
+- 双口径金额：`cost`（成本价合计，元）、`userPriceTotal`（用户价合计，元）、`grossMargin`（0–1）；免费/退回记录 `userPriceTotal=0`，原值留在 `originalUserPrice`
+- v44 维度：`expertId`/`expertName`、`skillIds`/`skillNames`、`mcpServerIds`/`mcpServerNames`（由会话 → 专家 → 绑定技能/服务推导）
+- `breakdown[]`：逐笔消耗，字段 `name`、`code`（接口编码）、`type`、`channel`、`basis`（如「3 次 × 5 点 = 15 点」）、`credits`、`costPrice`（成本价）、`userPrice`（用户价）、`grossMargin`、`markup`、`calls`、`pointsPerCall`、`points`
+
+计价口径（`admin-frontend/src/utils/credit-pricing.ts`，严格对齐《积分消耗与定价方案 v1》）：
+
+- 每分 **¥0.0049**（¥98 / 20000 分）。用户价 = 扣分 × 0.0049；扣分 = `ceil(成本价 × 加价倍数 ÷ 0.0049)`
+- 成本价 = 渠道单位成本 × `pointsPerCall` × `calls`
+- 五渠道：亚马逊 Sorftime ¥0.0033/点（10 倍加价 → 1 点 7 分）、云启 OZON/TEMU ¥0.0133/点（27 分）、1688 店雷达 ¥0.0180/点（5 倍 → 18 分）、TK FastMoss ¥0.0878（179 分）、虾皮 ¥0.0999（204 分）
+- 亚马逊按 Sorftime 官方逐接口点数：`product_detail`/`product_search` 1 点、`similar_product_feature`/`product_customers_say`/`category_report`/`category_keywords`/`keyword_research`/`seller_search` 5 点、`product_reviews` 10 点、`patent_search_from_keyword` 60 点、`patent_search_from_image` 450 点；云启字典/字段/配额查询 0 点不计费
+- 模型：输入 ¥2/百万 tokens（4 分/千）、输出 ¥8/百万（16 分/千），多轮累计后统一向上取整
+
+`db.ts` 中该集合的迁移为**幂等自愈**（判据：存在 `CHARGED` 且 `userPriceTotal>0` 的记录，且 breakdown 带 `costPrice`），不依赖 `storedVersion` 版本号，避免已上线库永不迁移导致用户价全 0。
 
 ## 12. 前台工作台只读 API（C 端，附录 12.4）
 
