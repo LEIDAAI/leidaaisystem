@@ -454,10 +454,19 @@ export const creditRecordSummary = (q: CreditRecordQuery) => get<CreditSummary>(
 export const getCreditRecord = (id: number) => get<CreditRecord>(`/credit-records/${id}`)
 export const listCreditProjects = () => get<string[]>('/credit-records/projects')
 /** v44：专家 / 技能 / MCP 服务筛选候选 */
+/** 消耗明细筛选项（v46）：来自专家/技能/MCP 管理模块的全量配置，usedCount 为该配置已产生的消耗记录数 */
+export interface CreditRecordOption {
+  id: number
+  name: string
+  /** 已产生的消耗记录条数（0 = 已配置但暂无消耗） */
+  usedCount: number
+  /** 配置状态 1 启用 / 0 停用 */
+  status: number
+}
 export interface CreditRecordOptions {
-  experts: Array<{ id: number; name: string }>
-  skills: Array<{ id: number; name: string }>
-  mcpServers: Array<{ id: number; name: string }>
+  experts: CreditRecordOption[]
+  skills: CreditRecordOption[]
+  mcpServers: CreditRecordOption[]
 }
 export const creditRecordOptions = () => get<CreditRecordOptions>('/credit-records/options')
 

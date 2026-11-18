@@ -239,13 +239,22 @@ onMounted(async () => {
 
         <div class="filter-row">
         <el-select v-model="query.expertIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="专家（可多选）" clearable style="width:170px" @change="search">
-          <el-option v-for="e in options.experts" :key="e.id" :value="e.id" :label="e.name" />
+          <el-option v-for="e in options.experts" :key="e.id" :value="e.id" :label="e.name">
+            <span class="opt-name" :class="{ 'opt-idle': !e.usedCount }">{{ e.name }}</span>
+            <span class="opt-meta">{{ e.usedCount ? `${e.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
         </el-select>
         <el-select v-model="query.skillIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="技能（可多选）" clearable style="width:170px" @change="search">
-          <el-option v-for="sk in options.skills" :key="sk.id" :value="sk.id" :label="sk.name" />
+          <el-option v-for="sk in options.skills" :key="sk.id" :value="sk.id" :label="sk.name">
+            <span class="opt-name" :class="{ 'opt-idle': !sk.usedCount }">{{ sk.name }}</span>
+            <span class="opt-meta">{{ sk.usedCount ? `${sk.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
         </el-select>
         <el-select v-model="query.mcpServerIds" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="1" placeholder="MCP 服务（可多选）" clearable style="width:180px" @change="search">
-          <el-option v-for="m in options.mcpServers" :key="m.id" :value="m.id" :label="m.name" />
+          <el-option v-for="m in options.mcpServers" :key="m.id" :value="m.id" :label="m.name">
+            <span class="opt-name" :class="{ 'opt-idle': !m.usedCount }">{{ m.name }}</span>
+            <span class="opt-meta">{{ m.usedCount ? `${m.usedCount} 条` : '无消耗' }}</span>
+          </el-option>
         </el-select>
         <el-select v-model="query.type" placeholder="消耗类型（全部）" clearable style="width:136px" @change="search">
           <el-option value="LLM_MODEL" label="LLM 模型" />
@@ -453,6 +462,9 @@ onMounted(async () => {
   border: 1px solid #d8e2de; flex: none;
 }
 .tip-body { max-width: 300px; line-height: 1.7; font-size: 12px; }
+/* v46 筛选下拉：右侧显示该配置已产生的消耗条数，无消耗的条目淡化 */
+.opt-name.opt-idle { color: var(--el-text-color-placeholder); }
+.opt-meta { float: right; margin-left: 12px; font-size: 11px; color: var(--el-text-color-secondary); }
 .kpi-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .kpi-value.primary { color: var(--el-color-primary); }
 .kpi-value.cost { color: #d97706; }

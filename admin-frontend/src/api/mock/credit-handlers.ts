@@ -101,21 +101,32 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
     return summary
   })
 
-  /** v44：专家 / 技能 / MCP 服务下拉候选（只列库内实际出现过的，避免空选项） */
+  /**
+   * v46：专家 / 技能 / MCP 服务下拉候选。
+   * 候选来源必须是**管理模块的全量配置**（专家管理 / 技能管理 / MCP 管理），
+   * 而不是反过来从消耗记录里反推——否则「已配置但还没产生消耗」的专家/技能/服务
+   * 在筛选器里根本选不到（典型：绑定了但没有专家引用的 MCP 服务）。
+   * 每项附带 usedCount（已产生消耗记录数）与 configured（是否已停用），
+   * 便于运营区分「没数据」和「没配置」。
+   */
   route('GET', '/credit-records/options', (ctx) => {
     perm(ctx, 'credit:view')
-    const expertMap = new Map<number, string>()
-    const skillMap = new Map<number, string>()
-    const serverMap = new Map<number, string>()
+    const expertUsed = new Map<number, number>()
+    const skillUsed = new Map<number, number>()
+    const serverUsed = new Map<number, number>()
     for (const r of db.creditRecords) {
-      if (r.expertId) expertMap.set(r.expertId, r.expertName || `专家 ${r.expertId}`)
-      ;(r.skillIds || []).forEach((id, i) => skillMap.set(id, (r.skillNames || [])[i] || `技能 ${id}`))
-      ;(r.mcpServerIds || []).forEach((id, i) => serverMap.set(id, (r.mcpServerNames || [])[i] || `服务 ${id}`))
+      if (r.expertId) expertUsed.set(r.expertId, (expertUsed.get(r.expertId) || 0) + 1)
+      for (const id of r.skillIds || []) skillUsed.set(id, (skillUsed.get(id) || 0) + 1)
+      for (const id of r.mcpServerIds || []) serverUsed.set(id, (serverUsed.get(id) || 0) + 1)
     }
+    const build = (items: { id: number; name: string; status?: number }[], used: Map<number, number>) =>
+      items
+        .map((it) => ({ id: it.id, name: it.name, usedCount: used.get(it.id) || 0, status: it.status ?? 1 }))
+        .sort((a, b) => b.usedCount - a.usedCount || a.id - b.id)
     return {
-      experts: [...expertMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id),
-      skills: [...skillMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id),
-      mcpServers: [...serverMap.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id)
+      experts: build(db.experts || [], expertUsed),
+      skills: build(db.skills || [], skillUsed),
+      mcpServers: build(db.servers || [], serverUsed)
     }
   })
 

@@ -972,7 +972,10 @@ if (storedVersion < 22) {
 // 判据收紧：已扣减记录必须有正的用户价（曾因赋值错误导致全部为 0，只校验 costPrice 无法自愈）
 const creditRecordsHealthy = Array.isArray(db.creditRecords) && db.creditRecords.length > 0 &&
   db.creditRecords.some((r) => r.status === 'CHARGED' && (r.userPriceTotal ?? 0) > 0) &&
-  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined))
+  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined)) &&
+  // v46：技能执行必须有明细行。此前 SKILL 类型从未写入 breakdown，「技能」筛选恒为空
+  // （选任何技能都查不到数据），这里把它纳入健康判据以便老库自动重播。
+  db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.type === 'SKILL'))
 if (!creditRecordsHealthy) {
   db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })), (db.experts || []).map(e => ({ id: e.id, name: e.name, skillIds: e.skillIds, mcpServerIds: e.mcpServerIds })), (db.skills || []).map(s2 => ({ id: s2.id, name: s2.name })), (db.servers || []).map(s2 => ({ id: s2.id, name: s2.name })))
 }
@@ -1054,7 +1057,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 26,
+        version: 27,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

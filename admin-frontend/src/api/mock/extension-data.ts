@@ -997,7 +997,35 @@ export function seedCreditRecords(
           unit: '次'
         })
       })
-      // ② 模型 token（输入/输出分两行，按千 tokens 计分）
+      // ② 技能执行：本次对话实际命中的专家技能（无第三方成本，仅编排开销，按次计 1 点/千次调用折算）
+      //    v46：此前技能维度只有筛选没有数据（breakdown 里从不出现 SKILL 行），导致「技能」筛选恒为空
+      const hitSkills = (chat.expertId ? (experts.find((e) => e.id === chat.expertId)?.skillIds || []) : [])
+        .map((id) => skills.find((s) => s.id === id))
+        .filter((s): s is { id: number; name: string } => !!s)
+      // 每回合命中 1–2 个技能（确定性轮转，避免每次都同一批）
+      const usedSkills = hitSkills.length ? [hitSkills[ri % hitSkills.length], ...(hitSkills.length > 1 && ri % 3 === 0 ? [hitSkills[(ri + 1) % hitSkills.length]] : [])] : []
+      usedSkills.filter((s, i, a) => a.findIndex((x) => x.id === s.id) === i).forEach((s) => {
+        const times = 1 + ((ci + ri) % 2)
+        breakdown.push({
+          name: s.name,
+          code: `skill-${s.id}`,
+          type: 'SKILL',
+          channel: '本地编排',
+          basis: `技能执行 ${times} 次（无第三方接口调用，仅编排开销）`,
+          credits: 0,
+          costPrice: 0,
+          userPrice: 0,
+          grossMargin: undefined,
+          markup: 0,
+          cost: 0,
+          calls: times,
+          pointsPerCall: 0,
+          points: 0,
+          quantity: times,
+          unit: '次'
+        })
+      })
+      // ③ 模型 token（输入/输出分两行，按千 tokens 计分）
       const inTok = 34000 + ((ci * 431 + ri * 617) % 22000)
       const outTok = 3200 + ((ci * 137 + ri * 211) % 2100)
       const inCredits = Math.ceil((inTok / 1000) * MODEL_RULE.inputCreditsPerKToken)
