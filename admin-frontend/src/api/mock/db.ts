@@ -2,7 +2,7 @@ import dayjs from 'dayjs'
 import type { DurationMode, MembershipInfo } from '../types'
 import type { ConfigItem, BillingSettings, CreditPackage } from '../config'
 import { ElMessage } from 'element-plus'
-import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, redact, appendAskRounds, SKILL_FILES, type Extensions, type Chat } from './extension-data'
+import { migrateLegacyConfig, seedExtensions, seedCreditPackages, seedBillingSettings, seedCreditRecords, redact, appendAskRounds, SKILL_FILES, type Extensions, type Chat } from './extension-data'
 
 // =====================================================================
 // Mock 演示数据库：通过 localStorage 保存业务数据与会话。
@@ -245,6 +245,8 @@ const PERMISSIONS: MockPermission[] = [
 ;([['knowledge:view','知识库查看','knowledge',80,1],['knowledge:edit','知识库编辑','knowledge',81,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 32+i, code, name, module, type, sort }))
 // v11 新增：手工/赠送订单创建权限点（授予 OPS 运营角色）
 ;([['order:create','订单创建','order',45]] as Array<[string,string,string,number]>).forEach(([code,name,module,sort]) => PERMISSIONS.push({ id: 34, code, name, module, type: 2, sort }))
+// v40 新增：消耗明细查看权限点（对话扣点账，供运营对账）
+;([['credit:view','消耗明细查看','credit',85,1]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type]) => PERMISSIONS.push({ id: 39, code, name, module, type, sort }))
 // v15 新增：反馈管理权限点（对话管理下的前台反馈处理页；授予 OPS/SUPPORT，见版本迁移）
 ;([['feedback:view','反馈查看','feedback',83,1],['feedback:manage','反馈处理','feedback',84,2]] as Array<[string,string,string,number,number]>).forEach(([code,name,module,sort,type],i) => PERMISSIONS.push({ id: 35+i, code, name, module, type, sort }))
 // 改价为独立金额写权限，避免备注或查看权限间接修改金额
@@ -274,7 +276,7 @@ const ROLES: MockRole[] = [
     name: '运营',
     remark: '套餐/用户/订单',
     status: 1,
-    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34, 37],
+    permissionIds: [1, 5, 6, 7, 8, 10, 11, 19, 34, 37, 39],
     createdAt: daysAgo(280)
   },
   // v5：模型管理仅超管/运营持有；客服与只读均不授予（无模型菜单，见下方无条件回收）
@@ -621,6 +623,8 @@ const BUILT_USERS = buildUsers()
 const BUILT_ORDERS = buildOrders(BUILT_USERS)
 const BUILT_AUDIT_LOGS = buildAuditLogs(ADMINS)
 const BUILT_FEEDBACKS = buildFeedbacks(BUILT_USERS, BUILT_EXTENSIONS.chats)
+// v40：消耗明细种子（以会话为骨架，保证用户/会话可关联）
+BUILT_EXTENSIONS.creditRecords = seedCreditRecords(BUILT_EXTENSIONS.chats, BUILT_USERS.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
 
 export const MOCK_COMMERCE_RULES = {
   registerBonus: 100,
@@ -674,7 +678,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 24 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 25 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -828,6 +832,10 @@ if (storedVersion < 17) {
   // （旧库存量 plans 无营销新字段属正常，不强制回填，保存套餐时按表单增量写入）
   db.planVersions ||= {}
   db.creditPackages ||= seedCreditPackages()
+  // v25：消耗明细集合兜底（v40 新增；存量库若无则按当前会话重新生成种子，保证列表有数据可看）
+  if (!Array.isArray(db.creditRecords) || !db.creditRecords.length) {
+    db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
+  }
   db.billingSettings ||= seedBillingSettings()
 }
 if (storedVersion < 18) {
@@ -1020,7 +1028,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 24,
+        version: 25,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

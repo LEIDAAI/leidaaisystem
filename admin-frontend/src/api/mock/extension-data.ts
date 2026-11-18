@@ -28,6 +28,8 @@ export interface Extensions {
   creditPackages: CreditPackage[]
   /** 全局计费设置（v17）：注册赠送积分 / 升级差价策略 / 自定义积分滑杆 */
   billingSettings: BillingSettings
+  /** v40：用户对话消耗明细（每回合一条，含逐笔执行过程与成本，供后台对账） */
+  creditRecords: import('../config').CreditRecord[]
 }
 
 /** 存储行：在 API 形态基础上额外持有 API Key 明文（仅 mock 存储层，任何接口响应不得返回） */
@@ -616,7 +618,9 @@ realFBS 模式下卖家自发货，物流线路选择直接影响时效与履约
     mcpVersions: Object.fromEntries(servers.map(s => [s.id, [{ version: s.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: s.updatedAt, snapshot: structuredClone(s) }]])),
     planVersions: Object.fromEntries(plans.map(p => [p.id, [{ version: p.version, versionName: 'v1（初始种子）', operator: 'admin', note: '初始种子数据', createdAt: p.updatedAt, snapshot: structuredClone(p) }]])),
     creditPackages: seedCreditPackages(),
-    billingSettings: seedBillingSettings()
+    billingSettings: seedBillingSettings(),
+    // v40：消耗明细在 chats 构建后由 db.ts 注入（需用户手机号/昵称对齐），此处先占位空数组
+    creditRecords: []
   }
 }
 
@@ -865,4 +869,89 @@ export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): 
   const ask = c.messages.filter(m => m.role === 'user')[askIdx]
   const topic = redact(ask?.content || '选品咨询').split('，')[0].split('。')[0]
   return genChatAnalysis({ ...c, createdAt: ask?.createdAt || c.createdAt }, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
+}
+
+/**
+ * v40：消耗明细种子（真实形态的演示数据）。
+ * 以会话为骨架生成「一次对话回合 = 一条消耗记录」，每条含 2–4 个执行明细子项：
+ * LLM 模型（按 token 用量 × 百万 token 单价折算）+ MCP 工具（按工具收单价折算）+ 可选技能执行。
+ * 目的：后台能回答「这次对话为什么扣 14 分、钱花在哪个第三方接口上」，而不只是一个总扣分。
+ */
+export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phone: string; wechatNickname: string }>): import('../config').CreditRecord[] {
+  /** 演示用模型价（元/百万 tokens）与工具收单价（元/次），与模型管理/MCP 管理中的定价口径一致 */
+  const MODEL_PRICE: Record<string, { name: string; in: number; out: number }> = {
+    'deepseek-v4.1-flash': { name: 'DeepSeek-V4.1-Flash', in: 2, out: 8 },
+    'glm-5.3': { name: 'GLM-5.3', in: 4, out: 16 },
+    'deepseek-v3': { name: 'DeepSeek-V3', in: 2, out: 8 },
+    'qwen-max': { name: 'Qwen-Max', in: 2.4, out: 9.6 }
+  }
+  const TOOL_PRICE: Record<string, { name: string; price: number; label: string }> = {
+    amazon: { name: '亚马逊数据接口（第三方 MCP）', price: 0.0033, label: '第三方工具' },
+    ozon: { name: 'Ozon 数据接口', price: 0.0021, label: '第三方工具' },
+    temu: { name: 'TEMU 数据接口', price: 0.0018, label: '第三方工具' },
+    ali: { name: '1688 数据接口', price: 0.0015, label: '第三方工具' },
+    echotik: { name: 'EchoTik 数据', price: 0.0042, label: '第三方工具' }
+  }
+  const projectsOf = (topic: string): { project: string; toolKey: string } => {
+    if (/亚马逊/.test(topic)) return { project: '亚马逊选品分析', toolKey: 'amazon' }
+    if (/Ozon/.test(topic)) return { project: 'Ozon 选品分析', toolKey: 'ozon' }
+    if (/Temu|TEMU/.test(topic)) return { project: 'TEMU 选品分析', toolKey: 'temu' }
+    if (/1688/.test(topic)) return { project: '1688 分销选品', toolKey: 'ali' }
+    if (/虾皮|TikTok/i.test(topic)) return { project: '内容电商选品', toolKey: 'echotik' }
+    return { project: '跨境电商选品', toolKey: 'ali' }
+  }
+  const modelCodes = Object.keys(MODEL_PRICE)
+  const records: import('../config').CreditRecord[] = []
+  let rid = 1
+  chats.forEach((chat, ci) => {
+    const user = users.find((u) => u.id === chat.userId) || users[0]
+    if (!user) return
+    const { project, toolKey } = projectsOf(chat.title)
+    const tool = TOOL_PRICE[toolKey]
+    const modelCode = modelCodes[ci % modelCodes.length]
+    const model = MODEL_PRICE[modelCode]
+    // 每个会话拆 2 个回合（首问 + 追问），时间与会话内用户消息对齐
+    const askTimes = chat.messages.filter((m) => m.role === 'user').map((m) => m.createdAt)
+    askTimes.forEach((at, ri) => {
+      const inTok = 4200 + ((ci * 733 + ri * 977) % 18000)   // 输入 tokens（含系统提示词 + 检索结果）
+      const outTok = 780 + ((ci * 211 + ri * 397) % 2600)    // 输出 tokens
+      const modelCredits = Math.ceil((inTok / 1e6 * model.in + outTok / 1e6 * model.out) / 0.0049)
+      const toolCalls = 1 + ((ci + ri) % 3)
+      const toolCredits = Math.ceil(tool.price * toolCalls / 0.0049)
+      const breakdown: import('../config').CreditBreakdown[] = [
+        {
+          name: model.name, type: 'LLM_MODEL',
+          basis: `输入 ${(inTok / 1000).toFixed(1)}K · 输出 ${(outTok / 1000).toFixed(1)}K tokens（¥${model.in}/M 输入、¥${model.out}/M 输出）`,
+          credits: modelCredits, cost: Number(((inTok / 1e6) * model.in + (outTok / 1e6) * model.out).toFixed(4)),
+          quantity: inTok + outTok
+        },
+        {
+          name: tool.name, type: 'MCP_TOOL',
+          basis: `${tool.label}调用 ${toolCalls} 次（收单价 ¥${tool.price}/次）`,
+          credits: toolCredits, cost: Number((tool.price * toolCalls).toFixed(4)), quantity: toolCalls
+        }
+      ]
+      // 第三次及以后加入技能执行（0 扣费，仅记录执行过程，帮助核对链路）
+      if ((ci + ri) % 3 === 2) {
+        breakdown.push({ name: '选品分析报告生成', type: 'SKILL', basis: '技能内部执行，不单独计费', credits: 0, cost: 0 })
+      }
+      const total = breakdown.reduce((s, b) => s + b.credits, 0)
+      const cost = breakdown.reduce((s, b) => s + (b.cost || 0), 0)
+      // 少量记录演示「免费」（命中缓存/活动期）与「已退回」（调用失败自动返还）
+      const isFree = (ci * 7 + ri) % 11 === 3
+      const isRefunded = (ci * 5 + ri) % 17 === 5
+      records.push({
+        id: rid++, userId: user.id, phone: user.phone, wechatNickname: user.wechatNickname,
+        chatId: chat.id, projectName: project,
+        content: String(chat.title || '').slice(0, 40),
+        createdAt: at,
+        status: isRefunded ? 'REFUNDED' : isFree ? 'FREE' : 'CHARGED',
+        credits: isRefunded ? total : isFree ? 0 : -total,
+        breakdown: isFree || isRefunded ? breakdown.map((b) => ({ ...b, credits: 0 })) : breakdown,
+        cost: Number(cost.toFixed(4)),
+        source: 'Mock 演示计量'
+      })
+    })
+  })
+  return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }

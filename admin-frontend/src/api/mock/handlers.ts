@@ -4,6 +4,7 @@ import { createExcelBlob, excelDateTime, type ExcelColumn } from '../../utils/ex
 import { registerConfigHandlers, validateEntitlements } from './config-handlers'
 import { registerOperationsHandlers } from './operations-handlers'
 import { registerWorkspaceHandlers } from './workspace-handlers'
+import { registerCreditHandlers } from './credit-handlers'
 import { redact } from './extension-data'
 
 import type { InternalAxiosRequestConfig } from 'axios'
@@ -965,6 +966,7 @@ route('GET', '/audit-logs', (ctx) => {
 registerConfigHandlers({ route, error:MockApiError, audit:recordAudit })
 registerOperationsHandlers({ route, error:MockApiError, audit:recordAudit })
 registerWorkspaceHandlers({ route, error:MockApiError, audit:recordAudit })
+registerCreditHandlers({ route, error:MockApiError, audit:recordAudit })
 
 // ------------------------------------------------------------------ 入口
 function extractToken(config: InternalAxiosRequestConfig): string {

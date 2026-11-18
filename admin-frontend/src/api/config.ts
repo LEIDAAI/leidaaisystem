@@ -290,8 +290,84 @@ export interface CreditPackage {
   createdAt: string
   updatedAt: string
 }
-/** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆）
- * creditSlider.tiers：数量阶梯单价（升序区间，命中"≥min"的最大档）。保持与前台"量大更优惠、总价随数量单调不减"口径一致；
+/** 消耗明细的项目类型：LLM 模型调用 / MCP 工具（含第三方接口，如亚马逊数据源）/ 技能执行 */
+export type CreditItemType = 'LLM_MODEL' | 'MCP_TOOL' | 'SKILL'
+
+/**
+ * 消耗明细子项（v40）：一次对话回合内每一笔实际消耗的执行过程。
+ * 用于后台把「一次对话扣了多少积分」拆成可核对的成本账（模型 token 用量、第三方 MCP 工具调用）。
+ */
+export interface CreditBreakdown {
+  /** 执行过程名（模型名 / 工具名 / 技能名） */
+  name: string
+  /** 消耗类型 */
+  type: CreditItemType
+  /** 计费口径说明（如「输入 12.4K · 输出 2.1K tokens」「第三方工具调用 1 次」） */
+  basis: string
+  /** 本次消耗的算力/积分（可为 0，如免费工具） */
+  credits: number
+  /** 本次折算成本（元，按模型单价或工具收单价估算；缺价时为 undefined） */
+  cost?: number
+  /** 数量（tokens 或调用次数） */
+  quantity?: number
+}
+
+/**
+ * 消耗明细记录（v40）：C 端每完成一次对话回合产生一条，后台可按用户/项目/时间核对扣点。
+ * 前台只展示「扣了多少积分」，后台额外保留逐笔执行过程与成本，便于第三方 MCP（如亚马逊数据源）对账。
+ */
+export interface CreditRecord {
+  id: number
+  /** 用户（关联 MockUser） */
+  userId: number
+  phone: string
+  wechatNickname: string
+  /** 关联会话 */
+  chatId: number
+  /** 消耗项目（面向运营的业务名，如「亚马逊选品专家」） */
+  projectName: string
+  /** 消耗内容（本次对话的用户问题摘要） */
+  content: string
+  createdAt: string
+  /** 状态：已扣减 / 免费 / 已退回 */
+  status: 'CHARGED' | 'FREE' | 'REFUNDED'
+  /** 本次扣减积分（负数或 0；退回为正数） */
+  credits: number
+  /** 逐笔执行过程明细 */
+  breakdown: CreditBreakdown[]
+  /** 该回合折算总成本（元，估算） */
+  cost: number
+  /** 数据来源标记：Mock 演示 / 真实计量 */
+  source: string
+}
+/** 消耗明细列表响应（分页） */
+export interface CreditRecordPage {
+  list: CreditRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+export interface CreditRecordQuery {
+  phone?: string
+  project?: string
+  status?: string
+  type?: string
+  from?: string
+  to?: string
+  page?: number
+  pageSize?: number
+}
+/** 消耗明细汇总（顶部卡片） */
+export interface CreditSummary {
+  totalRecords: number
+  totalCredits: number
+  totalCost: number
+  chargedRecords: number
+  freeRecords: number
+  refundedCredits: number
+  byType: Array<{ type: CreditItemType; label: string; credits: number; cost: number; count: number }>
+}
+/** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆） * creditSlider.tiers：数量阶梯单价（升序区间，命中"≥min"的最大档）。保持与前台"量大更优惠、总价随数量单调不减"口径一致；
  * unitPrice 为兼容字段：等于最低档单价；新代码请读 tiers。 */
 export interface BillingSettings {
   registerBonus: number
@@ -320,6 +396,12 @@ export const skillStats = (id: number) => get<{ calls7: number; calls30: number;
 // ---------------------------------------------------------------- 版本历史（专家全量 / 技能 SKILL.md / MCP 连接配置 / v17 套餐）
 export interface ConfigVersion { version: number; versionName?: string; operator?: string; note: string; createdAt: string; snapshot: ConfigItem }
 /** 版本名称：保存（发布）与恢复前由版本确认框生成（默认 yyyyMMddHHmmss），随载荷提交 */
+/** v40 消耗明细：列表（分页+筛选）/ 汇总 / 详情 / 项目候选 */
+export const listCreditRecords = (q: CreditRecordQuery) => get<CreditRecordPage>('/credit-records', q)
+export const creditRecordSummary = (q: CreditRecordQuery) => get<CreditSummary>('/credit-records/summary', q)
+export const getCreditRecord = (id: number) => get<CreditRecord>(`/credit-records/${id}`)
+export const listCreditProjects = () => get<string[]>('/credit-records/projects')
+
 export const configVersions = (kind: 'plans' | 'experts' | 'skills' | 'mcp/servers', id: number) => get<ConfigVersion[]>(`/${kind}/${id}/versions`)
 /** 恢复版本：同样走版本确认框生成新版本名（留空由服务端生成「恢复自 <源版本名>」） */
 export const restoreConfigVersion = (kind: 'plans' | 'experts' | 'skills' | 'mcp/servers', id: number, version: number, versionName?: string, note?: string) => post<ConfigItem>(`/${kind}/${id}/restore`, { version, versionName, note })

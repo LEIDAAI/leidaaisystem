@@ -88,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '对话管理', perm: 'chat:view', menuGroup: '业务运营', menuOrder: 3 }
       },
       {
+        path: 'credits',
+        name: 'credits',
+        component: () => import('@/views/CreditsView.vue'),
+        meta: { title: '消耗明细', perm: 'credit:view', menuGroup: '业务运营', menuOrder: 5 }
+      },
+      {
         path: 'feedback',
         name: 'feedback',
         component: () => import('@/views/feedback/FeedbackView.vue'),
