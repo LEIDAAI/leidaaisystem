@@ -172,11 +172,19 @@ onMounted(async () => {
           <div class="kpi">
             <div class="kpi-label">
               毛利率
-              <el-tooltip placement="top" :show-after="200">
+              <el-tooltip
+                placement="top"
+                :show-after="200"
+                effect="dark"
+                popper-class="kpi-margin-tip"
+                :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 14] } }] }"
+              >
                 <template #content>
-                  区间整体毛利率＝1 − 总成本 / 总用户价。<br>
-                  免费与已退回的回合成本已实际发生、用户价为 0，会把整体毛利率拉低，<br>
-                  因此通常低于单条明细的毛利率（明细按该回合实收计）。
+                  <div class="tip-body">
+                    区间整体毛利率 ＝ 1 − 总成本 / 总用户价。<br />
+                    免费与已退回回合的成本已实际发生、用户价为 0，会拉低整体毛利率，<br />
+                    因此通常低于单条明细的毛利率（明细按该回合实收计）。
+                  </div>
                 </template>
                 <span class="kpi-hint">?</span>
               </el-tooltip>
@@ -439,7 +447,12 @@ onMounted(async () => {
 .kpi { display: flex; flex-direction: column; gap: 4px; min-width: 104px; padding: 0 20px; border-left: 1px solid var(--el-border-color-lighter); }
 .kpi:first-child { border-left: none; padding-left: 0; }
 .kpi-label { font-size: 12px; color: var(--el-text-color-secondary); display: flex; align-items: center; gap: 4px; }
-.kpi-hint { display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--el-fill-color-dark); color: var(--el-text-color-secondary); font-size: 9px; cursor: help; line-height: 1; }
+.kpi-hint {
+  display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%;
+  background: #e8edeb; color: #7d908a; font-size: 9px; cursor: help; line-height: 1;
+  border: 1px solid #d8e2de; flex: none;
+}
+.tip-body { max-width: 300px; line-height: 1.7; font-size: 12px; }
 .kpi-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .kpi-value.primary { color: var(--el-color-primary); }
 .kpi-value.cost { color: #d97706; }
