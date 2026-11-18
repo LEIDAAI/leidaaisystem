@@ -8,6 +8,7 @@
 import { db, permissionCodesOf } from './db'
 import type { Context, Services } from './config-handlers'
 import type { CreditItemType, CreditRecord, CreditSummary } from '../config'
+import { CREDIT_UNIT_PRICE } from '../../utils/credit-pricing'
 
 export const CREDIT_TYPE_LABEL: Record<CreditItemType, string> = {
   LLM_MODEL: 'LLM 模型',
@@ -58,17 +59,25 @@ export function registerCreditHandlers({ route, error: ErrorType }: Services): v
     const byType = (['LLM_MODEL', 'MCP_TOOL', 'SKILL'] as CreditItemType[]).map((type) => {
       let credits = 0; let cost = 0; let count = 0
       for (const r of list) {
+        if (r.status === 'REFUNDED') continue
         for (const b of r.breakdown) {
           if (b.type !== type) continue
-          credits += b.credits; cost += b.cost || 0; count += 1
+          credits += b.credits; cost += b.costPrice ?? b.cost ?? 0; count += 1
         }
       }
-      return { type, label: CREDIT_TYPE_LABEL[type], credits, cost: Number(cost.toFixed(4)), count }
+      const userPrice = Number((credits * CREDIT_UNIT_PRICE).toFixed(4))
+      return { type, label: CREDIT_TYPE_LABEL[type], credits, cost: Number(cost.toFixed(4)), userPrice, count }
     })
+    const billable = list.filter((r) => r.status !== 'REFUNDED')
+    const totalCredits = billable.reduce((s, r) => s + Math.abs(r.credits), 0)
+    const totalCost = Number(billable.reduce((s, r) => s + r.cost, 0).toFixed(4))
+    const totalUserPrice = Number((totalCredits * CREDIT_UNIT_PRICE).toFixed(4))
     const summary: CreditSummary = {
       totalRecords: list.length,
-      totalCredits: list.reduce((s, r) => s + (r.status === 'REFUNDED' ? 0 : Math.abs(r.credits)), 0),
-      totalCost: Number(list.reduce((s, r) => s + (r.status === 'REFUNDED' ? 0 : r.cost), 0).toFixed(4)),
+      totalCredits,
+      totalCost,
+      totalUserPrice,
+      grossMargin: totalUserPrice > 0 ? 1 - totalCost / totalUserPrice : undefined,
       chargedRecords: list.filter((r) => r.status === 'CHARGED').length,
       freeRecords: list.filter((r) => r.status === 'FREE').length,
       refundedCredits: list.filter((r) => r.status === 'REFUNDED').reduce((s, r) => s + Math.abs(r.credits), 0),

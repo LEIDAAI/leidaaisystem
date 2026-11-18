@@ -298,18 +298,32 @@ export type CreditItemType = 'LLM_MODEL' | 'MCP_TOOL' | 'SKILL'
  * 用于后台把「一次对话扣了多少积分」拆成可核对的成本账（模型 token 用量、第三方 MCP 工具调用）。
  */
 export interface CreditBreakdown {
-  /** 执行过程名（模型名 / 工具名 / 技能名） */
+  /** 执行过程名（可读名，如「Ozon 商品搜索」/ 模型名 / 技能名） */
   name: string
+  /** 接口/工具编码（如 yq_ozon_goods_search；模型为模型 code） */
+  code?: string
   /** 消耗类型 */
   type: CreditItemType
-  /** 计费口径说明（如「输入 12.4K · 输出 2.1K tokens」「第三方工具调用 1 次」） */
+  /** 所属渠道（云启 OZON / 云启 TEMU / 1688 店雷达 / 亚马逊 Sorftime / TK FastMoss / 虾皮 Shopee / DeepSeek） */
+  channel?: string
+  /** 计费口径说明（如「输入 12.4K · 输出 2.1K tokens」「第三方工具调用 3 次」） */
   basis: string
-  /** 本次消耗的算力/积分（可为 0，如免费工具） */
+  /** 本次消耗的算力/积分（用户价，可为 0，如字典查询不消耗次数） */
   credits: number
-  /** 本次折算成本（元，按模型单价或工具收单价估算；缺价时为 undefined） */
+  /** 成本价（元）：按渠道采购单位成本 × 用量计算，仅后台可见 */
+  costPrice?: number
+  /** 用户价（元）：成本价 × 加价倍数，即用户实际为这一步付的钱（= credits × 每分单价） */
+  userPrice?: number
+  /** 毛利率（0–1，由 costPrice/userPrice 计算；userPrice 为 0 时为 undefined） */
+  grossMargin?: number
+  /** 加价倍数（10 标准 / 5 为 1688 特例 / 1 为模型 token 口径） */
+  markup?: number
+  /** 本次折算成本（元，等价 costPrice；保留兼容） */
   cost?: number
   /** 数量（tokens 或调用次数） */
   quantity?: number
+  /** 单位（tokens / 次） */
+  unit?: string
 }
 
 /**
@@ -335,8 +349,12 @@ export interface CreditRecord {
   credits: number
   /** 逐笔执行过程明细 */
   breakdown: CreditBreakdown[]
-  /** 该回合折算总成本（元，估算） */
+  /** 该回合折算总成本（元，估算；= breakdown.costPrice 之和） */
   cost: number
+  /** 该回合用户价（元；= breakdown.userPrice 之和，即用户实际支付的金额） */
+  userPriceTotal?: number
+  /** 该回合毛利率（0–1） */
+  grossMargin?: number
   /** 数据来源标记：Mock 演示 / 真实计量 */
   source: string
 }
@@ -361,11 +379,16 @@ export interface CreditRecordQuery {
 export interface CreditSummary {
   totalRecords: number
   totalCredits: number
+  /** 总成本（成本价合计） */
   totalCost: number
+  /** 总用户价（用户实际支付金额合计，按每分 ¥0.0049 折算） */
+  totalUserPrice?: number
+  /** 整体毛利率（1 - totalCost / totalUserPrice） */
+  grossMargin?: number
   chargedRecords: number
   freeRecords: number
   refundedCredits: number
-  byType: Array<{ type: CreditItemType; label: string; credits: number; cost: number; count: number }>
+  byType: Array<{ type: CreditItemType; label: string; credits: number; cost: number; userPrice?: number; count: number }>
 }
 /** 全局计费设置（注册赠送积分 / 套餐升级差价策略 / 自定义积分滑杆） * creditSlider.tiers：数量阶梯单价（升序区间，命中"≥min"的最大档）。保持与前台"量大更优惠、总价随数量单调不减"口径一致；
  * unitPrice 为兼容字段：等于最低档单价；新代码请读 tiers。 */

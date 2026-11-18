@@ -678,7 +678,7 @@ try {
   const raw = localStorage.getItem(DB_KEY)
   if (raw) {
     const saved = JSON.parse(raw)
-    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 25 && saved.data && typeof saved.data === 'object') {
+    if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= 26 && saved.data && typeof saved.data === 'object') {
       // 结构校验：仅恢复对象/数组型集合，损坏条目丢弃回退种子数据
       const restored: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(saved.data)) {
@@ -832,7 +832,10 @@ if (storedVersion < 17) {
   // （旧库存量 plans 无营销新字段属正常，不强制回填，保存套餐时按表单增量写入）
   db.planVersions ||= {}
   db.creditPackages ||= seedCreditPackages()
-  // v25：消耗明细集合兜底（v40 新增；存量库若无则按当前会话重新生成种子，保证列表有数据可看）
+  // v26：消耗明细结构升级（v41 新增成本价/用户价/毛利）——旧记录缺 costPrice 则整体重播种子
+  if (Array.isArray(db.creditRecords) && db.creditRecords.length && !db.creditRecords.some((r) => (r.breakdown || []).some((b) => b.costPrice !== undefined))) {
+    db.creditRecords = []
+  }
   if (!Array.isArray(db.creditRecords) || !db.creditRecords.length) {
     db.creditRecords = seedCreditRecords(db.chats || [], db.users.map(u => ({ id: u.id, phone: u.phone, wechatNickname: u.wechatNickname })))
   }
@@ -1028,7 +1031,7 @@ export function persistMockDB(): void {
     localStorage.setItem(
       DB_KEY,
       JSON.stringify({
-        version: 25,
+        version: 26,
         data: {
           ...data,
           auditLogs: Array.isArray(auditLogs) ? [...auditLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, PERSIST_AUDIT_LIMIT) : [],

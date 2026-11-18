@@ -116,6 +116,10 @@ const creditClass = (r: CreditRecord): string => (r.status === 'REFUNDED' ? 'cre
 
 /** 顶部卡片：成本展示统一 4 位小数内（不足补 0 显得像账，而不是随机小数） */
 const money = (n: number): string => `¥${Number(n || 0).toFixed(4)}`
+/** 毛利率展示：0–1 → 89.9%；undefined（无用户价）显示 — */
+const percent = (n?: number): string => (typeof n === 'number' && Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '—')
+/** 成本价展示：接口单价很低，需要 4–6 位小数才看得出差异 */
+const moneyFine = (n?: number): string => (typeof n === 'number' ? `¥${n < 0.01 ? n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') : n.toFixed(4)}` : '—')
 
 onMounted(async () => {
   applyQuickRange('7d')
@@ -144,8 +148,16 @@ onMounted(async () => {
             <div class="kpi-value primary">{{ summary?.totalCredits ?? 0 }}</div>
           </div>
           <div class="kpi">
-            <div class="kpi-label">折算成本</div>
+            <div class="kpi-label">成本价</div>
             <div class="kpi-value cost">{{ money(summary?.totalCost ?? 0) }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">用户价</div>
+            <div class="kpi-value revenue">{{ money(summary?.totalUserPrice ?? 0) }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">毛利率</div>
+            <div class="kpi-value margin">{{ percent(summary?.grossMargin) }}</div>
           </div>
           <div class="kpi">
             <div class="kpi-label">对话回合</div>
@@ -163,7 +175,9 @@ onMounted(async () => {
           <span class="type-figures">
             <b>{{ t.credits }}</b> 分
             <i class="dot" />
-            <b class="type-cost">{{ money(t.cost) }}</b>
+            成本 <b class="type-cost">{{ money(t.cost) }}</b>
+            <i class="dot" />
+            用户 <b class="type-revenue">{{ money(t.userPrice ?? 0) }}</b>
             <i class="dot" />
             {{ t.count }} 次
           </span>
@@ -259,8 +273,14 @@ onMounted(async () => {
             <small class="unit">分</small>
           </template>
         </el-table-column>
-        <el-table-column label="成本" width="110" align="right">
+        <el-table-column label="成本价" width="100" align="right">
           <template #default="{ row }"><span class="cost-val">{{ money((row as CreditRecord).cost) }}</span></template>
+        </el-table-column>
+        <el-table-column label="用户价" width="100" align="right">
+          <template #default="{ row }"><span class="revenue-val">{{ money((row as CreditRecord).userPriceTotal ?? 0) }}</span></template>
+        </el-table-column>
+        <el-table-column label="毛利" width="86" align="right">
+          <template #default="{ row }"><span class="margin-val">{{ percent((row as CreditRecord).grossMargin) }}</span></template>
         </el-table-column>
         <el-table-column label="操作" width="96" fixed="right" align="center">
           <template #default="{ row }">
@@ -289,7 +309,7 @@ onMounted(async () => {
     </el-card>
 
     <!-- 消耗详情抽屉：执行过程 / 消耗类型 / 消耗算力 三列 -->
-    <el-drawer v-model="detailVisible" title="消耗详情" size="520px" append-to-body>
+    <el-drawer v-model="detailVisible" title="消耗详情" size="680px" append-to-body>
       <template v-if="current">
         <div class="detail-head">
           <div class="detail-title">
@@ -305,31 +325,50 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="detail-section-title">消耗明细</div>
+        <div class="detail-section-title">消耗明细（逐个接口 / 模型）</div>
         <el-table :data="current.breakdown" size="small" class="detail-table">
-          <el-table-column label="执行过程" min-width="190">
+          <el-table-column label="执行过程" min-width="200">
             <template #default="{ row }">
-              <div class="exec-name">{{ row.name }}</div>
+              <div class="exec-name">
+                {{ row.name }}
+                <el-tag v-if="row.channel" size="small" effect="plain" class="exec-channel">{{ row.channel }}</el-tag>
+              </div>
+              <div v-if="row.code" class="exec-code">{{ row.code }}</div>
               <div class="exec-basis muted">{{ row.basis }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="消耗类型" width="100">
+          <el-table-column label="消耗类型" width="82">
             <template #default="{ row }"><span class="exec-type">{{ typeLabel(row.type) }}</span></template>
           </el-table-column>
-          <el-table-column label="消耗算力" width="90" align="right">
+          <el-table-column label="成本价" width="82" align="right">
+            <template #default="{ row }"><span class="cost-val">{{ moneyFine(row.costPrice) }}</span></template>
+          </el-table-column>
+          <el-table-column label="用户价" width="82" align="right">
+            <template #default="{ row }"><span class="revenue-val">{{ moneyFine(row.userPrice) }}</span></template>
+          </el-table-column>
+          <el-table-column label="扣分" width="64" align="right">
             <template #default="{ row }">
               <span class="credit-val" :class="row.credits > 0 ? 'credit-cost' : 'credit-free'">{{ row.credits > 0 ? `-${row.credits}` : '0' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="成本" width="90" align="right">
-            <template #default="{ row }"><span class="cost-val">{{ row.cost ? `¥${row.cost.toFixed(4)}` : '—' }}</span></template>
+          <el-table-column label="毛利" width="68" align="right">
+            <template #default="{ row }"><span class="margin-val">{{ percent(row.grossMargin) }}</span></template>
           </el-table-column>
         </el-table>
 
+        <div class="detail-sum">
+          <span class="sum-label">合计</span>
+          <span class="sum-item">成本价 <b class="cost-val">{{ money(current.cost) }}</b></span>
+          <span class="sum-item">用户价 <b class="revenue-val">{{ money(current.userPriceTotal ?? 0) }}</b></span>
+          <span class="sum-item">扣分 <b class="credit-cost">{{ Math.abs(current.credits) }}</b></span>
+          <span class="sum-item">毛利 <b class="margin-val">{{ percent(current.grossMargin) }}</b></span>
+        </div>
+
         <div class="detail-foot muted">
-          <p>· 算力扣减口径：模型按「tokens ÷ 1,000,000 × 单价 ÷ 0.0049」向上取整；第三方工具按「收单价 ÷ 0.0049」向上取整。</p>
-          <p>· 单价取自「模型管理」的输入/输出价格与「MCP 服务」的工具收单价；改价后仅影响新产生的记录。</p>
-          <p>· 数据来源：{{ current.source }}。前台只展示本次扣减总积分，逐笔成本仅后台可见。</p>
+          <p>· <b>成本价</b>= 渠道采购单价（月采购 ÷ 月额度）× 用量；<b>用户价</b>= 成本价 × 加价倍数（1688 为 5×，其余 10×）× 每分 ¥0.0049。</p>
+          <p>· 计费粒度：亚马逊逐工具扣量（1/2/5/10/60/150/450 额度/次）；云启（OZON/TEMU）按次不分工具（字典/字段/额度查询不计次）；1688 按次不分工具。</p>
+          <p>· 模型：输入 4 分/千 tokens、输出 16 分/千 tokens（成本 ¥2 / ¥8 每百万），多轮累计后统一向上取整。</p>
+          <p>· 前台只展示「本次消耗 N 积分」；成本价、毛利与逐笔接口明细仅后台可见。数据来源：{{ current.source }}。</p>
         </div>
       </template>
       <template #footer>
@@ -397,4 +436,17 @@ onMounted(async () => {
 .exec-type { font-size: 12px; color: var(--el-text-color-regular); }
 .detail-foot { font-size: 12px; line-height: 1.8; }
 .detail-foot p { margin: 0; }
+.detail-foot b { color: var(--el-text-color-regular); font-weight: 600; }
+.exec-channel { margin-left: 6px; transform: scale(0.88); transform-origin: left center; }
+.exec-code { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--el-color-primary); margin-top: 1px; }
+.detail-sum { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; background: var(--el-fill-color-lighter); font-size: 12px; }
+.sum-label { font-weight: 600; color: var(--el-text-color-primary); }
+.sum-item { color: var(--el-text-color-secondary); }
+.sum-item b { font-variant-numeric: tabular-nums; }
+.kpi-value.revenue { color: #0f766e; }
+.kpi-value.margin { color: #7c3aed; font-size: 18px; }
+.type-revenue { color: #0f766e; font-variant-numeric: tabular-nums; }
+.revenue-val { color: #0f766e; font-variant-numeric: tabular-nums; }
+.margin-val { color: #7c3aed; font-variant-numeric: tabular-nums; }
+.detail-table { font-size: 12px; }
 </style>

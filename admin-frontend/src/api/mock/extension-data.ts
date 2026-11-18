@@ -2,6 +2,7 @@ import dayjs from 'dayjs'
 import { beijingTime } from '../../utils/chat-time'
 import { escapeReportText } from '../../utils/static-chat-report'
 import type { Agent, BillingSettings, ConfigItem, CreditPackage, LlmModel, PlatformType, SkillFile, Tool, Scenario, KnowledgeBase, KnowledgeFile } from '../config'
+import * as pricing from '../../utils/credit-pricing'
 import { PLATFORMS } from '../config'
 
 export interface Chat { id: number; userId: number; expertId: number; /** 会话标题（用户发起时的主题短句，对齐前台会话名） */ title: string; createdAt: string; deletedAt: string | null; deleteReason: string; messages: Array<{ role: string; content: string; createdAt: string }> }
@@ -870,86 +871,107 @@ export function buildAskAnalysis(c: Chat, askIdx: number, expertName?: string): 
   const topic = redact(ask?.content || '选品咨询').split('，')[0].split('。')[0]
   return genChatAnalysis({ ...c, createdAt: ask?.createdAt || c.createdAt }, topic, c.id * 97 + (askIdx + 1) * 131, expertName)
 }
-
 /**
- * v40：消耗明细种子（真实形态的演示数据）。
- * 以会话为骨架生成「一次对话回合 = 一条消耗记录」，每条含 2–4 个执行明细子项：
- * LLM 模型（按 token 用量 × 百万 token 单价折算）+ MCP 工具（按工具收单价折算）+ 可选技能执行。
- * 目的：后台能回答「这次对话为什么扣 14 分、钱花在哪个第三方接口上」，而不只是一个总扣分。
+ * v41：消耗明细种子（严格按《积分消耗与定价方案 v1》口径生成）。
+ *
+ * 一条记录 = 一次对话回合；breakdown = 该回合里逐笔真实接口调用 + 模型 token 消耗：
+ *   - 接口类：渠道单位成本 = 月采购 ÷ 月额度 → 成本价；扣分 = 成本 × 加价倍数 ÷ ¥0.0049 向上取整
+ *     （云启 OZON/TEMU 27 分/次、1688 18 分/次、亚马逊按额度差异 7 分/额度、TK 179、虾皮 204）
+ *   - 模型类：输入 4 分/千 tokens、输出 16 分/千 tokens（成本 ¥2/¥8 每百万 ×10）
+ * 这样后台能回答：「这次 OZON 选品扣 577 分里，接口 297 分、AI 280 分；接口成本 ¥0.146、用户价 ¥1.455」。
  */
 export function seedCreditRecords(chats: Chat[], users: Array<{ id: number; phone: string; wechatNickname: string }>): import('../config').CreditRecord[] {
-  /** 演示用模型价（元/百万 tokens）与工具收单价（元/次），与模型管理/MCP 管理中的定价口径一致 */
-  const MODEL_PRICE: Record<string, { name: string; in: number; out: number }> = {
-    'deepseek-v4.1-flash': { name: 'DeepSeek-V4.1-Flash', in: 2, out: 8 },
-    'glm-5.3': { name: 'GLM-5.3', in: 4, out: 16 },
-    'deepseek-v3': { name: 'DeepSeek-V3', in: 2, out: 8 },
-    'qwen-max': { name: 'Qwen-Max', in: 2.4, out: 9.6 }
+  const { CHANNEL_RULES, MODEL_RULE, toolCostPrice, toolCredits, marginOf } = pricing
+  /** 业务项目 → 该任务典型调用链（严格对应方案第 6 章的任务消耗示例） */
+  const TASK_CHAINS: Record<string, { project: string; channelKey: string; tools: string[]; detailCalls: number }> = {
+    OZON: { project: 'OZON 选品分析', channelKey: 'yunqi-ozon', tools: ['yq_ozon_goods_search'], detailCalls: 10 },
+    TEMU: { project: 'TEMU 选品分析', channelKey: 'yunqi-temu', tools: ['yq_goods_search'], detailCalls: 10 },
+    亚马逊: { project: '亚马逊选品分析', channelKey: 'amazon', tools: ['amazon_product_search'], detailCalls: 10 },
+    1688: { project: '1688 分销选品', channelKey: 'dld-1688', tools: ['product_search_list'], detailCalls: 10 },
+    TK: { project: 'TK 内容选品', channelKey: 'fastmoss', tools: ['echotik_video_search'], detailCalls: 10 },
+    虾皮: { project: '虾皮选品分析', channelKey: 'shopee', tools: ['shopee_product_search'], detailCalls: 10 }
   }
-  const TOOL_PRICE: Record<string, { name: string; price: number; label: string }> = {
-    amazon: { name: '亚马逊数据接口（第三方 MCP）', price: 0.0033, label: '第三方工具' },
-    ozon: { name: 'Ozon 数据接口', price: 0.0021, label: '第三方工具' },
-    temu: { name: 'TEMU 数据接口', price: 0.0018, label: '第三方工具' },
-    ali: { name: '1688 数据接口', price: 0.0015, label: '第三方工具' },
-    echotik: { name: 'EchoTik 数据', price: 0.0042, label: '第三方工具' }
+  const pickTask = (topic: string): typeof TASK_CHAINS[string] => {
+    if (/Ozon/i.test(topic)) return TASK_CHAINS.OZON
+    if (/Temu|TEMU/i.test(topic)) return TASK_CHAINS.TEMU
+    if (/亚马逊/.test(topic)) return TASK_CHAINS.亚马逊
+    if (/1688/.test(topic)) return TASK_CHAINS['1688']
+    if (/TikTok|TK/i.test(topic)) return TASK_CHAINS.TK
+    if (/虾皮|Shopee/i.test(topic)) return TASK_CHAINS.虾皮
+    return TASK_CHAINS.OZON
   }
-  const projectsOf = (topic: string): { project: string; toolKey: string } => {
-    if (/亚马逊/.test(topic)) return { project: '亚马逊选品分析', toolKey: 'amazon' }
-    if (/Ozon/.test(topic)) return { project: 'Ozon 选品分析', toolKey: 'ozon' }
-    if (/Temu|TEMU/.test(topic)) return { project: 'TEMU 选品分析', toolKey: 'temu' }
-    if (/1688/.test(topic)) return { project: '1688 分销选品', toolKey: 'ali' }
-    if (/虾皮|TikTok/i.test(topic)) return { project: '内容电商选品', toolKey: 'echotik' }
-    return { project: '跨境电商选品', toolKey: 'ali' }
-  }
-  const modelCodes = Object.keys(MODEL_PRICE)
+  const channelByKey = (key: string) => CHANNEL_RULES.find((c) => c.key === key)!
   const records: import('../config').CreditRecord[] = []
   let rid = 1
   chats.forEach((chat, ci) => {
     const user = users.find((u) => u.id === chat.userId) || users[0]
     if (!user) return
-    const { project, toolKey } = projectsOf(chat.title)
-    const tool = TOOL_PRICE[toolKey]
-    const modelCode = modelCodes[ci % modelCodes.length]
-    const model = MODEL_PRICE[modelCode]
-    // 每个会话拆 2 个回合（首问 + 追问），时间与会话内用户消息对齐
+    const task = pickTask(chat.title)
+    const channel = channelByKey(task.channelKey)
+    const mainTool = channel.tools.find((t) => t.name === task.tools[0]) || channel.tools[0]
     const askTimes = chat.messages.filter((m) => m.role === 'user').map((m) => m.createdAt)
     askTimes.forEach((at, ri) => {
-      const inTok = 4200 + ((ci * 733 + ri * 977) % 18000)   // 输入 tokens（含系统提示词 + 检索结果）
-      const outTok = 780 + ((ci * 211 + ri * 397) % 2600)    // 输出 tokens
-      const modelCredits = Math.ceil((inTok / 1e6 * model.in + outTok / 1e6 * model.out) / 0.0049)
-      const toolCalls = 1 + ((ci + ri) % 3)
-      const toolCredits = Math.ceil(tool.price * toolCalls / 0.0049)
-      const breakdown: import('../config').CreditBreakdown[] = [
-        {
-          name: model.name, type: 'LLM_MODEL',
-          basis: `输入 ${(inTok / 1000).toFixed(1)}K · 输出 ${(outTok / 1000).toFixed(1)}K tokens（¥${model.in}/M 输入、¥${model.out}/M 输出）`,
-          credits: modelCredits, cost: Number(((inTok / 1e6) * model.in + (outTok / 1e6) * model.out).toFixed(4)),
-          quantity: inTok + outTok
-        },
-        {
-          name: tool.name, type: 'MCP_TOOL',
-          basis: `${tool.label}调用 ${toolCalls} 次（收单价 ¥${tool.price}/次）`,
-          credits: toolCredits, cost: Number((tool.price * toolCalls).toFixed(4)), quantity: toolCalls
-        }
-      ]
-      // 第三次及以后加入技能执行（0 扣费，仅记录执行过程，帮助核对链路）
-      if ((ci + ri) % 3 === 2) {
-        breakdown.push({ name: '选品分析报告生成', type: 'SKILL', basis: '技能内部执行，不单独计费', credits: 0, cost: 0 })
+      const breakdown: import('../config').CreditBreakdown[] = []
+      // ① 列表检索：1 次主接口调用
+      const listCost = toolCostPrice(channel, mainTool)
+      const listCredits = toolCredits(channel, mainTool)
+      breakdown.push({
+        name: mainTool.label, code: mainTool.name, type: 'MCP_TOOL', channel: channel.label,
+        basis: `1 次有效调用（${channel.granularity}；单位成本 ¥${channel.unitCost}/次，×${channel.markup} 倍）`,
+        credits: listCredits, costPrice: listCost, userPrice: Number((listCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
+        grossMargin: marginOf(listCost, listCredits), markup: channel.markup, cost: listCost, quantity: 1, unit: '次'
+      })
+      // ② 详情补查：按任务链补 N 个详情（首回合多、追问少）
+      const detailCalls = ri === 0 ? task.detailCalls : Math.max(2, Math.round(task.detailCalls / 3))
+      const detailCost = Number((listCost * detailCalls).toFixed(6))
+      const detailCredits = listCredits * detailCalls
+      breakdown.push({
+        name: `${mainTool.label.replace('搜索', '详情')}`, code: mainTool.name.replace('search', 'detail'), type: 'MCP_TOOL', channel: channel.label,
+        basis: `补查详情 ${detailCalls} 次（${channel.granularity}）`,
+        credits: detailCredits, costPrice: detailCost, userPrice: Number((detailCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
+        grossMargin: marginOf(detailCost, detailCredits), markup: channel.markup, cost: detailCost, quantity: detailCalls, unit: '次'
+      })
+      // ③ AI 分析：模型 token（输入 5 万 / 输出 5 千，多轮累计口径）
+      const inTok = 38000 + ((ci * 431 + ri * 617) % 24000)
+      const outTok = 3600 + ((ci * 137 + ri * 211) % 2200)
+      const inCredits = Math.ceil((inTok / 1000) * MODEL_RULE.inputCreditsPerKToken)
+      const outCredits = Math.ceil((outTok / 1000) * MODEL_RULE.outputCreditsPerKToken)
+      const inCost = Number(((inTok / 1e6) * MODEL_RULE.inputCostPerMillion).toFixed(6))
+      const outCost = Number(((outTok / 1e6) * MODEL_RULE.outputCostPerMillion).toFixed(6))
+      breakdown.push({
+        name: `${MODEL_RULE.label} 输入`, code: 'deepseek-input', type: 'LLM_MODEL', channel: MODEL_RULE.label,
+        basis: `${(inTok / 1000).toFixed(1)}K tokens（¥${MODEL_RULE.inputCostPerMillion}/百万，${MODEL_RULE.inputCreditsPerKToken} 分/千 tokens，含系统提示+工具定义+历史+工具返回）`,
+        credits: inCredits, costPrice: inCost, userPrice: Number((inCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
+        grossMargin: marginOf(inCost, inCredits), markup: MODEL_RULE.markup, cost: inCost, quantity: inTok, unit: 'tokens'
+      })
+      breakdown.push({
+        name: `${MODEL_RULE.label} 输出`, code: 'deepseek-output', type: 'LLM_MODEL', channel: MODEL_RULE.label,
+        basis: `${(outTok / 1000).toFixed(1)}K tokens（¥${MODEL_RULE.outputCostPerMillion}/百万，${MODEL_RULE.outputCreditsPerKToken} 分/千 tokens）`,
+        credits: outCredits, costPrice: outCost, userPrice: Number((outCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4)),
+        grossMargin: marginOf(outCost, outCredits), markup: MODEL_RULE.markup, cost: outCost, quantity: outTok, unit: 'tokens'
+      })
+      // ④ 部分任务追加报告生成（技能执行，不计费，仅记录链路便于核对）
+      if ((ci + ri) % 4 === 1) {
+        breakdown.push({ name: '选品分析报告生成', code: 'skill-report', type: 'SKILL', channel: '应用内', basis: '技能内部执行，不单独计费', credits: 0, costPrice: 0, userPrice: 0, cost: 0 })
       }
-      const total = breakdown.reduce((s, b) => s + b.credits, 0)
-      const cost = breakdown.reduce((s, b) => s + (b.cost || 0), 0)
-      // 少量记录演示「免费」（命中缓存/活动期）与「已退回」（调用失败自动返还）
+      const totalCredits = breakdown.reduce((s2, b) => s2 + b.credits, 0)
+      const totalCost = Number(breakdown.reduce((s2, b) => s2 + (b.costPrice || 0), 0).toFixed(6))
+      const totalUserPrice = Number((totalCredits * pricing.CREDIT_UNIT_PRICE).toFixed(4))
+      // 少量记录演示免费（活动期）与已退回（调用失败自动返还）
       const isFree = (ci * 7 + ri) % 11 === 3
       const isRefunded = (ci * 5 + ri) % 17 === 5
       records.push({
         id: rid++, userId: user.id, phone: user.phone, wechatNickname: user.wechatNickname,
-        chatId: chat.id, projectName: project,
+        chatId: chat.id, projectName: task.project,
         content: String(chat.title || '').slice(0, 40),
         createdAt: at,
         status: isRefunded ? 'REFUNDED' : isFree ? 'FREE' : 'CHARGED',
-        credits: isRefunded ? total : isFree ? 0 : -total,
-        breakdown: isFree || isRefunded ? breakdown.map((b) => ({ ...b, credits: 0 })) : breakdown,
-        cost: Number(cost.toFixed(4)),
-        source: 'Mock 演示计量'
+        credits: isRefunded ? totalCredits : isFree ? 0 : -totalCredits,
+        breakdown: isFree || isRefunded ? breakdown.map((b) => ({ ...b, credits: 0, userPrice: 0, grossMargin: undefined })) : breakdown,
+        cost: totalCost,
+        userPriceTotal: isFree || isRefunded ? 0 : totalUserPrice,
+        grossMargin: isFree || isRefunded ? undefined : marginOf(totalCost, totalCredits),
+        source: 'Mock 演示计量（方案 v1 口径）'
       })
     })
   })
