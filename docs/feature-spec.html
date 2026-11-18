@@ -81,9 +81,9 @@
 <tr id="fix-U07"><td>U07</td><td>router/AdminLayout统一元数据四组菜单</td><td>已改；保留商品直达入口</td></tr>
 <tr id="fix-U08"><td>U08</td><td>权益业务空态、资源/对话/反馈错误重试、MCP中文健康标签</td><td>已改；非真实健康测试</td></tr>
 <tr id="fix-R01"><td>R01</td><td>POL已拍板规则、BillingSettingsForm说明、db.commerceRules及v19迁移</td><td>部分落实；FULL_PRICE接口仍接受，真实报价/队列/支付/发分/提醒未接</td></tr>
-<tr id="fix-R02"><td>R02</td><td>三档/单账号/注册100/365天规则、解封接口、独立订单特批权限与原因审计</td><td>部分落实；解封UI缺，非100注册/非0包赠分接口仍接受，反馈无真实批次，注销/冻结闭环未接</td></tr>
+<tr id="fix-R02"><td>R02</td><td>三档/单账号/注册100/365天规则、独立订单特批权限与原因审计（v50 封禁/解封已整体下线，不再是待补项）</td><td>部分落实；非100注册/非0包赠分接口仍接受，反馈无真实批次，注销/冻结闭环未接</td></tr>
 </tbody></table></div>
-<p class="note">需主代理继续处理：补解封UI；在写接口强制registerBonus=100、upgradePolicy=PRORATED、bonusCredits=0；奖励按真实账本接入并统一特批授权。交易服务未接项须另补联调证据，不能用文档、构建或Mock标记关闭。</p>
+<p class="note">需主代理继续处理：在写接口强制registerBonus=100、upgradePolicy=PRORATED、bonusCredits=0；奖励按真实账本接入并统一特批授权。v50 已删除封禁/解封（接口、权限点、UI 全部下线），不再作为缺口。交易服务未接项须另补联调证据，不能用文档、构建或Mock标记关闭。</p>
 </section>
 <section id="scope"><h2>01 · 阅读口径与测试准备</h2>
 <p>功能依据为仓库 <code>docs/功能清单.md</code>，样式参考 V3.0.6 AI 积分说明页的绿白配色、1080px 内容版心、吸顶目录和章节表格。<sup><a href="#cite-2">[2]</a></sup>本说明为清单的结构化交付，不构成对线上系统完成情况的额外背书。</p>
@@ -242,7 +242,7 @@
 <h4 id="PN-A01-04">原型说明 · PN-A01-04 最近数据</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>最近注册用户与订单</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>概览底部，dashboard:view。<b>字段：</b>昵称、套餐、状态、注册时间；订单号、金额、渠道和创建时间均只读。</p><ol><li>查看两个列表。</li><li>按时间与用户/订单管理核对。</li></ol><p><b>状态规则：</b>各取时间降序前 5 条。<b>异常/边界：</b>无昵称订单兜底“—”，不假设列表可直接跳详情。<b>关联页面：</b>用户、订单。<b>验收依据：</b>operations-handlers 60～64、TC-07。</p></td></tr></tbody></table>
 <h4 id="PN-A01-05">原型说明 · PN-A01-05 刷新数据</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>重新读取概览汇总</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>概览右上“刷新数据”，dashboard:view。<b>字段：</b>无编辑字段，加载状态只读。</p><ol><li>变更本地测试数据后返回。</li><li>点击刷新，核重新汇总。</li></ol><p><b>状态规则：</b>只是查询仪表盘，与配置刷新不同。<b>异常/边界：</b>失败按请求提示处理，无自动刷新周期承诺。<b>关联页面：</b>订单、用户。<b>验收依据：</b>DashboardView load、TC-07。</p></td></tr></tbody></table>
 <details class="prototype-evidence"><summary>实现证据与限制</summary><p>src/views/DashboardView.vue；src/api/mock/operations-handlers.ts 23～64。清单“收入”当前卡片名为“已支付订单金额”，实现仅累加 PAID 金额，没有退款抵扣链路。</p></details></div>
-<div class="prototype-module" id="pn-A02"><h3>A02 · 用户管理</h3><p class="note">R12：详情读取/保存按目标ID+请求序号绑定，载荷复制，失败重试；无个体覆盖显示使用套餐权益。会员五态只认显式LIFETIME为长期，空日期不推断；解封接口已有但UI仍缺。页面只证实个体权益编辑，不宣称换套餐入口。</p>
+<div class="prototype-module" id="pn-A02"><h3>A02 · 用户管理</h3><p class="note">R12：详情读取/保存按目标ID+请求序号绑定，载荷复制，失败重试；无个体覆盖显示使用套餐权益。会员五态只认显式LIFETIME为长期，空日期不推断。v50 起封禁/解封整体下线（接口、权限点、UI 均已删除），操作列只保留「详情」，状态列改为「到期状态 / 到期时间」。页面只证实个体权益编辑，不宣称换套餐入口。</p>
 <h4 id="PN-A02-01">原型说明 · PN-A02-01 筛选查询与分页</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>用户列表组合查询</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户列表，user:view。<b>字段：</b>关键词、<b>到期状态</b>（v50 取代原「正常/封禁」）、注册日期默认无筛选；页码/页容量可切。</p><ol><li>填写条件查询。</li><li>翻页核结果和总数。</li></ol><p><b>状态规则：</b>手机号/邮箱/微信昵称包含关键词，ID 精确匹配；到期状态按 <code>readMockMembership().status</code> 精确匹配（与列表标签同源）；注册日期含起止日。<b>异常/边界：</b>未命中为空；mock 通用页容量上限 100。<b>关联页面：</b>用户详情。<b>验收依据：</b>handlers 用户列表、清单 2.3、TC-08。</p></td></tr></tbody></table>
 <h4 id="PN-A02-02">原型说明 · PN-A02-02 重置用户条件</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>清空筛选重新查询</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户列表重置，user:view。<b>字段：</b>关键词、状态、注册区间恢复空。</p><ol><li>先设置组合条件。</li><li>点击重置，查看无条件结果。</li></ol><p><b>状态规则：</b>重置触发列表查询；不修改用户数据。<b>异常/边界：</b>网络失败不能当作无记录；加载与空态区分。<b>关联页面：</b>用户筛选。<b>验收依据：</b>UsersView 查询交互、TC-08。</p></td></tr></tbody></table>
 <h4 id="PN-A02-03">原型说明 · PN-A02-03 基本资料详情</h4><table class="prototype-note"><tbody><tr><th scope="row">功能名称</th><td>用户详情默认基本资料页签</td></tr><tr><th scope="row">逻辑说明</th><td><p><b>入口与角色：</b>用户行详情，user:view。<b>字段：</b>ID、手机号、邮箱、状态、当前套餐、注册/最后登录时间只读。</p><ol><li>打开目标详情。</li><li>默认基本资料，核与列表对应。</li></ol><p><b>状态规则：</b>每次打开清旧详情并恢复默认页签。<b>异常/边界：</b>空信息显示兜底；记录不存在按 404 处理。<b>关联页面：</b>六个详情页签。<b>验收依据：</b>UserDetailDrawer、handlers 用户详情、TC-09。</p></td></tr></tbody></table>
@@ -593,8 +593,8 @@
 <h4 id="POL-10">POL-10 · 优惠券</h4><p>优惠券按后台后续规则，本版不实现、不展示。</p>
 <h4 id="POL-11">POL-11 · 权威服务边界</h4><p>待交易服务实现权威报价/实付归属与价格快照、会员段及未来队列版本锁、支付回调幂等、积分发放消费账本、冻结恢复、到期提醒。PRORATED、PAID 演示单或 Mock 配置均不能替代完整引擎；改价还需渠道预下单作废/重建，0 元履约和首购资格另行联调。</p>
 <h4 id="POL-12">POL-12 · 购买确认要求</h4><p>展示当前档/周期/期限、原实付抵扣、补差（含明确 0）、新锚点、完整锁价队列与顺延日期、当前/下次发分、批次有效期、不退款及无自动续费。当前后台只展示规则说明和配置，未实现 C 端真实购买确认闭环。</p>
-<h4 id="POL-13">POL-13 · 场景基线</h4><p>后续联调覆盖次日续费、升降档、月年切换、促销实付及负差 0、月末/闰年、逐月发分、积分包独立到期、重复回调与注销/封禁。旧退款 EX 算例撤销，独立前台 34 场景不作为本仓库已通过测试证据。</p>
-<h4 id="POL-14">POL-14 · 已落实与遗漏</h4><p>规则已拍板。当前落实为页面说明、部分表单约束、Mock 迁移与记录接口；R01/R02 尚未闭环。解封 UI 缺失；Mock 写接口仍接受非 100 注册赠分、FULL_PRICE 和非 0 积分包赠分；反馈奖励尚无真实特批批次。具体源码与状态见本轮映射。</p>
+<h4 id="POL-13">POL-13 · 场景基线</h4><p>后续联调覆盖次日续费、升降档、月年切换、促销实付及负差 0、月末/闰年、逐月发分、积分包独立到期、重复回调与注销（v50 起后台封禁已下线，不再列入）。旧退款 EX 算例撤销，独立前台 34 场景不作为本仓库已通过测试证据。</p>
+<h4 id="POL-14">POL-14 · 已落实与遗漏</h4><p>规则已拍板。当前落实为页面说明、部分表单约束、Mock 迁移与记录接口；R01/R02 尚未闭环。Mock 写接口仍接受非 100 注册赠分、FULL_PRICE 和非 0 积分包赠分；反馈奖励尚无真实特批批次。v50 已删除封禁/解封（接口、权限点、UI 全部下线），不再是缺口。具体源码与状态见本轮映射。</p>
 </div></section>
 </main>
 <footer><div class="sources"><h2>来源与维护</h2><ol><li id="cite-1"><span>LEIDAAI · 前后台功能清单（V19 / R12，2026-11-08）。本文功能、规则、边界与回归的内容依据；仅省略不宜公开的开发机地址及绝对路径。</span><a class="src-url" href="https://github.com/LEIDAAI/leidaaisystem/blob/master/docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md" target="_blank" rel="noopener">github.com/LEIDAAI/leidaaisystem/blob/master/docs/功能清单.md</a></li><li id="cite-2"><span>有维AI V3.0.6 · 后台 AI 积分原型说明。视觉参考：绿白配色、报告头、吸顶目录、章节表格。</span><a class="src-url" href="https://leidaai.github.io/dianleida1688/v6/v3.0.6/ai-spec.html" target="_blank" rel="noopener">https://leidaai.github.io/dianleida1688/v6/v3.0.6/ai-spec.html</a></li></ol></div><p class="muted">维护约定：功能变更后同步更新源功能清单对应小节、版本回归表和本文关联用例。文档版本 V19 / R12 · 2026-11-08 · <a href="#top">回到顶部</a></p></footer>
