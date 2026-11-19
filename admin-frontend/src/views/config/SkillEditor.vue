@@ -120,6 +120,9 @@ function normalize(copy: FormDraft): FormDraft {
   if (!Array.isArray(d.platforms) || !d.platforms.length) d.platforms = ['1688']
   d.platforms = d.platforms.filter((p) => PLATFORMS.includes(p as PlatformType))
   if (!Array.isArray(d.files)) d.files = []
+  d.titleHtml = String(d.titleHtml || '')
+  d.introduction = String(d.introduction || '')
+  d.greeting = String(d.greeting || '')
   if (!Array.isArray(d.coreAbilities)) d.coreAbilities = []
   if (!Array.isArray(d.referencePrompts)) d.referencePrompts = []
   // v35：保留二进制附件的 encoding/mime（图片），否则 base64 会被当纯文本丢掉标记
