@@ -1,0 +1,2 @@
+Skill attachment preview smoke test.
+Line two confirms text rendering.
