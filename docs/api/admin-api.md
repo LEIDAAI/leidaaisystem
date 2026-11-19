@@ -1,6 +1,6 @@
 # 雷达AI 管理后台 Admin API 契约
 
-版本：v0.16 / Mock schema 32（2026-11-19 源码同步；保留 P0/P1/P2、R9–R11 与模型探测契约；无真实 Java/交易服务联调）
+版本：v0.17 / Mock schema 32（2026-11-19 源码同步；增补技能介绍附件、昵称修改与列表展示契约；保留 P0/P1/P2、R9–R11 与模型探测契约；无真实 Java/交易服务联调）
 
 已拍板规则：标准/高级/旗舰三档同功能、单账号；升级按实付折算且负补差取 0，月转年即时并按 365 天重置锚点，年转月/降级到期切换，未来期锁价排队；当期/未来期一律不退款，无自动续费、提前 7 天提醒；常规赠分仅注册 100，积分包仅有效会员可购、365 天有效且不随会员到期清零。**规则文本、Mock 迁移及订单记录不等同真实报价、支付、会员时间轴、积分账本或提醒调度。** 本文明确保留当前写接口未强制规则的缺口，完整规则见 `../功能清单.md` 第 8 节。
 基础路径：`/admin/api`
@@ -10,6 +10,7 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.17 | 2026-11-19 | 增补 `PUT /users/{id}/wechat-nickname`（独立 `user:nickname`，按同手机号同步用户及消耗记录昵称）、用户/订单列表隐藏ID但保留接口关联和导出；技能介绍附件实际字段 `skillIntroductionFiles`，独立于技能包 `files`，单文件≤10MB，补共享文件上传/读取与各格式预览边界 |
 | v0.16 | 2026-11-19 | **后台手机号完整展示（schema 32）**：修复存量 Mock 用户手机号含星号掩码的问题；用户表作为唯一事实源，订单与消耗明细按 `userId` 同步回填完整的演示号码，保证列表、详情与导出一致。聊天正文内用于隐私保护的手机号脱敏逻辑保持不变 |
 | v0.15 | 2026-11-18 | **列调整 + 用户排序（v52）**：`GET /users` 新增 `sort`（chatCount/registeredAt/expireAt/lastLoginAt 白名单）与 `order`(asc/desc) 参数，空值（未登录/无到期日）恒排最后；`ProTable` 内建服务端排序（`sortable="custom"` 列触发 sort-change 后随 load 透传，筛选/翻页保持）。订单列表项新增 `registeredAt`（取自用户表）。页面列调整：用户管理「到期状态/到期时间」拆两列且四列可排序；订单列重排（订单号移到最后、到期状态只留标签、注册/下单/到期时间紧跟其后、支付时间在金额列前）；消耗明细「成员」→「手机号」、「时间（北京）」→「消耗时间」，微信昵称/套餐/到期状态/到期时间四列移到手机号后 |
 | v0.14 | 2026-11-18 | **删除封禁 + 到期状态（v50）**：`PUT /users/{id}/status`（封禁/解封）整条删除，权限点 `user:ban` 从字典与全部角色移除；`GET /users` 的 `status`(1正常/0封禁) 筛选替换为 `expiryStatus`（ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN），用户列表项去掉 `status`/`assetsFrozen`、新增 `expiryStatus`；`keyword` 补微信昵称模糊匹配。**口径统一**：`formatMembership()` 文案改为「未到期 / 已到期 / 长期有效 / 无会员 / 期限未知」，用户管理、订单、消耗明细三处共用；`MockUser` 去掉 `status` 与 `frozenPeriods`，`readMockOrderExpiry` 不再按冻结期顺延。持久化 schema 28→30（29 回收 `user:ban`，30 回填「已到期」演示样本） |
@@ -152,6 +153,7 @@
 |---|---|---|---|
 | GET | /users | user:view | 参数 `keyword`(手机号/邮箱/微信昵称/ID)、`expiryStatus`(ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN)、`start`/`end`(注册时间)、分页 |
 | GET | /users/{id} | user:view | 用户详情 |
+| PUT | /users/{id}/wechat-nickname | user:nickname | `{wechatNickname:string}`；trim 后1–64字符，同手机号全部用户及其消耗记录昵称同步，成功 data=null，细则见下 |
 | PUT | /users/{id}/entitlements | user:entitlement | 个体权益覆盖：`[{resourceType, resourceId, quotaType, quotaLimit}]` |
 
 **v50：封禁/解封接口（原 `PUT /users/{id}/status`）整条下线**，权限点 `user:ban` 同步从权限字典与全部角色中移除（存量 localStorage 角色在 schema 29 迁移中回收 id=6）。用户列表不再有「正常/封禁」状态列与对应筛选、操作列只保留「详情」。原有 Mock 冻结区间（`frozenPeriods`）与按冻结时长顺延会员到期的逻辑一并删除：`readMockMembership` 只按当前时间与 `membershipExpireAt` 判定，`readMockOrderExpiry` 直接返回订单自身期限快照。真实账号登录阻断、注销及积分/未来期资产冻结恢复从未闭环，本次删除也不代表这些能力已具备。
@@ -162,6 +164,14 @@
 `{id, wechatNickname, phone, email, region, planName, chatCount, registeredAt, lastLoginAt, expireAt, expiryStatus, membership}`。
 
 `membership={source:'MOCK',status:'ACTIVE'|'EXPIRED'|'NONE'|'LIFETIME'|'UNKNOWN',expiresAt:string|null,isLifetime:boolean}`；列表在顶层、详情在 `plan.membership`；`expiryStatus` 是同一来源的扁平化字段，供列表标签与筛选直接使用；`expireAt` 为同源兼容字段。只有显式 LIFETIME 显示长期，NONE 为无会员，UNKNOWN 为期限未知，空日期不得推断终身。会员模式订单同用此来源。详情读取/权益保存由前端捕获目标ID与请求序号、复制提交载荷，旧回包失效，错误可重试。
+
+### PUT /users/{id}/wechat-nickname（昵称编辑）
+
+独立权限 `user:nickname`，无权限403，目标用户不存在404；请求 `{ "wechatNickname": "新的微信昵称" }`，只接受字符串，trim 后为空或长度超过64返回422「微信昵称须为 1-64 个字符」。成功响应 `{code:0,msg:'ok',data:null}`。
+
+Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这些记录的 `wechatNickname`，并按受影响 `userId` 同步 `creditRecords.wechatNickname` 昵称快照；不同手机号不受影响。审计 `user.wechat_nickname.update`：before 为 `[{userId,wechatNickname}]`，after 为 `{wechatNickname,affectedUserIds}`，再沿通用审计脱敏策略保存。订单的昵称由 `toOrderItem` 关联当前用户生成，重新查询列表、详情和导出即跟随，无需改写订单昵称快照。
+
+用户列表昵称旁铅笔按钮按 `user:nickname` 显隐，弹窗同样校验1–64字符；取消或昵称未改变时前端不请求。用户列表去掉ID列、订单「用户」单元格仅展示手机号和昵称；响应中的 `id`/`userId`、ID筛选、详情关联、订单XLSX用户ID列继续保留。以上为当前前端与Mock契约，真实用户服务同步待联调。
 
 ### 到期状态口径（v50 统一）
 | 值 | 列表文案 | 配色 | 是否展示日期 |
@@ -208,7 +218,7 @@
 - 保留创建不回写用户权益边界；此链路仅已完成模拟源驱动的运行验证，真实会员联调仍待接入。以下固定时长规则仅适用于非 MEMBERSHIP 订单。
 `{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMode?, durationMonths:number|null, durationDays?, expiresAt?, membership?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
 
-- `phone` 由 `userId` 关联当前用户手机号，保留原脱敏格式，查无显示 `—`；不保存订单手机号快照。
+- `phone`、`wechatNickname` 由 `userId` 关联当前用户信息；手机号按当前用户完整演示号码返回，用户查无时手机号 `—`、昵称 `-`；不保存订单手机号/昵称快照。列表「用户」单元格只显示手机号和昵称，不追加ID；`userId` 仍用于关联、筛选、详情和XLSX导出。昵称经用户接口修改后，重新查询订单即可更新。
 - `expiresAt` 为订单级明确到期时间（`yyyy-MM-dd HH:mm:ss`，dayjs 同现有时间约定解析），长期有效明确为 `null`；可选以兼容旧接口，缺失或非法值显示 `—`，不可据此推断长期有效。`durationDays` 为新手工订单创建时套餐精确天数快照，不随套餐变更。
 - 时长展示优先精确 `durationDays`（如1天显示1天），仅旧无天数快照时回退月数；赠送自定义默认月数按 `ceil(durationDays/30)`，不向下取整。新手工订单：以 `paidAt + durationDays 天` 计算 `expiresAt`，不先转换月数；套餐 0 天为长期有效。新赠送订单：以 `paidAt + 用户实际选择的 durationMonths 日历月` 计算，月底按目标月份末日收敛；长期有效固定 0 月、`expiresAt=null`。
 - PAID 且明确长期标记（0 月或 0 天）并且 `expiresAt=null`：到期状态/时间均为「长期有效」。PENDING/CLOSED：状态「未生效」、时间 `—`。PAID 有限到期：`now < expiresAt` 显示「未到期 ceil((expiresAt-now)/86400000)天」，否则「已到期 ceil((now-expiresAt)/86400000)天」；相等为已到期 0 天。
@@ -246,6 +256,23 @@
 - `GET /dashboard` 需要 dashboard:view，返回 `{source,userTotal,userToday,orderTotal,revenueTotal,chatTotal,expertTotal,skillTotal,serverTotal,trend:[{date,users,orders,chats}]}`；revenueTotal为PAID订单金额合计（并非净收入），趋势为近7天本地现存记录。真实模式只请求真实API，失败不回退Mock。
 - 超管拥有所有新权限；客服仅获得对话查看（不含删除、恢复、导出）；只读不具 chat:view 或配置编辑。P0已有用户/订单权限保留。localStorage沿用 leidaai-admin-demo-v1，当前schema版本19增量迁移（历史v5补platforms/versionName/模型注册表；v19迁移三档同功能、注册100、包赠分0及规则标记，旧规则存legacyRuleSettings，保留历史订单/版本）。
 - 保存请求可携带可选 `note`（变更说明，写入专家/技能版本历史与审计）；`POST /experts/import`、`POST /skills/import` 直接以导出 JSON 作为请求体（code 冲突返回 `409`）；`GET /experts/{id}/export`、`GET /skills/{id}/export` 返回 `{filename,content}`，导出内容剥离 id/version/刷新状态等运行时字段，**包含 `platforms` 与当前版本 `versionName`（导入时随载荷进入版本历史）**，凭据与提示词按审计策略脱敏。
+
+### 技能介绍附件与共享文件服务
+
+技能 `POST /skills`、`PUT /skills/{id}`（`skill:edit`）新增保存字段 `skillIntroductionFiles?: IntroFileMeta[]`，与 `titleHtml/introduction/greeting/coreAbilities/referencePrompts` 等技能展示字段一同保存并进入版本快照、恢复；专家介绍附件使用独立字段 `introductionFiles`。技能包执行文件仍为 `files:[{name,content,encoding?,mime?}]`，介绍附件不加入该数组及技能包ZIP。
+
+`IntroFileMeta={id:string,name:string,type:string,size:number,uploadedAt:string,url?:string}`。技能Mock保存时校验数组、每项非空字符串ID/名称、字符串类型、有限非负大小且 `size<=10*1024*1024`，无效返回422「技能介绍附件元数据无效（单文件不得超过 10MB）」。客户端上传也校验同一单文件10MB上限，选择器接受 `image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv`；该选择器声明不等于后端已做实体格式验证。
+
+| 模式 / 操作 | 路径与载荷 | 当前实现 |
+|---|---|---|
+| Mock上传 / 读取 | IndexedDB 文件实体，以元数据ID关联 | `uploadIntroFile` 存Blob；元数据随技能配置写localStorage |
+| 真实上传 | `POST /files`，FormData字段 `file` | 服务端 data 应返回 `{id:string\|number,name?,type?,size?,uploadedAt?,url?}`；ID须非空且数值有限，客户端统一转字符串，缺有效ID报错且不保存引用；其余元数据缺省采用本地文件值 |
+| 真实预览 / 下载 | `GET /files/{encodeURIComponent(id)}` | 按Blob读取并创建临时Object URL；真实文件服务及服务端鉴权待联调，不能从Mock推断已实现 |
+| 从技能介绍删除 | 保存新的 `skillIntroductionFiles` 数组 | 仅移除当前引用，不删除IndexedDB/服务端实体；没有技能介绍附件实体删除HTTP接口 |
+
+共享 `FilePreviewDialog`：图片可缩放，PDF内嵌；txt/md/csv按文本分流并最多展示60000字符；xls/xlsx只读首张工作表，首行表头、最多100行数据；docx提取正文段落文字，pptx按幻灯片序号遍历全部页面的段落文字（不还原原排版/图片）；doc/ppt等类型下载兜底。上传与列表删除受 `skill:edit` 控制，只读可预览/下载。编辑器会话变更后丢弃旧上传回包，附件实体可能保留为未引用文件。
+
+验收须覆盖：恰好10MB允许、超过10MB拒绝且无新引用；自动保存/发布/重开/恢复后元数据正确；介绍附件与 `files`/ZIP隔离；同名附件按ID独立读取；csv文本、xls/xlsx首表100行、pptx全部幻灯片及doc/ppt下载行为与本文一致。
 
 ## 7. 套餐管理 /plans（P1）
 
