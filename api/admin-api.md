@@ -1,6 +1,6 @@
 # 雷达AI 管理后台 Admin API 契约
 
-版本：v0.17 / Mock schema 32（2026-11-19 源码同步；增补技能介绍附件、昵称修改与列表展示契约；保留 P0/P1/P2、R9–R11 与模型探测契约；无真实 Java/交易服务联调）
+版本：v0.18 / Mock schema 33（2026-11-19 源码同步；补齐用户排序、订单列序与注册时间、消耗v53筛选及独立列、技能六项展示字段；保留技能介绍附件与昵称修改契约；保留 P0/P1/P2、R9–R11 与模型探测契约；无真实 Java/交易服务联调）
 
 已拍板规则：标准/高级/旗舰三档同功能、单账号；升级按实付折算且负补差取 0，月转年即时并按 365 天重置锚点，年转月/降级到期切换，未来期锁价排队；当期/未来期一律不退款，无自动续费、提前 7 天提醒；常规赠分仅注册 100，积分包仅有效会员可购、365 天有效且不随会员到期清零。**规则文本、Mock 迁移及订单记录不等同真实报价、支付、会员时间轴、积分账本或提醒调度。** 本文明确保留当前写接口未强制规则的缺口，完整规则见 `../功能清单.md` 第 8 节。
 基础路径：`/admin/api`
@@ -10,10 +10,11 @@
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.18 | 2026-11-19 | 用户四列服务端排序与到期分列；订单 `registeredAt?:string` 关联当前用户、注册/到期固定列和订单号操作前；消耗v53移除平台/场景/智能体独立主筛选但保留候选芯片及接口参数，明确全量零消耗候选；技能六展示字段、UI上限与接口类型校验分开，补保存/重开/发布/恢复断言；当前持久化schema33 |
 | v0.17 | 2026-11-19 | 增补 `PUT /users/{id}/wechat-nickname`（独立 `user:nickname`，按同手机号同步用户及消耗记录昵称）、用户/订单列表隐藏ID但保留接口关联和导出；技能介绍附件实际字段 `skillIntroductionFiles`，独立于技能包 `files`，单文件≤10MB，补共享文件上传/读取与各格式预览边界 |
 | v0.16 | 2026-11-19 | **后台手机号完整展示（schema 32）**：修复存量 Mock 用户手机号含星号掩码的问题；用户表作为唯一事实源，订单与消耗明细按 `userId` 同步回填完整的演示号码，保证列表、详情与导出一致。聊天正文内用于隐私保护的手机号脱敏逻辑保持不变 |
 | v0.15 | 2026-11-18 | **列调整 + 用户排序（v52）**：`GET /users` 新增 `sort`（chatCount/registeredAt/expireAt/lastLoginAt 白名单）与 `order`(asc/desc) 参数，空值（未登录/无到期日）恒排最后；`ProTable` 内建服务端排序（`sortable="custom"` 列触发 sort-change 后随 load 透传，筛选/翻页保持）。订单列表项新增 `registeredAt`（取自用户表）。页面列调整：用户管理「到期状态/到期时间」拆两列且四列可排序；订单列重排（订单号移到最后、到期状态只留标签、注册/下单/到期时间紧跟其后、支付时间在金额列前）；消耗明细「成员」→「手机号」、「时间（北京）」→「消耗时间」，微信昵称/套餐/到期状态/到期时间四列移到手机号后 |
-| v0.14 | 2026-11-18 | **删除封禁 + 到期状态（v50）**：`PUT /users/{id}/status`（封禁/解封）整条删除，权限点 `user:ban` 从字典与全部角色移除；`GET /users` 的 `status`(1正常/0封禁) 筛选替换为 `expiryStatus`（ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN），用户列表项去掉 `status`/`assetsFrozen`、新增 `expiryStatus`；`keyword` 补微信昵称模糊匹配。**口径统一**：`formatMembership()` 文案改为「未到期 / 已到期 / 长期有效 / 无会员 / 期限未知」，用户管理、订单、消耗明细三处共用；`MockUser` 去掉 `status` 与 `frozenPeriods`，`readMockOrderExpiry` 不再按冻结期顺延。持久化 schema 28→30（29 回收 `user:ban`，30 回填「已到期」演示样本） |
+| v0.14 | 2026-11-18 | **删除封禁 + 到期状态（v50）**：`PUT /users/{id}/status`（封禁/解封）整条删除，权限点 `user:ban` 从字典与全部角色移除；`GET /users` 的 `status`(1正常/0封禁) 筛选替换为 `expiryStatus`（ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN），用户列表项去掉 `status`/`assetsFrozen`、新增 `expiryStatus`；`keyword` 补微信昵称模糊匹配。**会员口径统一**：`formatMembership()` 文案改为「未到期 / 已到期 / 长期有效 / 无会员 / 期限未知」，用户、消耗明细及MEMBERSHIP模式订单共用；普通订单仍由 `formatOrderExpiry` 判定（含未生效）；`MockUser` 去掉 `status` 与 `frozenPeriods`，`readMockOrderExpiry` 不再按冻结期顺延。持久化 schema 28→30（29 回收 `user:ban`，30 回填「已到期」演示样本） |
 | v0.13 | 2026-11-18 | **订单状态全覆盖 + 筛选（v49）**：`GET /orders` 新增 `keyword`（手机号/微信昵称/用户ID 模糊）、`source`（ONLINE/MANUAL/GIFT）、`orderCategory`（FIRST_PURCHASE/RENEW/UPGRADE/SWITCH/PACK）、`expiryStatus`（ACTIVE/EXPIRED/LIFETIME/INACTIVE）、`planId` 五个筛选参数；`/orders/export` 同参。**到期状态口径**：服务端复用 `formatOrderExpiry().status`，与列表徽标、导出三处同源——原逻辑前端只展示不筛选，且各处各写一套判据 |
 | v0.12 | 2026-11-18 | **三维筛选 + 客户列（v48）**：`/credit-records` 新增 `platforms`（枚举，逗号分隔）、`scenarioIds`、`agentIds` 三个多选筛选；`/credit-records/options` 新增 `platforms`（固定枚举带 usedCount）、`scenarios`（带 platformId）、`agents` 三类候选，`experts`/`skills` 候选补 `platforms`/`scenarioId`/`agentId` 供下拉内收窄。列表字段新增 `planName`/`membershipStatus`/`membershipExpireAt`。**口径要点**：记录的 `platforms` 取该次对话实际执行渠道（channelKey → 平台），不是专家绑定技能的平台并集——并集会让每条记录都等于「全部平台」，筛选形同虚设 |
 | v0.11 | 2026-11-18 | **详情展示顺序（v47）**：`GET /credit-records/:id` 返回的 `breakdown` 顺序不变（按 seed 生成顺序：第三方接口→技能→模型），改为**前端展示层排序**——`LLM_MODEL` 置顶（输入在输出前），其后 `MCP_TOOL`、`SKILL`；合计、成本、毛利仍按全量计算，不受排序影响。明细表限高内部滚动 + 表头固定 |
@@ -151,7 +152,7 @@
 
 | 方法 | 路径 | 权限点 | 说明 |
 |---|---|---|---|
-| GET | /users | user:view | 参数 `keyword`(手机号/邮箱/微信昵称/ID)、`expiryStatus`(ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN)、`start`/`end`(注册时间)、分页 |
+| GET | /users | user:view | 参数 `keyword`(手机号/邮箱/微信昵称/ID)、`expiryStatus`(ACTIVE/EXPIRED/LIFETIME/NONE/UNKNOWN)、`start`/`end`(注册时间)、`sort`(chatCount/registeredAt/expireAt/lastLoginAt)、`order`(asc/desc)、分页 |
 | GET | /users/{id} | user:view | 用户详情 |
 | PUT | /users/{id}/wechat-nickname | user:nickname | `{wechatNickname:string}`；trim 后1–64字符，同手机号全部用户及其消耗记录昵称同步，成功 data=null，细则见下 |
 | PUT | /users/{id}/entitlements | user:entitlement | 个体权益覆盖：`[{resourceType, resourceId, quotaType, quotaLimit}]` |
@@ -165,6 +166,10 @@
 
 `membership={source:'MOCK',status:'ACTIVE'|'EXPIRED'|'NONE'|'LIFETIME'|'UNKNOWN',expiresAt:string|null,isLifetime:boolean}`；列表在顶层、详情在 `plan.membership`；`expiryStatus` 是同一来源的扁平化字段，供列表标签与筛选直接使用；`expireAt` 为同源兼容字段。只有显式 LIFETIME 显示长期，NONE 为无会员，UNKNOWN 为期限未知，空日期不得推断终身。会员模式订单同用此来源。详情读取/权益保存由前端捕获目标ID与请求序号、复制提交载荷，旧回包失效，错误可重试。
 
+`sort` 仅接受 `chatCount`（数值）、`registeredAt`、`expireAt`、`lastLoginAt`（时间值）四字段白名单；`order=asc|desc` 决定方向。无排序时沿默认列表顺序；排序中空到期/未登录等空值恒最后，不随升降序翻转，同值按ID倒序保证稳定。用户表四列使用 `sortable="custom"`，ProTable将sort-change转为查询参数，筛选查询和翻页保留当前排序。
+
+用户列表「到期状态」仅标签，「到期时间」为独立列；ACTIVE/EXPIRED的日期显示在时间列，LIFETIME显示「长期有效」，NONE/UNKNOWN显示 `—`。验收覆盖四字段双向排序、空值末尾、同值ID倒序以及组合筛选/分页后排序不丢失。
+
 ### PUT /users/{id}/wechat-nickname（昵称编辑）
 
 独立权限 `user:nickname`，无权限403，目标用户不存在404；请求 `{ "wechatNickname": "新的微信昵称" }`，只接受字符串，trim 后为空或长度超过64返回422「微信昵称须为 1-64 个字符」。成功响应 `{code:0,msg:'ok',data:null}`。
@@ -173,16 +178,16 @@ Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这
 
 用户列表昵称旁铅笔按钮按 `user:nickname` 显隐，弹窗同样校验1–64字符；取消或昵称未改变时前端不请求。用户列表去掉ID列、订单「用户」单元格仅展示手机号和昵称；响应中的 `id`/`userId`、ID筛选、详情关联、订单XLSX用户ID列继续保留。以上为当前前端与Mock契约，真实用户服务同步待联调。
 
-### 到期状态口径（v50 统一）
-| 值 | 列表文案 | 配色 | 是否展示日期 |
+### 会员到期状态口径（2026-11-19 当前分列）
+| 值 | 状态标签 | 配色 | 独立到期时间列 |
 |---|---|---|---|
-| ACTIVE | 未到期 | success（绿） | 是 |
-| EXPIRED | 已到期 | danger（红） | 是 |
-| LIFETIME | 长期有效 | primary（蓝） | 否，显示「长期有效」 |
-| NONE | 无会员 | info（灰） | 否 |
-| UNKNOWN | 期限未知 | warning（橙） | 否 |
+| ACTIVE | 未到期 | success（绿） | 有限期限日期 |
+| EXPIRED | 已到期 | danger（红） | 有限期限日期 |
+| LIFETIME | 长期有效 | primary（蓝） | 长期有效 |
+| NONE | 无会员 | info（灰） | `—` |
+| UNKNOWN | 期限未知 | warning（橙） | `—` |
 
-用户管理列表/详情、订单管理「到期状态」、消耗明细「到期状态」三处使用同一张映射（`USER_EXPIRY_STATUS` / `MEMBERSHIP_META`）与同一文案，不再出现「有效会员 / 会员已到期」旧说法。
+用户管理与消耗明细的会员字段使用 `formatMembership` / `MEMBERSHIP_META`；订单仅MEMBERSHIP模式共用会员映射。普通订单由 `formatOrderExpiry` 判为 `ACTIVE/EXPIRED/LIFETIME/INACTIVE/UNKNOWN`（UNKNOWN为缺失/非法期限），其筛选下拉仅四项，不含UNKNOWN；不能将普通订单的未生效等同用户无会员。状态标签不再附日期，时间单列展示。
 
 ### GET /users/{id} 详情
 ```json
@@ -216,13 +221,13 @@ Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这
 - 当前唯一来源是 `readMockMembership`，只读取持久化 `MockUser.membershipExpireAt:string|null`、`membershipIsLifetime` 和明确付费计划，标准返回 `membership:{source:'MOCK',status:ACTIVE|EXPIRED|NONE|LIFETIME|UNKNOWN,expiresAt:string|null,isLifetime:boolean}`。用户列表/详情 expireAt 同源。v17 仅缺失期限字段时按旧注册+1年口径一次性补值：历史演示回填非真实权益；保留已有字段（含 null）与早期显式 mockMembership，不重置数据。读取时不再推算注册日期。免费版 null 是 NONE，付费版 null 是 UNKNOWN；终身需显式标记，不因 null 推断，无内置真实终身会员来源。真实会员服务、续费、退款及积分回收均未接入；mock 验证直接更新该单一记录。C端配置仅透传，会员模式消费未接入。
 - MEMBERSHIP 订单每次列表/详情/导出经 toOrderItem 动态读取当前会员源并返回 expiresAt 与 membership；模拟源到期改变后再次查询即跟随，不把创建时会员有效期固定成订单历史。前端 format 仅消费标准返回值。ACTIVE 到期前未到期N天；EXPIRED 已到期N天；NONE 会员已失效/—；UNKNOWN —；长期会员显示「会员期内有效（长期会员）」，不作为赠送独立永久有效。XLSX 与列表/详情共用解析；历史到期补值跳过 MEMBERSHIP。
 - 保留创建不回写用户权益边界；此链路仅已完成模拟源驱动的运行验证，真实会员联调仍待接入。以下固定时长规则仅适用于非 MEMBERSHIP 订单。
-`{id, orderNo, userId, phone, wechatNickname, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMode?, durationMonths:number|null, durationDays?, expiresAt?, membership?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
+`{id, orderNo, userId, phone, wechatNickname, registeredAt?:string, planId, planName, source, amount, goodsAmount, discountAmount, remainingCredits, durationMode?, durationMonths:number|null, durationDays?, expiresAt?, membership?, last7DaysUsage, payChannel, status, remark, paidAt, createdAt}`；详情另含 `transactions[]`。来源 `ONLINE/MANUAL/GIFT`。退款接口、退款权限及退款状态已移除；状态仅待支付/已支付/已关闭。
 
-- `phone`、`wechatNickname` 由 `userId` 关联当前用户信息；手机号按当前用户完整演示号码返回，用户查无时手机号 `—`、昵称 `-`；不保存订单手机号/昵称快照。列表「用户」单元格只显示手机号和昵称，不追加ID；`userId` 仍用于关联、筛选、详情和XLSX导出。昵称经用户接口修改后，重新查询订单即可更新。
+- `registeredAt?:string` 由 `userId` 关联当前用户注册时间（类型为可选字符串），用户或字段缺失显示 `—`；不是订单创建时间，也不是注册时间快照。`phone`、`wechatNickname` 同样由 `userId` 关联当前用户信息；手机号按当前用户完整演示号码返回，用户查无时手机号 `—`、昵称 `-`；不保存订单手机号/昵称快照。列表「用户」单元格只显示手机号和昵称，不追加ID；`userId` 仍用于关联、筛选、详情和XLSX导出。昵称经用户接口修改后，重新查询订单即可更新。
 - `expiresAt` 为订单级明确到期时间（`yyyy-MM-dd HH:mm:ss`，dayjs 同现有时间约定解析），长期有效明确为 `null`；可选以兼容旧接口，缺失或非法值显示 `—`，不可据此推断长期有效。`durationDays` 为新手工订单创建时套餐精确天数快照，不随套餐变更。
 - 时长展示优先精确 `durationDays`（如1天显示1天），仅旧无天数快照时回退月数；赠送自定义默认月数按 `ceil(durationDays/30)`，不向下取整。新手工订单：以 `paidAt + durationDays 天` 计算 `expiresAt`，不先转换月数；套餐 0 天为长期有效。新赠送订单：以 `paidAt + 用户实际选择的 durationMonths 日历月` 计算，月底按目标月份末日收敛；长期有效固定 0 月、`expiresAt=null`。
 - PAID 且明确长期标记（0 月或 0 天）并且 `expiresAt=null`：到期状态/时间均为「长期有效」。PENDING/CLOSED：状态「未生效」、时间 `—`。PAID 有限到期：`now < expiresAt` 显示「未到期 ceil((expiresAt-now)/86400000)天」，否则「已到期 ceil((now-expiresAt)/86400000)天」；相等为已到期 0 天。
-- 列表/详情/XLSX 共用 `formatOrderExpiry` 与 `formatOrderDuration`；页面单一时钟每分钟只刷新当前返回值的倒计时，并在卸载时清理。会员记录变动后须重新查询列表或重开详情取得最新期限；XLSX 每次请求动态读取会员源，一次导出固定同一个 now。长期订单月份必须传 0，null 不转换成 0。严格插列：微信昵称前为用户手机号、订单来源后为到期状态、下单时间后为到期时间。
+- 列表/详情/XLSX 共用 `formatOrderExpiry` 与 `formatOrderDuration`；页面单一时钟每分钟只刷新当前返回值的倒计时，并在卸载时清理。会员记录变动后须重新查询列表或重开详情取得最新期限；XLSX 每次请求动态读取会员源，一次导出固定同一个 now。长期订单月份必须传 0，null 不转换成 0。2026-11-19页面列序：用户→商品→状态→订单来源→购买动作→注册时间→下单时间（可选）→到期状态→到期时间→支付渠道（可选）→支付时间（可选）→应付/成交金额→剩余积分/套餐时长/近7日消耗/商品金额/优惠金额/备注（均可选）→订单号→操作。注册时间、到期状态、到期时间固定展示，状态仅标签；支付渠道有可选列，订单号紧邻操作前。此为当前列表顺序，详情/XLSX不受列设置影响，导出列序独立。普通订单内部五态 `ACTIVE/EXPIRED/LIFETIME/INACTIVE/UNKNOWN`，筛选下拉四项排除UNKNOWN；仅MEMBERSHIP订单按会员五态展示。
 - XLSX 单表「订单列表」表头及顺序：订单号、用户ID、用户手机号、微信昵称、套餐、订单来源、到期状态、剩余积分、套餐时长、近7日消耗、商品金额、优惠金额、实付金额、状态、支付时间、下单时间、到期时间、支付渠道、备注。订单号/手机号及用户输入以字符串单元格存储（保留前导零、中文、逗号、换行和公式样式原文，不生成公式）；用户ID、剩余积分、近7日消耗为整数（`0`），商品/优惠/实付金额为数值两位小数（`#,##0.00`）。支付/下单/有限到期时间使用完整 `yyyy-mm-dd hh:mm:ss` 文本（`@`），缺失/非法为 `—`，长期有效保持原语义，日期列宽 25，避免窄日期列出现 `####`。R8 通过 `src/utils/excel.ts` 按需加载 ExcelJS：绿色 `#00A83E` 表头、白字加粗微软雅黑、白/浅绿 `#E9F7EE` 斑马纹、`#BFE7CB` 细边框、26 表头行高，正文按内容调整行高；订单号宽 28、手机号 18、备注 40 并换行，冻结首行与全数据范围自动筛选；零行仍有完整表头；权限不足返回 403，不生成文件。
 - Mock v17 非破坏性幂等补齐：仅对无自有 `expiresAt` 字段的历史订单回填，保留现存值（包括 null/非法值）；历史仅月数时用历史 `paidAt + durationMonths 日历月` 作演示回填，不读当前套餐覆盖历史；无有效支付时间或时长保持缺失。新种子同样含订单到期字段。
 - 创建订单与审计已实现；订单到期展示不代表用户权益发放，手工/赠送仍不回写用户套餐、用户到期时间或积分权益（TC-39）。独立前台订单仍为原演示能力。
@@ -254,8 +259,23 @@ Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这
 - 对话列表返回 `{total,list:[{id,userId,expertId,expertName,summary,messageCount,createdAt,deletedAt,deleteReason}]}`；额外筛选 `deleted` 省略=未删除、true=已删除、all=全部。消息 `{role,content,createdAt}` 数组始终去除凭据及联系方式，GET 每次记 `chat.messages.view`。DELETE 请求体 `{reason}` 必填；`POST /chats/{id}/restore` 独立权限 chat:restore。导出 format=json|xlsx，需独立 chat:export，不隐式授予 chat:view；具体响应见第11节，其他格式422。消息/标题/摘要/分析/报告/导出统一脱敏，HTML文本再转义。
 - 审计 beforeJson/afterJson 由服务层递归移除 token/password/secret/credential/authorization/authConfig、提示词与消息正文；联系方式及文本凭据脱敏。配置保存/恢复的 afterJson 额外携带 `platforms` 与本次 `versionName`。前端只展示脱敏diff，不接收原始凭据。已有Mock审计同样迁移清理。
 - `GET /dashboard` 需要 dashboard:view，返回 `{source,userTotal,userToday,orderTotal,revenueTotal,chatTotal,expertTotal,skillTotal,serverTotal,trend:[{date,users,orders,chats}]}`；revenueTotal为PAID订单金额合计（并非净收入），趋势为近7天本地现存记录。真实模式只请求真实API，失败不回退Mock。
-- 超管拥有所有新权限；客服仅获得对话查看（不含删除、恢复、导出）；只读不具 chat:view 或配置编辑。P0已有用户/订单权限保留。localStorage沿用 leidaai-admin-demo-v1，当前schema版本19增量迁移（历史v5补platforms/versionName/模型注册表；v19迁移三档同功能、注册100、包赠分0及规则标记，旧规则存legacyRuleSettings，保留历史订单/版本）。
+- 超管拥有所有新权限；客服仅获得对话查看（不含删除、恢复、导出）；只读不具 chat:view 或配置编辑。P0已有用户/订单权限保留。localStorage沿用 leidaai-admin-demo-v1，当前schema版本33增量迁移（历史v5补platforms/versionName/模型注册表，v19迁移三档同功能、注册100、包赠分0及规则标记，v33补运营昵称编辑权限；旧规则存legacyRuleSettings，保留历史订单/版本）。
 - 保存请求可携带可选 `note`（变更说明，写入专家/技能版本历史与审计）；`POST /experts/import`、`POST /skills/import` 直接以导出 JSON 作为请求体（code 冲突返回 `409`）；`GET /experts/{id}/export`、`GET /skills/{id}/export` 返回 `{filename,content}`，导出内容剥离 id/version/刷新状态等运行时字段，**包含 `platforms` 与当前版本 `versionName`（导入时随载荷进入版本历史）**，凭据与提示词按审计策略脱敏。
+
+### 技能六项展示字段（2026-11-19）
+
+`POST /skills`、`PUT /skills/{id}`（skill:edit）保存并返回下列字段；它们进入配置及发布快照、完整版本恢复，与技能包 `content/files` 分别保存。
+
+| 字段 | 编辑器名称/类型 | 前端限制与归一 | Mock接口校验边界 |
+|---|---|---|---|
+| `titleHtml` | 技能标题，富文本字符串 | UI上限200字符，缺省空串 | 传入须为string |
+| `description` | 技能简介，普通文本字符串 | UI上限300字符，缺省空串 | 仍按技能必填描述规则校验 |
+| `introduction` | 技能介绍，富文本字符串 | UI上限2000字符，缺省空串 | 传入须为string |
+| `greeting` | 技能开场白，富文本字符串 | UI上限500字符，缺省空串 | 传入须为string |
+| `coreAbilities` | 核心能力，字符串数组 | 可增删，缺省 `[]`，保存逐项trim去空 | 须为数组且各元素为string |
+| `referencePrompts` | 参考提示词，Markdown 富文本条目的字符串数组 | 可增删，缺省 `[]`，保存逐项trim去空 | 须为数组且各元素为string |
+
+200/300/2000/500为编辑器字符上限，不能据此声明Mock接口强制相同最大长度。自动保存沿用skipVersion规则，不新增发布历史；正式发布将六字段写入快照，恢复按完整字段白名单覆盖，旧缺项归一。验收须覆盖六字段修改后保存重开回显、数组增删与空白项去除、发布快照及历史恢复回退（含旧缺项）；界面回显不代表真实技能执行或前台已消费。
 
 ### 技能介绍附件与共享文件服务
 
@@ -370,7 +390,11 @@ Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这
 | GET | /credit-records/projects | credit:view | 消耗项目候选（按库内记录去重） |
 | GET | /credit-records/{id} | credit:view | 单条详情（含逐笔 breakdown）；不存在返回 404 |
 
-列表查询参数（过滤条件与 `/summary` 共用同一实现，保证卡片与列表口径一致）：
+**2026-11-19 当前UI（v53）**：日期（默认近30天）、专家/技能/MCP服务三组多选、消耗内容关键词、多手机号；平台/场景/智能体三个独立主筛选已删除。专家下拉的平台/场景、技能下拉的智能体/平台/场景芯片仍只收窄候选，点击芯片本身不向列表添加筛选条件。`/options` 仍返回全量配置及维度元数据，`usedCount=0` 候选显示「无消耗」。
+
+当前列表列序：手机号、微信昵称、套餐、到期状态、到期时间（前五个独立列）→消耗项目→消耗内容→消耗时间→状态→算力变更→成本价→用户价→毛利→操作。不再使用成员合列或「时间（北京）」旧名；会员状态与日期分列，长期时间列「长期有效」，无会员/未知期限 `—`。
+
+列表查询参数（过滤条件与 `/summary` 共用同一实现，保证卡片与列表口径一致；接口兼容参数不等于当前UI有独立控件）：
 
 | 参数 | 说明 |
 |---|---|
@@ -381,8 +405,8 @@ Mock 以目标用户的 `phone` 完全相等查找全部用户，一次修改这
 | `type` | `LLM_MODEL` / `MCP_TOOL` / `SKILL`，命中该记录任一笔 breakdown 即保留 |
 | `expertIds` / `skillIds` / `mcpServerIds` | v44 新增，逗号分隔 ID 列表；**同组内多值为「或」，不同组之间为「与」** |
 | `content` | v44 新增，关键词模糊匹配 `content` / `projectName` / `expertName`（忽略大小写） |
-| `platforms` | v48 新增，逗号分隔**枚举值**（`1688,OZON,AMAZON,TEMU,TIKTOK,SHOPEE`，注意是枚举而非 ID）；命中该记录 `platforms` 任一即保留 |
-| `scenarioIds` / `agentIds` | v48 新增，逗号分隔 ID 列表；与上面三组同规则，组内「或」、组间「与」 |
+| `platforms` | v48 新增，逗号分隔**枚举值**（`1688,OZON,AMAZON,TEMU,TIKTOK,SHOPEE`，注意是枚举而非 ID）；命中该记录 `platforms` 任一即保留；v53当前UI无独立平台主筛选 |
+| `scenarioIds` / `agentIds` | v48 新增，逗号分隔 ID 列表；与上面三组同规则，组内「或」、组间「与」；v53当前UI无独立场景/智能体主筛选 |
 | `page` / `pageSize` | 默认 1 / 20，pageSize 上限 200 |
 
 记录结构（`CreditRecord`，一条 = 一次对话回合）：
